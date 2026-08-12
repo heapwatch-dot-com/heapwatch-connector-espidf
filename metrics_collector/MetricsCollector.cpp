@@ -25,18 +25,13 @@
 #include "esp_wifi.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
-#include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
+#include "../heapwatch_connector/ConnectorBootstrap.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
+#include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_config.h"
 #include "../connector_settings/ConnectorSettings.h"
 #include "../storage_stats/StorageStats.h"
-
-// Bridging accessors for counters owned by main.cpp — plain C++ linkage is fine
-// here since both translation units are C++; no genuine ABI boundary involved.
-uint32_t app_metrics_get_wifi_reconnects_total();
-uint32_t app_metrics_get_log_lines_dropped_total();
-uint32_t app_metrics_get_log_mqtt_dropped_total();
 
 namespace heapwatch::metrics_collector {
 
@@ -368,9 +363,9 @@ void collectTask(void* arg) {
                  freertos_tasks_count,
                  freertos_ready_tasks_count,
                  static_cast<int>(wifi_rssi_dbm),
-                 app_metrics_get_wifi_reconnects_total(),
-                 app_metrics_get_log_lines_dropped_total(),
-                 app_metrics_get_log_mqtt_dropped_total());
+                 heapwatch::connector_bootstrap::getWifiReconnectsTotal(),
+                 heapwatch::connector_bootstrap::getLogLinesDroppedTotal(),
+                 heapwatch::connector_bootstrap::getLogMqttDroppedTotal());
 #else
         snprintf(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE,
                  "tsms=%" PRIu64 "|utms=%" PRIu64 "|uptime_s=%" PRIu32 "|heap_used_bytes=%" PRIu32
@@ -399,9 +394,9 @@ void collectTask(void* arg) {
                  freertos_tasks_count, HEAPWATCH_FLAT_DELIMITER,
                  freertos_ready_tasks_count, HEAPWATCH_FLAT_DELIMITER,
                  static_cast<int>(wifi_rssi_dbm), HEAPWATCH_FLAT_DELIMITER,
-                 app_metrics_get_wifi_reconnects_total(), HEAPWATCH_FLAT_DELIMITER,
-                 app_metrics_get_log_lines_dropped_total(), HEAPWATCH_FLAT_DELIMITER,
-                 app_metrics_get_log_mqtt_dropped_total());
+                 heapwatch::connector_bootstrap::getWifiReconnectsTotal(), HEAPWATCH_FLAT_DELIMITER,
+                 heapwatch::connector_bootstrap::getLogLinesDroppedTotal(), HEAPWATCH_FLAT_DELIMITER,
+                 heapwatch::connector_bootstrap::getLogMqttDroppedTotal());
 #endif
 
         enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);

@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "heapwatch_connector/ConnectorBootstrap.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
@@ -41,6 +42,23 @@ constexpr char kTag[] = "heapwatch_c_api";
 
 /** Host sticky flag — ORed with OTA-in-progress in heapwatch_keep_running(). */
 bool g_host_keep_running = false;
+
+const char* g_build_identifier_ptr = "";
+const char* g_firmware_version_ptr = "";
+
+void store_app_metadata(const heapwatch_config_t* config) {
+    g_build_identifier_ptr = "";
+    g_firmware_version_ptr = "";
+    if (config == nullptr) {
+        return;
+    }
+    if (config->build_identifier != nullptr && config->build_identifier[0] != '\0') {
+        g_build_identifier_ptr = config->build_identifier;
+    }
+    if (config->firmware_version != nullptr && config->firmware_version[0] != '\0') {
+        g_firmware_version_ptr = config->firmware_version;
+    }
+}
 
 bool has_explicit_credentials(const heapwatch_config_t* config) {
     return config != nullptr && config->tenant_slug != nullptr && config->tenant_slug[0] != '\0' &&
@@ -132,6 +150,7 @@ esp_err_t heapwatch_init(const heapwatch_config_t* config) {
         return ESP_ERR_HEAPWATCH_ALREADY_INITIALIZED;
     }
 
+    store_app_metadata(config);
     heapwatch_ensure_event_loop();
 
     bool ok = false;
@@ -465,5 +484,9 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
 
     return ESP_OK;
 }
+
+const char* heapwatch_get_build_identifier(void) { return g_build_identifier_ptr; }
+
+const char* heapwatch_get_firmware_version(void) { return g_firmware_version_ptr; }
 
 }  // extern "C"

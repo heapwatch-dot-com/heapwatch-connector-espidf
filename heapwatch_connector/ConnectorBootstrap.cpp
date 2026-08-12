@@ -39,6 +39,7 @@
 #include "device_enrollment/DeviceEnrollmentClient.h"
 #include "device_identity/DeviceIdentity.h"
 #include "heapwatch_endpoints.h"
+#include "heapwatch.h"
 
 namespace heapwatch::connector_bootstrap {
 
@@ -491,7 +492,8 @@ bool runFactoryEnrollment(BootCredentials* creds) {
                                           : HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS;
 
     if (!heapwatch::device_enrollment::runUntilProvisioned(
-            HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac, BUILD_IDENTIFIER,
+            HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac,
+            heapwatch_get_build_identifier(),
             CONFIG_HEAPWATCH_BUILD_ENV, poll_interval_ms, &enrolled)) {
         return false;
     }
@@ -649,15 +651,3 @@ uint32_t getLogLinesDroppedTotal() { return g_log_lines_dropped_total; }
 uint32_t getLogMqttDroppedTotal() { return g_log_mqtt_dropped_total; }
 
 }  // namespace heapwatch::connector_bootstrap
-
-extern "C" uint32_t app_metrics_get_wifi_reconnects_total() {
-    return heapwatch::connector_bootstrap::getWifiReconnectsTotal();
-}
-
-extern "C" uint32_t app_metrics_get_log_lines_dropped_total() {
-    return heapwatch::connector_bootstrap::getLogLinesDroppedTotal();
-}
-
-extern "C" uint32_t app_metrics_get_log_mqtt_dropped_total() {
-    return heapwatch::connector_bootstrap::getLogMqttDroppedTotal();
-}

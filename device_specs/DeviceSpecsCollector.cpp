@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <cstring>
 
-#include "build_fingerprint.h"
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -13,7 +12,7 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "sdkconfig.h"
-#include "versions.h"
+#include "heapwatch.h"
 
 namespace heapwatch::device_specs {
 
@@ -293,8 +292,10 @@ bool buildPayload(char* output, size_t output_len) {
         static_cast<unsigned long>(internal_heap_total),
         static_cast<unsigned long>(min_free_heap),
         esp_get_idf_version(),
-        REMOTED_BUILD_VERSION,
-        BUILD_IDENTIFIER,
+        (heapwatch_get_firmware_version()[0] != '\0')
+            ? heapwatch_get_firmware_version()
+            : (app_desc != nullptr ? app_desc->version : ""),
+        heapwatch_get_build_identifier(),
         build_date,
         CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
         reset_reason_name(esp_reset_reason()),

@@ -9,11 +9,11 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
-#include "../build_fingerprint.h"
 #include "../connector_settings/ConnectorSettings.h"
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_connector/ConnectorBootstrap.h"
 #include "../heapwatch_endpoints.h"
+#include "heapwatch.h"
 
 namespace heapwatch::device_command {
 
@@ -300,7 +300,7 @@ void addOtaCommands(cJSON* commands) {
 cJSON* buildManifestRoot() {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "manifest_version", 2);
-    cJSON_AddStringToObject(root, "build_identifier", BUILD_IDENTIFIER);
+    cJSON_AddStringToObject(root, "build_identifier", heapwatch_get_build_identifier());
 
     cJSON* commands = cJSON_CreateArray();
     cJSON_AddItemToObject(root, "commands", commands);

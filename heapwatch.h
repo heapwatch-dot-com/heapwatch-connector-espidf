@@ -81,6 +81,8 @@ typedef struct {
     const char* device_api_key;
     /** Optional; used as the coredump/build fingerprint. NULL = omit. */
     const char* build_identifier;
+    /** Optional human-readable firmware version (e.g. git describe). NULL = esp_app_desc version. */
+    const char* firmware_version;
 } heapwatch_config_t;
 
 /** Zero-init helper — all pointers NULL (bootstrap credential resolution). */
@@ -91,6 +93,7 @@ static inline heapwatch_config_t heapwatch_config_default(void) {
     config.mqtt_password = NULL;
     config.device_api_key = NULL;
     config.build_identifier = NULL;
+    config.firmware_version = NULL;
     return config;
 }
 #define HEAPWATCH_CONFIG_DEFAULT() heapwatch_config_default()
@@ -265,6 +268,10 @@ typedef struct {
  * config/set, config/persist, and config/revert via MQTT commands.
  */
 esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t* catalog);
+
+/** Build metadata set via heapwatch_init(); empty string when unset. */
+const char* heapwatch_get_build_identifier(void);
+const char* heapwatch_get_firmware_version(void);
 
 #ifdef __cplusplus
 }
