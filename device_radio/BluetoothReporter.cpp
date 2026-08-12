@@ -1,0 +1,328 @@
+// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+
+#include "device_radio/BluetoothReporter.h"
+
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "heapwatch/radio/BleDelegate.h"
+#include "heapwatch_config.h"
+#include "heapwatch_connector/HeapwatchConnector.h"
+#include "heapwatch_connector/heapwatch_connector_timing.h"
+#include "device_radio/IRadioBleProvider.h"
+#include "sdkconfig.h"
+#include "stream_ingress/StreamIngressClient.h"
+
+namespace heapwatch::device_radio {
+
+void emitBleEvent(int event_id, const char* detail, const char* peer_addr);
+
+namespace {
+
+constexpr const char* kTag = "HwBleReport";
+constexpr size_t kJsonLineMax = 512;
+constexpr size_t kCommandIdMax = 64;
+
+bool g_started = false;
+bool g_prev_stack_ready = false;
+bool g_prev_advertising = false;
+bool g_prev_scanning = false;
+RadioBleSnapshot g_prev_snapshot = {};
+char g_scan_command_id[kCommandIdMax] = {};
+
+bool append(char* out, size_t out_len, size_t* offset, const char* fmt, ...) {
+    if (*offset >= out_len) {
+        return false;
+    }
+    va_list args;
+    va_start(args, fmt);
+    const int written = vsnprintf(out + *offset, out_len - *offset, fmt, args);
+    va_end(args);
+    if (written < 0 || static_cast<size_t>(written) >= out_len - *offset) {
+        return false;
+    }
+    *offset += static_cast<size_t>(written);
+    return true;
+}
+
+bool append_json_string(char* out, size_t out_len, size_t* offset, const char* value) {
+    if (value == nullptr) {
+        value = "";
+    }
+    if (!append(out, out_len, offset, "\"")) {
+        return false;
+    }
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(value); *p != '\0'; ++p) {
+        const unsigned char c = *p;
+        if (c == '"' || c == '\\') {
+            if (!append(out, out_len, offset, "\\%c", c)) {
+                return false;
+            }
+        } else if (c < 0x20) {
+            if (!append(out, out_len, offset, "\\u%04x", c)) {
+                return false;
+            }
+        } else if (!append(out, out_len, offset, "%c", c)) {
+            return false;
+        }
+    }
+    return append(out, out_len, offset, "\"");
+}
+
+bool snapshotsEqual(const RadioBleSnapshot& a, const RadioBleSnapshot& b) {
+    return a.stack_ready == b.stack_ready && a.advertising == b.advertising &&
+           a.scanning == b.scanning && a.connection_count == b.connection_count &&
+           a.bond_count == b.bond_count && strncmp(a.mac, b.mac, sizeof(a.mac)) == 0;
+}
+
+void emitStateTransitions(const RadioBleSnapshot& snap) {
+#if CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
+    if (snap.stack_ready && !g_prev_stack_ready) {
+        emitBleEvent(HEAPWATCH_EVENT_BLE_STACK_READY, "stack_ready", nullptr);
+    }
+    if (snap.advertising && !g_prev_advertising) {
+        emitBleEvent(HEAPWATCH_EVENT_BLE_ADV_STARTED, "adv_started", nullptr);
+    }
+    if (!snap.advertising && g_prev_advertising) {
+        emitBleEvent(HEAPWATCH_EVENT_BLE_ADV_STOPPED, "adv_stopped", nullptr);
+    }
+    if (snap.scanning && !g_prev_scanning) {
+        emitBleEvent(HEAPWATCH_EVENT_BLE_SCAN_STARTED, "scan_started", nullptr);
+    }
+    if (!snap.scanning && g_prev_scanning) {
+        emitBleEvent(HEAPWATCH_EVENT_BLE_SCAN_STOPPED, "scan_stopped", nullptr);
+    }
+#endif
+    g_prev_stack_ready = snap.stack_ready;
+    g_prev_advertising = snap.advertising;
+    g_prev_scanning = snap.scanning;
+}
+
+void onScanPeer(const ScanPeer& peer, void* /*ctx*/) {
+    uint64_t tsms = 0;
+    uint64_t utms = 0;
+    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+
+    char line[kJsonLineMax] = {};
+    if (g_scan_command_id[0] != '\0') {
+        snprintf(line, sizeof(line),
+                 "{\"command_id\":\"%s\",\"addr\":\"%s\",\"rssi\":%d,\"name\":\"%s\","
+                 "\"tsms\":%llu,\"utms\":%llu}",
+                 g_scan_command_id, peer.addr, static_cast<int>(peer.rssi), peer.name,
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    } else {
+        snprintf(line, sizeof(line),
+                 "{\"command_id\":null,\"addr\":\"%s\",\"rssi\":%d,\"name\":\"%s\",\"tsms\":%llu,"
+                 "\"utms\":%llu}",
+                 peer.addr, static_cast<int>(peer.rssi), peer.name,
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    }
+
+    heapwatch::stream_ingress::sendBleScanJson(line);
+}
+
+void onScanComplete(bool success, const char* message, void* /*ctx*/) {
+    uint64_t tsms = 0;
+    uint64_t utms = 0;
+    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+
+    char line[kJsonLineMax] = {};
+    if (g_scan_command_id[0] != '\0') {
+        snprintf(line, sizeof(line),
+                 "{\"command_id\":\"%s\",\"done\":true,\"ok\":%s,\"message\":\"%s\","
+                 "\"tsms\":%llu,\"utms\":%llu}",
+                 g_scan_command_id, success ? "true" : "false", message != nullptr ? message : "",
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    } else {
+        snprintf(line, sizeof(line),
+                 "{\"command_id\":null,\"done\":true,\"ok\":%s,\"message\":\"%s\",\"tsms\":%llu,"
+                 "\"utms\":%llu}",
+                 success ? "true" : "false", message != nullptr ? message : "",
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    }
+
+    heapwatch::stream_ingress::sendBleScanJson(line);
+    g_scan_command_id[0] = '\0';
+    publishFullSync();
+}
+
+void telemetryTask(void* /*arg*/) {
+#if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
+    const TickType_t interval =
+        pdMS_TO_TICKS(CONFIG_HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC * 1000);
+
+    while (true) {
+        RadioBleSnapshot snap = {};
+        getBleProvider().fillSnapshot(snap);
+
+        bool should_publish = true;
+#if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ON_CHANGE) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
+        should_publish = !snapshotsEqual(snap, g_prev_snapshot);
+#endif
+        if (should_publish) {
+            publishFullSync();
+        }
+        vTaskDelay(interval);
+    }
+#else
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(60000));
+    }
+#endif
+}
+
+}  // namespace
+
+bool isBleReportingEnabled() {
+#if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
+    return true;
+#else
+    return heapwatch_ble_has_delegate();
+#endif
+}
+
+bool buildPayload(char* out, size_t out_len) {
+    if (out == nullptr || out_len < 32) {
+        return false;
+    }
+
+    RadioBleSnapshot snap = {};
+    getBleProvider().fillSnapshot(snap);
+
+    size_t offset = 0;
+    if (!append(out, out_len, &offset, "{\"ble\":{")) {
+        return false;
+    }
+    if (!append(out, out_len, &offset, "\"bt_enabled\":%s,\"stack_ready\":%s,\"advertising\":%s,"
+                                   "\"scanning\":%s,\"mac\":",
+                snap.bt_enabled ? "true" : "false", snap.stack_ready ? "true" : "false",
+                snap.advertising ? "true" : "false", snap.scanning ? "true" : "false")) {
+        return false;
+    }
+    if (!append_json_string(out, out_len, &offset, snap.mac)) {
+        return false;
+    }
+
+    if (!append(out, out_len, &offset, ",\"connections\":[")) {
+        return false;
+    }
+    for (size_t i = 0; i < snap.connection_count; ++i) {
+        const RadioBleConnection& conn = snap.connections[i];
+        if (!append(out, out_len, &offset, "%s{\"peer_addr\":", i == 0 ? "" : ",")) {
+            return false;
+        }
+        if (!append_json_string(out, out_len, &offset, conn.peer_addr)) {
+            return false;
+        }
+        if (!append(out, out_len, &offset, ",\"conn_handle\":%u,\"role\":\"%s\"}",
+                    static_cast<unsigned>(conn.conn_handle),
+                    conn.is_central ? "central" : "peripheral")) {
+            return false;
+        }
+    }
+
+    if (!append(out, out_len, &offset, "],\"bonds\":[")) {
+        return false;
+    }
+    for (size_t i = 0; i < snap.bond_count; ++i) {
+        if (!append(out, out_len, &offset, "%s{\"peer_addr\":", i == 0 ? "" : ",")) {
+            return false;
+        }
+        if (!append_json_string(out, out_len, &offset, snap.bonds[i].peer_addr)) {
+            return false;
+        }
+        if (!append(out, out_len, &offset, "}")) {
+            return false;
+        }
+    }
+
+    if (!append(out, out_len, &offset, "]}}")) {
+        return false;
+    }
+
+    return true;
+}
+
+void emitBleEvent(int event_id, const char* detail, const char* peer_addr) {
+#if CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
+    HeapwatchConnector::getInstance().queueEvent(event_id);
+#endif
+
+    uint64_t tsms = 0;
+    uint64_t utms = 0;
+    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+
+    char line[kJsonLineMax] = {};
+    if (peer_addr != nullptr && peer_addr[0] != '\0') {
+        snprintf(line, sizeof(line),
+                 "{\"event_id\":%d,\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%llu,"
+                 "\"utms\":%llu}",
+                 event_id, detail != nullptr ? detail : "", peer_addr,
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    } else {
+        snprintf(line, sizeof(line),
+                 "{\"event_id\":%d,\"detail\":\"%s\",\"peer_addr\":null,\"tsms\":%llu,"
+                 "\"utms\":%llu}",
+                 event_id, detail != nullptr ? detail : "",
+                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    }
+
+    heapwatch::stream_ingress::sendBleEventJson(line);
+}
+
+void publishFullSync() {
+    RadioBleSnapshot snap = {};
+    getBleProvider().fillSnapshot(snap);
+    emitStateTransitions(snap);
+    g_prev_snapshot = snap;
+    HeapwatchConnector::getInstance().queueBluetoothSnapshot();
+    ESP_LOGI(kTag, "Queued full /bluetooth sync");
+}
+
+void handleGetCommand() { publishFullSync(); }
+
+bool startCommandScan(const char* command_id, bool active, uint32_t duration_seconds) {
+    IRadioBleProvider& provider = getBleProvider();
+    if (!provider.isAvailable()) {
+        return false;
+    }
+
+    g_scan_command_id[0] = '\0';
+    if (command_id != nullptr && command_id[0] != '\0') {
+        snprintf(g_scan_command_id, sizeof(g_scan_command_id), "%s", command_id);
+    }
+
+    if (!heapwatch::stream_ingress::ensureTcpSession()) {
+        ESP_LOGW(kTag, "Stream ingress unavailable for BLE scan");
+    }
+
+    return provider.startScan(active, duration_seconds, onScanPeer, onScanComplete, nullptr);
+}
+
+void start() {
+    if (g_started) {
+        return;
+    }
+    g_started = true;
+
+    if (!isBleReportingEnabled() && !heapwatch_ble_has_delegate()) {
+        ESP_LOGI(kTag, "BLE reporting disabled");
+        return;
+    }
+
+    if (!getBleProvider().initialize()) {
+        ESP_LOGW(kTag, "BLE provider init failed");
+    }
+
+#if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
+    xTaskCreate(telemetryTask, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#endif
+
+    ESP_LOGI(kTag, "Bluetooth reporter started");
+}
+
+}  // namespace heapwatch::device_radio

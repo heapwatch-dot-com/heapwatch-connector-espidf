@@ -1,0 +1,13 @@
+version: "0.1.0"
+description: Heapwatch Connector for ESP-IDF — crash analytics telemetry SDK
+url: https://github.com/viktorjamrich/heapwatch-connector-espidf
+repository: git@github.com:viktorjamrich/heapwatch-connector-espidf.git
+dependencies:
+  # ESP-IDF 6 removed the built-in `json` component; use managed cJSON instead.
+  # On IDF 5.x, CMakeLists.txt links the built-in `json` component (same library).
+  espressif/cjson:
+    version: "^1.7.19"
+    rules:
+      - if: idf_version >= 6.0
+  idf:
+    version: ">=5.1.0"

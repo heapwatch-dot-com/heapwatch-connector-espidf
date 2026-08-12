@@ -1,0 +1,54 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#include "cJSON.h"
+
+namespace heapwatch::device_fs {
+
+constexpr size_t kFsPathMax = 256;
+constexpr size_t kFsNameMax = 128;
+constexpr size_t kFsSha256HexMax = 65;
+constexpr size_t kFsCommandIdMax = 27;
+
+struct FsError {
+    const char* code = "io_error";
+    const char* message = "Filesystem operation failed.";
+};
+
+/** Returns true when path is absolute and under an allowed mount prefix. */
+bool isAllowedPath(const char* path);
+
+/** Build a file_browser TCP envelope and send it (requires stream ingress session). */
+void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON* result);
+
+cJSON* buildVolumesResult();
+
+/** Partitions (flash table) + mounted VFS volumes. */
+cJSON* buildStorageResult();
+
+cJSON* buildListResult(const char* path, int page, int per_page, FsError* error);
+
+cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* error);
+
+bool deleteEntry(const char* path, FsError* error);
+
+bool renameEntry(const char* path, const char* new_name, FsError* error);
+
+bool moveEntry(const char* path, const char* destination_path, FsError* error);
+
+bool mkdirEntry(const char* path, FsError* error);
+
+bool createEmptyFile(const char* path, FsError* error);
+
+bool beginUploadJob(const char* command_id, const char* path, const char* temp_path, bool replace,
+                    const char* expected_sha256, int64_t expected_size, FsError* error);
+
+void handleUploadChunk(const uint8_t* data, size_t len);
+
+void cancelActiveUpload();
+
+bool beginDownloadJob(const char* command_id, const char* path, FsError* error);
+
+}  // namespace heapwatch::device_fs

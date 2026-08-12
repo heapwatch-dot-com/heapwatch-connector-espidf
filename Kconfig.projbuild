@@ -1,0 +1,368 @@
+menu "Heapwatch Connector"
+
+    # HEAPWATCH_API_BASE / HEAPWATCH_MQTT_BROKER_URI removed from Kconfig (K1):
+    # production endpoints are hardcoded in main/heapwatch_endpoints.h. Our own
+    # local dev loop swaps to LAN endpoints via the internal-only
+    # HEAPWATCH_DEV_LOCAL_NETWORK compile macro in that same header (K2) —
+    # never exposed here, never shipped to clients.
+
+    config HEAPWATCH_BUILD_ENV
+        string "Build environment"
+        default "development"
+        help
+            Sent with device enrollment: development, testing, staging, or production.
+            Pure business/reporting label — does NOT switch network endpoints
+            (see HEAPWATCH_DEV_LOCAL_NETWORK in heapwatch_endpoints.h for that).
+
+    menu "Wi-Fi"
+        config HEAPWATCH_MANAGE_WIFI
+            bool "Connector manages Wi-Fi connection"
+            default y
+            help
+                y: the connector brings up Wi-Fi itself using the SSID/password below.
+                n: the connector does not touch networking at all — the host app brings
+                up its own netif (Wi-Fi, Ethernet, cellular modem, ...) on its own
+                schedule and calls heapwatch's setNetworkReady(true) once it's up.
+
+        config HEAPWATCH_WIFI_SSID
+            string "SSID"
+            default "Jumbo"
+            depends on HEAPWATCH_MANAGE_WIFI
+
+        config HEAPWATCH_WIFI_PASSWORD
+            string "Password"
+            default ""
+            depends on HEAPWATCH_MANAGE_WIFI
+    endmenu
+
+    menu "Time sync"
+        config HEAPWATCH_MANAGE_TIME_SYNC
+            bool "Connector manages SNTP time sync"
+            default y
+            help
+                n: the client manages system time themselves (SNTP or otherwise);
+                the connector will not call any SNTP APIs.
+    endmenu
+
+    menu "Heapwatch login"
+        comment "Credentials from Watch -> device -> Integration."
+
+        config HEAPWATCH_TENANT_SLUG
+            string "Tenant ID"
+            default ""
+            help
+                Tenant ID from the Integration tab (e.g. stargazer-llc).
+
+        config HEAPWATCH_DEVICE_UID
+            string "Device ID"
+            default ""
+            help
+                Device ID from the Integration tab. Leave empty to derive esp-{mac}
+                from the Wi-Fi station MAC address.
+
+        config HEAPWATCH_MQTT_PASSWORD
+            string "MQTT password"
+            default ""
+            help
+                MQTT password from the Integration tab.
+
+        config HEAPWATCH_DEVICE_API_KEY
+            string "Device REST API key"
+            default ""
+            help
+                Device REST API key from the Integration tab. Required for core-dump
+                upload and other HTTPS device APIs.
+
+        config HEAPWATCH_STREAM_API_KEY
+            string "Stream ingress API key"
+            default ""
+            help
+                Stream API key from the Integration tab. Required for high-rate TCP
+                stream ingress (Console tab). Separate from the REST API key.
+
+        config HEAPWATCH_ENABLE_STREAM_INGRESS
+            bool "Enable on-demand stream ingress TCP client"
+            default y
+            depends on HEAPWATCH_ENABLE_LOG_COLLECTION
+            help
+                When enabled, stream_open / stream_close MQTT commands open a muxed
+                TCP connection to backend-stream-ingress for high-rate log capture.
+                Logs are sent over both MQTT and the stream path while active (A/B).
+
+        # Device enrollment: one firmware image + per-batch enrollment key.
+        config HEAPWATCH_ENABLE_DEVICE_ENROLLMENT
+            bool "Enable device enrollment bootstrap"
+            default n
+            help
+                When enabled and an enrollment key is set, the device enrolls via
+                POST enroll → GET status (60s poll) → POST fetch → POST confirm.
+                Lab Integration credentials are not used while an enrollment key is set.
+
+        config HEAPWATCH_ENROLLMENT_KEY
+            string "Application enrollment key"
+            default ""
+            depends on HEAPWATCH_ENABLE_DEVICE_ENROLLMENT
+            help
+                Enrollment key from Enrollment → Enrollment keys. Baked per batch in v1.
+
+        config HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS
+            int "Enrollment status poll interval (ms)"
+            default 60000
+            range 5000 300000
+            depends on HEAPWATCH_ENABLE_DEVICE_ENROLLMENT
+            help
+                Delay between GET /api/device-enrollment/status polls while waiting
+                for operator Accept on the Pending devices queue.
+    endmenu
+
+    menu "Feature toggles"
+        config HEAPWATCH_ENABLE_LOG_COLLECTION
+            bool "Collect and relay ESP-IDF logs"
+            default y
+            help
+                Installs the esp_log_set_vprintf() hook and relays captured lines over
+                MQTT (subject to the minimum severity below). Disabling excludes the
+                log-capture/relay pipeline from the build entirely.
+
+        choice HEAPWATCH_MIN_LOG_SEVERITY
+            prompt "Minimum log severity relayed over MQTT"
+            default HEAPWATCH_MIN_LOG_SEVERITY_INFO
+            depends on HEAPWATCH_ENABLE_LOG_COLLECTION
+            help
+                Logs below this level are still printed locally (serial) but are not
+                queued for remote delivery.
+
+            config HEAPWATCH_MIN_LOG_SEVERITY_DEBUG
+                bool "Debug"
+            config HEAPWATCH_MIN_LOG_SEVERITY_INFO
+                bool "Info"
+            config HEAPWATCH_MIN_LOG_SEVERITY_WARNING
+                bool "Warning"
+            config HEAPWATCH_MIN_LOG_SEVERITY_ERROR
+                bool "Error"
+            config HEAPWATCH_MIN_LOG_SEVERITY_CRITICAL
+                bool "Critical"
+        endchoice
+
+        config HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+            bool "Collect FreeRTOS task snapshots"
+            default y
+            help
+                Periodic per-task stack/CPU usage snapshot, dispatched as a TASKS
+                message. Shares its collection pass with CPU snapshots below.
+
+        config HEAPWATCH_ENABLE_CPU_SNAPSHOTS
+            bool "Collect per-core CPU usage"
+            default y
+            help
+                Per-core CPU usage percentage, computed from the same FreeRTOS task
+                runtime-stats pass as task snapshots above.
+
+        config HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
+            bool "Collect heap/PSRAM usage snapshots"
+            default y
+            help
+                Heap/internal-heap/PSRAM used-bytes and largest-free-block metrics,
+                sent with every periodic telemetry round. Also covers minimum-ever-free
+                heap tracking once implemented.
+
+        config HEAPWATCH_ENABLE_DEVICE_SPECS
+            bool "Dispatch device specs on MQTT connect"
+            default y
+            help
+                One-time SPECS message (chip model/revision, flash/PSRAM/heap sizes,
+                versions, MACs, reset reason, ...) sent whenever the connector
+                (re)connects to MQTT. Also covers the OTA partition slot label field.
+
+        config HEAPWATCH_ENABLE_OTA
+            bool "Enable Heapwatch-owned OTA (MQTT ota/* + HTTPS flash)"
+            default y
+            help
+                When enabled, the device accepts Heapwatch OTA commands (ota/start,
+                ota/abort, ota/confirm, ota/rollback) and runs the HTTPS flash
+                pipeline. When disabled, MQTT ota/* responds with feature_disabled
+                so customers can run their own OTA stack. Independent of
+                CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (bootloader pending-verify).
+
+        choice HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES
+            prompt "OTA HTTPS download chunk size"
+            default HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
+            depends on HEAPWATCH_ENABLE_OTA
+            help
+                Staging buffer for HTTPS read → esp_ota_write / esp_partition_write.
+                Lives in BSS (not stack). Larger chunks mean fewer read/write loops
+                and faster OTA; TLS already uses a 4 KiB decrypt buffer either way.
+
+            config HEAPWATCH_OTA_DOWNLOAD_CHUNK_256
+                bool "256 bytes (conservative RAM, slower OTA)"
+
+            config HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
+                bool "4096 bytes (recommended)"
+        endchoice
+
+        config HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES
+            int
+            depends on HEAPWATCH_ENABLE_OTA
+            default 256 if HEAPWATCH_OTA_DOWNLOAD_CHUNK_256
+            default 4096 if HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
+
+        config HEAPWATCH_ENABLE_COREDUMP_UPLOAD
+            bool "Upload core dumps from flash on boot"
+            default y
+            help
+                Checks for and uploads a pending core dump over HTTPS on boot,
+                retrying until it succeeds. Disabling skips the check entirely and
+                leaves any pending core dump in flash.
+
+        config HEAPWATCH_ENABLE_STANDARD_EVENTS
+            bool "Dispatch built-in connector events"
+            default y
+            help
+                Built-in lifecycle events (startup, Wi-Fi/MQTT connect-disconnect,
+                sleep tracking, ...). Disabling makes queueEvent() a no-op.
+
+        config HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
+            bool "Proactively check heap integrity"
+            default n
+            help
+                Periodically calls heap_caps_check_integrity() and dispatches a
+                HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED event if corruption is found —
+                catches corruption before it causes a crash, instead of only finding out
+                post-hoc via a coredump. Default off: walking the full heap has a real,
+                non-trivial CPU cost.
+    endmenu
+
+    menu "Storage stats"
+        config HEAPWATCH_ENABLE_STORAGE_STATS
+            bool "Report internal-flash filesystem stats (STORAGE1)"
+            default y
+            help
+                Mounts the "storage" SPIFFS partition (see partitions.csv) at boot and
+                reports storage_free_bytes/storage_used_bytes via the generic parameter
+                mechanism (PARAM1) once per telemetry round. Separate from NVS stats.
+
+        config HEAPWATCH_ENABLE_SD_CARD_STATS
+            bool "Also mount and report an SD card over SPI"
+            default n
+            depends on HEAPWATCH_ENABLE_STORAGE_STATS
+            help
+                Attempts to mount a FAT-formatted SD card over SPI at boot using the pins
+                below. If no card is present or the mount fails, this is logged and
+                skipped -- never fatal, never retried. When mounted, its free/used bytes
+                are added to the same storage_free_bytes/storage_used_bytes totals as
+                the SPIFFS partition (aggregate "internal + removable storage" figure,
+                per PARAM2's fixed-slug design -- not a separate per-medium slug).
+
+        config HEAPWATCH_SD_CARD_CS_GPIO
+            int "SD card CS (chip select) GPIO"
+            default -1
+            range -1 48
+            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+            help
+                -1 disables the SD card mount attempt even if the toggle above is on --
+                set to a real GPIO once wired to actual SD card hardware.
+
+        config HEAPWATCH_SD_CARD_MOSI_GPIO
+            int "SD card MOSI GPIO"
+            default -1
+            range -1 48
+            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+
+        config HEAPWATCH_SD_CARD_MISO_GPIO
+            int "SD card MISO GPIO"
+            default -1
+            range -1 48
+            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+
+        config HEAPWATCH_SD_CARD_SCK_GPIO
+            int "SD card SCK GPIO"
+            default -1
+            range -1 48
+            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+    endmenu
+
+    menu "Heapwatch Bluetooth"
+        config HEAPWATCH_ENABLE_BLE_REPORTING
+            bool "Enable BLE radio reporting (NimBLE report-only)"
+            default n
+            help
+                When enabled, initializes the ESP-IDF NimBLE host in report-only mode
+                (no advertising) and publishes /bluetooth MQTT snapshots. Requires
+                CONFIG_BT_ENABLED in the IDF Bluetooth menu.
+
+        config HEAPWATCH_BLE_TELEMETRY_ENABLED
+            bool "Periodic BLE snapshot telemetry"
+            default y
+            depends on HEAPWATCH_ENABLE_BLE_REPORTING
+
+        config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
+            int "BLE telemetry interval (seconds)"
+            default 30
+            range 5 3600
+            depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+
+        config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
+            bool "Only publish BLE telemetry when snapshot changes"
+            default y
+            depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+    endmenu
+
+    menu "Memory / queue sizing"
+        config HEAPWATCH_MAX_LOG_LINE_LEN
+            int "Maximum relayed log line length (bytes)"
+            default 160
+            range 32 1024
+            help
+                Log lines longer than this are truncated before being queued for MQTT
+                delivery. Lower values reduce worst-case RAM use of the log pipeline.
+
+        config HEAPWATCH_TINY_QUEUE_LEN
+            int "Tiny MQTT queue depth (PARAMETER/EVENT)"
+            default 24
+            range 4 64
+            help
+                Depth of the tiny-tier queue used for single-value PARAMETER and
+                EVENT messages (~96 B per slot).
+
+        config HEAPWATCH_SMALL_QUEUE_LEN
+            int "Small MQTT queue depth (LOG)"
+            default 12
+            range 4 64
+            help
+                Depth of the small-tier queue used for LOG messages (sized off
+                HEAPWATCH_MAX_LOG_LINE_LEN). Independent of the tiny queue so
+                log bursts don't starve parameter/event buffering and vice versa.
+
+        config HEAPWATCH_LARGE_QUEUE_LEN
+            int "Large MQTT queue depth (SPECS/TASKS)"
+            default 3
+            range 1 16
+            help
+                Depth of the large-tier queue used for SPECS/TASKS messages and
+                the periodic metrics PARAMETER blob. Deliberately shallow — these
+                are periodic/rare relative to logs/params, so buffering many of
+                them wastes RAM (each slot is up to ~2KB).
+
+        config HEAPWATCH_METRICS_INTERVAL_MS
+            int "Metrics collection interval (ms)"
+            default 2000
+            range 500 60000
+
+        config HEAPWATCH_LOG_BATCH_MAX
+            int "Max log lines per MQTT /log publish"
+            default 10
+            range 1 64
+    endmenu
+
+    menu "Debug (advanced)"
+        config HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
+            bool "Track per-message-type payload size histogram"
+            default n
+            help
+                Debug-only instrumentation to gather real payload-size distribution
+                data ahead of a possible future bucketed-pool allocator (Option C,
+                not scheduled). Periodically logs a bucketed histogram per message
+                type (LOG/PARAMETER/EVENT/SPECS/TASKS) via ESP_LOGI.
+    endmenu
+
+endmenu
