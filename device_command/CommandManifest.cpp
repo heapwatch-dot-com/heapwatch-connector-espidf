@@ -265,10 +265,16 @@ void addBluetoothCommands(cJSON* commands) {
     cJSON_AddStringToObject(scan_type, "type", "enum");
     cJSON_AddStringToObject(scan_type, "label", "Scan type");
     cJSON_AddStringToObject(scan_type, "default", "active");
-    cJSON* scan_values = cJSON_CreateArray();
-    cJSON_AddItemToArray(scan_values, cJSON_CreateString("active"));
-    cJSON_AddItemToArray(scan_values, cJSON_CreateString("passive"));
-    cJSON_AddItemToObject(scan_type, "values", scan_values);
+    cJSON* scan_options = cJSON_CreateArray();
+    cJSON* scan_active = cJSON_CreateObject();
+    cJSON_AddStringToObject(scan_active, "value", "active");
+    cJSON_AddStringToObject(scan_active, "label", "Active");
+    cJSON_AddItemToArray(scan_options, scan_active);
+    cJSON* scan_passive = cJSON_CreateObject();
+    cJSON_AddStringToObject(scan_passive, "value", "passive");
+    cJSON_AddStringToObject(scan_passive, "label", "Passive");
+    cJSON_AddItemToArray(scan_options, scan_passive);
+    cJSON_AddItemToObject(scan_type, "options", scan_options);
     cJSON_AddBoolToObject(scan_type, "required", false);
     cJSON_AddItemToArray(scan_args, scan_type);
 
