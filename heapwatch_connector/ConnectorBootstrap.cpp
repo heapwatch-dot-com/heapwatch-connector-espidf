@@ -475,6 +475,40 @@ bool runFactoryEnrollment(BootCredentials* creds) {
     return true;
 }
 
+struct EnrollmentTaskParams {
+    BootCredentials* creds = nullptr;
+    bool success = false;
+    SemaphoreHandle_t done = nullptr;
+};
+
+void enrollmentTaskEntry(void* param) {
+    auto* params = static_cast<EnrollmentTaskParams*>(param);
+    params->success = runFactoryEnrollment(params->creds);
+    if (params->done != nullptr) {
+        xSemaphoreGive(params->done);
+    }
+    vTaskDelete(nullptr);
+}
+
+bool runFactoryEnrollmentOnDedicatedTask(BootCredentials* creds) {
+    EnrollmentTaskParams params = {creds, false, xSemaphoreCreateBinary()};
+    if (params.done == nullptr) {
+        return false;
+    }
+
+    constexpr uint32_t kEnrollmentTaskStackBytes = 14336;
+    if (xTaskCreate(enrollmentTaskEntry, "hw_enroll", kEnrollmentTaskStackBytes, &params,
+                    tskIDLE_PRIORITY + 2, nullptr) != pdPASS) {
+        vSemaphoreDelete(params.done);
+        ESP_LOGE(kTag, "Failed to start enrollment task");
+        return false;
+    }
+
+    xSemaphoreTake(params.done, portMAX_DELAY);
+    vSemaphoreDelete(params.done);
+    return params.success;
+}
+
 }  // namespace
 
 bool requestWifiReconnect(uint32_t duration_s) {
@@ -517,7 +551,7 @@ bool resolveBootCredentials(BootCredentials* creds) {
     }
 
     ESP_LOGI(kTag, "Starting device enrollment");
-    return runFactoryEnrollment(creds);
+    return runFactoryEnrollmentOnDedicatedTask(creds);
 }
 
 void initWifiIfManaged() {
