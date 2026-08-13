@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "esp_flash.h"
+#include "esp_flash_partitions.h"
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_spiffs.h"
@@ -31,6 +32,14 @@ constexpr char TAG[] = "DeviceFs";
 constexpr char kSpiffsMount[] = "/storage";
 constexpr char kSpiffsLabel[] = "storage";
 constexpr char kSdMount[] = "/sd";
+
+/** ESP-IDF: partition table always occupies one 4 KiB flash sector. */
+constexpr uint32_t kPartitionTableSectorBytes = 0x1000;
+/** Secure Boot V1 digest at flash offset 0 (one sector). */
+/** ESP-IDF partition types (esp_partition_type_t) — stable since IDF 5.x CSV tooling. */
+constexpr int kEspPartitionTypeBootloader = 0x02;
+constexpr int kEspPartitionTypePartitionTable = 0x03;
+constexpr int kEspPartitionSubtypePrimary = 0x00;
 
 constexpr size_t kDownloadChunkBytes = 4096;
 constexpr size_t kReadLineBuf = 512;
@@ -581,6 +590,65 @@ bool trySpiffsUsedBytes(const char* label, int64_t* used_out, int64_t* total_out
     return true;
 }
 
+uint32_t bootloaderFlashOffset() {
+#if defined(CONFIG_BOOTLOADER_OFFSET_IN_FLASH)
+    return static_cast<uint32_t>(CONFIG_BOOTLOADER_OFFSET_IN_FLASH);
+#else
+    return static_cast<uint32_t>(ESP_BOOTLOADER_OFFSET);
+#endif
+}
+
+cJSON* buildSyntheticPartitionObject(const char* id, const char* label, const char* type,
+                                     const char* subtype, int type_id, int subtype_id,
+                                     uint32_t address, uint32_t size_bytes) {
+    cJSON* obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "id", id);
+    cJSON_AddStringToObject(obj, "label", label);
+    cJSON_AddStringToObject(obj, "type", type);
+    cJSON_AddStringToObject(obj, "subtype", subtype);
+    cJSON_AddNumberToObject(obj, "type_id", static_cast<double>(type_id));
+    cJSON_AddNumberToObject(obj, "subtype_id", static_cast<double>(subtype_id));
+    cJSON_AddNumberToObject(obj, "address", static_cast<double>(address));
+    cJSON_AddNumberToObject(obj, "total_bytes", static_cast<double>(size_bytes));
+    cJSON_AddNullToObject(obj, "used_bytes");
+    cJSON_AddBoolToObject(obj, "browsable", false);
+    cJSON_AddNullToObject(obj, "volume_id");
+    cJSON* flags = cJSON_CreateArray();
+    cJSON_AddItemToObject(obj, "flags", flags);
+    return obj;
+}
+
+void appendHiddenFlashPartitions(cJSON* partitions) {
+    if (partitions == nullptr) {
+        return;
+    }
+
+    const uint32_t table_offset = static_cast<uint32_t>(ESP_PARTITION_TABLE_OFFSET);
+    const uint32_t boot_offset = bootloaderFlashOffset();
+
+#if CONFIG_SECURE_BOOT
+    cJSON_AddItemToArray(
+        partitions,
+        buildSyntheticPartitionObject("secure_boot_digest", "Reserved", "reserved", "reserved", 0, 0,
+                                      0, kSecureBootDigestBytes));
+#endif
+
+    if (table_offset > boot_offset) {
+        cJSON_AddItemToArray(
+            partitions,
+            buildSyntheticPartitionObject("bootloader", "Bootloader", "bootloader", "primary",
+                                      kEspPartitionTypeBootloader, kEspPartitionSubtypePrimary,
+                                      boot_offset, table_offset - boot_offset));
+    }
+
+    cJSON_AddItemToArray(
+        partitions,
+        buildSyntheticPartitionObject("partition_table", "Partition Table", "partition_table",
+                                      "primary", kEspPartitionTypePartitionTable,
+                                      kEspPartitionSubtypePrimary, table_offset,
+                                      kPartitionTableSectorBytes));
+}
+
 cJSON* buildPartitionObject(const esp_partition_t* part) {
     if (part == nullptr) {
         return nullptr;
@@ -654,6 +722,8 @@ cJSON* buildPartitionObject(const esp_partition_t* part) {
 
 cJSON* buildPartitionsArray() {
     cJSON* partitions = cJSON_CreateArray();
+    appendHiddenFlashPartitions(partitions);
+
     esp_partition_iterator_t it =
         esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
     while (it != nullptr) {
@@ -715,6 +785,11 @@ cJSON* buildStorageResult() {
     } else {
         cJSON_AddNullToObject(result, "flash_size_bytes");
     }
+
+    const uint32_t table_offset = static_cast<uint32_t>(ESP_PARTITION_TABLE_OFFSET);
+    const uint32_t boot_offset = bootloaderFlashOffset();
+    cJSON_AddNumberToObject(result, "partition_table_offset", static_cast<double>(table_offset));
+    cJSON_AddNumberToObject(result, "bootloader_offset", static_cast<double>(boot_offset));
 
     cJSON_AddItemToObject(result, "partitions", buildPartitionsArray());
 
