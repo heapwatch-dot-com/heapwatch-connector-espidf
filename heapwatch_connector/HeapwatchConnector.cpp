@@ -34,6 +34,7 @@
 #include "../device_specs/DeviceSpecsCollector.h"
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_radio/BluetoothReporter.h"
+#include "../connector_settings/ConnectorSettings.h"
 #include "ParameterStore.h"
 #include "heapwatch_connector_timing.h"
 

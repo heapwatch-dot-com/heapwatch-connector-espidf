@@ -23,7 +23,7 @@
 
 // Phase 5 (main.cpp extraction): host-app boilerplate that every client integration
 // otherwise has to write by hand today — Wi-Fi bring-up, SNTP time sync, boot-credential
-// resolution (NVS / device enrollment / Kconfig lab settings), and the ESP log-vprintf
+// resolution (NVS provisioned credentials → device enrollment), and the ESP log-vprintf
 // relay pipeline. Each piece stays independently Kconfig-gated (HEAPWATCH_MANAGE_WIFI,
 // HEAPWATCH_MANAGE_TIME_SYNC, HEAPWATCH_ENABLE_LOG_COLLECTION), same behavior as before the
 // extraction — this only moves the code out of main.cpp so a client app_main can stay short.
@@ -46,9 +46,8 @@ struct BootCredentials {
 void ensureDefaultEventLoop();
 
 /**
- * Resolves device credentials in priority order: NVS-provisioned (device_credentials) ->
- * device enrollment (if HEAPWATCH_ENABLE_DEVICE_ENROLLMENT and an enrollment key is set).
- * When device enrollment is enabled, Kconfig lab credentials are not used.
+ * Resolves device credentials: NVS-provisioned (from a prior enrollment) first,
+ * otherwise device enrollment using CONFIG_HEAPWATCH_ENROLLMENT_KEY.
  */
 bool resolveBootCredentials(BootCredentials* creds);
 

@@ -9,7 +9,7 @@ namespace heapwatch::stream_ingress {
 
 using FsUploadChunkHandler = void (*)(const uint8_t* data, size_t len);
 
-/** Set stream API key from NVS provisioning (falls back to Kconfig when unset). */
+/** Set stream API key from NVS provisioning (set during enrollment confirm). */
 void setStreamApiKey(const char* stream_api_key);
 
 /** Initialize stream ingress (mutex/queue only; worker starts on first TCP need). */
@@ -37,6 +37,12 @@ bool isCaptureActive();
  * Queue a MQTT-shaped log JSON line for the stream "logs" channel (NDJSON coalesce).
  */
 void enqueueLogJson(const char* json_line);
+
+/** Queue a mux DATA frame on channel_id (max 4 KiB payload). */
+bool sendMuxDataFrame(const char* channel_id, const uint8_t* payload, size_t payload_len);
+
+/** Queue a mux CTRL frame (end-of-stream marker) on channel_id. */
+bool sendMuxCtrlFrame(const char* channel_id);
 
 /** Send a JSON filesystem result on the mux "file_browser" channel. */
 bool sendFileBrowserJson(const char* json_line);

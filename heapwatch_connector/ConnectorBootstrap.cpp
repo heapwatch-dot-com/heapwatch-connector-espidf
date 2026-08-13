@@ -404,20 +404,6 @@ void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
 }
 #endif /* CONFIG_HEAPWATCH_MANAGE_WIFI (wifiEventHandler) */
 
-void resolveConfiguredDeviceUid(char* out, size_t out_len) {
-    if (out == nullptr || out_len == 0) {
-        return;
-    }
-
-    if (CONFIG_HEAPWATCH_DEVICE_UID[0] != '\0') {
-        std::strncpy(out, CONFIG_HEAPWATCH_DEVICE_UID, out_len - 1);
-        out[out_len - 1] = '\0';
-        return;
-    }
-
-    heapwatch::device_identity::getMacUid(out, out_len);
-}
-
 void setCoredumpAuthHeader(BootCredentials* creds) {
     if (creds == nullptr || creds->device_api_key[0] == '\0') {
         creds->coredump_auth_header[0] = '\0';
@@ -453,30 +439,7 @@ bool loadBootCredentials(BootCredentials* creds) {
     return true;
 }
 
-bool loadLabCredentials(BootCredentials* creds) {
-    if (CONFIG_HEAPWATCH_TENANT_SLUG[0] == '\0' || CONFIG_HEAPWATCH_MQTT_PASSWORD[0] == '\0') {
-        return false;
-    }
-
-    resolveConfiguredDeviceUid(creds->device_uid, sizeof(creds->device_uid));
-    std::strncpy(creds->tenant_slug, CONFIG_HEAPWATCH_TENANT_SLUG, sizeof(creds->tenant_slug) - 1);
-    std::strncpy(creds->mqtt_password, CONFIG_HEAPWATCH_MQTT_PASSWORD,
-                 sizeof(creds->mqtt_password) - 1);
-    if (CONFIG_HEAPWATCH_DEVICE_API_KEY[0] != '\0') {
-        std::strncpy(creds->device_api_key, CONFIG_HEAPWATCH_DEVICE_API_KEY,
-                     sizeof(creds->device_api_key) - 1);
-    }
-    if (CONFIG_HEAPWATCH_STREAM_API_KEY[0] != '\0') {
-        std::strncpy(creds->stream_api_key, CONFIG_HEAPWATCH_STREAM_API_KEY,
-                     sizeof(creds->stream_api_key) - 1);
-    }
-    setCoredumpUploadUrlFromApiBase(creds);
-    setCoredumpAuthHeader(creds);
-    return creds->device_uid[0] != '\0';
-}
-
-// Factory mass enrollment: enroll → status poll → fetch → confirm.
-#if CONFIG_HEAPWATCH_ENABLE_DEVICE_ENROLLMENT
+// Device enrollment: enroll → status poll → fetch → confirm.
 bool runFactoryEnrollment(BootCredentials* creds) {
     if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
         return false;
@@ -511,7 +474,6 @@ bool runFactoryEnrollment(BootCredentials* creds) {
     setCoredumpAuthHeader(creds);
     return true;
 }
-#endif /* CONFIG_HEAPWATCH_ENABLE_DEVICE_ENROLLMENT */
 
 }  // namespace
 
@@ -549,20 +511,13 @@ bool resolveBootCredentials(BootCredentials* creds) {
         return true;
     }
 
-#if CONFIG_HEAPWATCH_ENABLE_DEVICE_ENROLLMENT
-    if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] != '\0') {
-        ESP_LOGI(kTag, "Starting device enrollment");
-        return runFactoryEnrollment(creds);
-    }
-#endif
-
-    if (loadLabCredentials(creds)) {
-        ESP_LOGI(kTag, "Using Kconfig lab credentials for %s", creds->device_uid);
-        return true;
+    if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
+        ESP_LOGE(kTag, "No NVS credentials and CONFIG_HEAPWATCH_ENROLLMENT_KEY is empty");
+        return false;
     }
 
-    ESP_LOGE(kTag, "No credentials in NVS, enrollment key, or Kconfig lab settings");
-    return false;
+    ESP_LOGI(kTag, "Starting device enrollment");
+    return runFactoryEnrollment(creds);
 }
 
 void initWifiIfManaged() {

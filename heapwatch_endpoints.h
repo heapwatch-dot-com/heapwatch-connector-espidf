@@ -42,7 +42,7 @@
 
 #define HEAPWATCH_API_BASE_URL    "https://api.heapwatch.com"
 #define HEAPWATCH_MQTT_BROKER_URI "mqtts://mqtts.mqtt.heapwatch.com:8883"
-#define HEAPWATCH_STREAM_INGRESS_HOST "ingress-stream-tcp.heapwatch.com"
+#define HEAPWATCH_STREAM_INGRESS_HOST "stream.heapwatch.com"
 #define HEAPWATCH_STREAM_INGRESS_TCP_PORT 8910
 
 #endif

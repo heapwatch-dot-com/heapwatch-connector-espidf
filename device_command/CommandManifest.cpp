@@ -4,15 +4,16 @@
 #include <cstring>
 
 #include "cJSON.h"
-#include "esp_crt_bundle.h"
-#include "esp_http_client.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "mbedtls/sha256.h"
+#include "nvs.h"
 #include "sdkconfig.h"
 
 #include "../connector_settings/ConnectorSettings.h"
-#include "../device_credentials/DeviceCredentialsStore.h"
-#include "../heapwatch_connector/ConnectorBootstrap.h"
-#include "../heapwatch_endpoints.h"
+#include "../stream_ingress/StreamIngressClient.h"
+#include "../stream_ingress/StreamIngressMux.h"
 #include "heapwatch.h"
 
 namespace heapwatch::device_command {
@@ -20,78 +21,137 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "CmdManifest";
-constexpr size_t kHttpResponseMax = 2048;
-constexpr size_t kHttpUrlMax = 512;
-constexpr size_t kManifestBodyMax = 8192;
-
-struct HttpResponseBuffer {
-    char data[kHttpResponseMax];
-    size_t len = 0;
-};
+constexpr char kChannelCommandManifest[] = "command_manifest";
+constexpr char kNvsNamespace[] = "heapwatch";
+constexpr char kNvsKeyManifestHash[] = "man_hash";
+constexpr char kNvsKeyManifestBuild[] = "man_build";
+constexpr size_t kManifestHashHexLen = 64;
+constexpr size_t kManifestBuildMax = 256;
+constexpr uint32_t kStreamConnectTimeoutMs = 30000;
+constexpr uint32_t kMuxSendRetryMs = 30000;
 
 bool g_uploaded_this_boot = false;
 
-esp_err_t httpEventHandler(esp_http_client_event_t* evt) {
-    if (evt == nullptr || evt->user_data == nullptr) {
-        return ESP_OK;
+bool readNvsString(const char* key, char* out, size_t out_len) {
+    if (out == nullptr || out_len == 0) {
+        return false;
     }
 
-    auto* buffer = static_cast<HttpResponseBuffer*>(evt->user_data);
-    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
-        const size_t remaining = kHttpResponseMax - 1 - buffer->len;
-        const size_t copy_len =
-            evt->data_len < remaining ? static_cast<size_t>(evt->data_len) : remaining;
-        if (copy_len > 0) {
-            std::memcpy(buffer->data + buffer->len, evt->data, copy_len);
-            buffer->len += copy_len;
-            buffer->data[buffer->len] = '\0';
-        }
+    out[0] = '\0';
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
     }
 
-    return ESP_OK;
+    size_t required = out_len;
+    const esp_err_t err = nvs_get_str(handle, key, out, &required);
+    nvs_close(handle);
+
+    return err == ESP_OK && out[0] != '\0';
 }
 
-bool httpPostJson(const char* url, const char* body, const char* api_key,
-                  HttpResponseBuffer* response) {
-    if (url == nullptr || body == nullptr || api_key == nullptr || response == nullptr) {
+bool writeNvsUploadMarker(const char* manifest_hash_hex, const char* build_identifier) {
+    if (manifest_hash_hex == nullptr || build_identifier == nullptr) {
         return false;
     }
 
-    response->len = 0;
-    response->data[0] = '\0';
-
-    esp_http_client_config_t config = {};
-    config.url = url;
-    config.method = HTTP_METHOD_POST;
-    config.timeout_ms = 20000;
-    config.event_handler = httpEventHandler;
-    config.user_data = response;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == nullptr) {
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) {
         return false;
     }
 
-    char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
-    snprintf(auth_header, sizeof(auth_header), "Bearer %s", api_key);
+    bool ok = nvs_set_str(handle, kNvsKeyManifestHash, manifest_hash_hex) == ESP_OK &&
+              nvs_set_str(handle, kNvsKeyManifestBuild, build_identifier) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
 
-    esp_http_client_set_header(client, "Authorization", auth_header);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "Accept", "application/json");
-    esp_http_client_set_post_field(client, body, std::strlen(body));
+void sha256Hex(const char* body, char* out_hex, size_t out_hex_len) {
+    if (body == nullptr || out_hex == nullptr || out_hex_len < kManifestHashHexLen + 1) {
+        return;
+    }
 
-    const esp_err_t err = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
-    esp_http_client_cleanup(client);
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, reinterpret_cast<const uint8_t*>(body), strlen(body));
 
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP POST failed: %s", esp_err_to_name(err));
+    uint8_t digest[32] = {};
+    mbedtls_sha256_finish(&ctx, digest);
+    mbedtls_sha256_free(&ctx);
+
+    for (size_t i = 0; i < sizeof(digest); ++i) {
+        snprintf(out_hex + (i * 2), 3, "%02x", digest[i]);
+    }
+    out_hex[kManifestHashHexLen] = '\0';
+}
+
+bool waitForStreamTcp(uint32_t timeout_ms) {
+    if (!heapwatch::stream_ingress::ensureTcpSession()) {
         return false;
     }
 
-    if (status < 200 || status >= 300) {
-        ESP_LOGE(TAG, "HTTP status %d body=%s", status, response->data);
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    while (xTaskGetTickCount() < deadline) {
+        if (heapwatch::stream_ingress::isActive()) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    return false;
+}
+
+bool sendCtrlEnd(const char* channel_id) {
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
+    while (xTaskGetTickCount() < deadline) {
+        if (heapwatch::stream_ingress::sendMuxCtrlFrame(channel_id)) {
+            heapwatch::stream_ingress::flushOutbound();
+            return true;
+        }
+        heapwatch::stream_ingress::flushOutbound();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return false;
+}
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
+    while (xTaskGetTickCount() < deadline) {
+        if (heapwatch::stream_ingress::sendMuxDataFrame(channel_id, data, len)) {
+            heapwatch::stream_ingress::flushOutbound();
+            return true;
+        }
+        heapwatch::stream_ingress::flushOutbound();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return false;
+}
+
+bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
+    if (body == nullptr) {
+        return false;
+    }
+
+    const size_t total_len = strlen(body);
+    size_t offset = 0;
+
+    while (offset < total_len) {
+        const size_t chunk_len =
+            (total_len - offset) > stream_ingress::mux::kMaxPayloadLen
+                ? stream_ingress::mux::kMaxPayloadLen
+                : (total_len - offset);
+
+        if (!sendDataChunk(kChannelCommandManifest,
+                           reinterpret_cast<const uint8_t*>(body + offset), chunk_len)) {
+            ESP_LOGW(TAG, "Failed to queue manifest chunk at offset %u", static_cast<unsigned>(offset));
+            return false;
+        }
+
+        offset += chunk_len;
+    }
+
+    if (!sendCtrlEnd(kChannelCommandManifest)) {
+        ESP_LOGW(TAG, "Failed to queue manifest end ctrl frame");
         return false;
     }
 
@@ -370,12 +430,10 @@ void uploadManifestIfNeeded() {
         return;
     }
 
-    heapwatch::connector_bootstrap::BootCredentials creds = {};
-    if (!heapwatch::connector_bootstrap::resolveBootCredentials(&creds) ||
-        creds.device_api_key[0] == '\0') {
-        ESP_LOGW(TAG, "Skipping manifest upload — no device API key");
-        return;
-    }
+#if !CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
+    ESP_LOGW(TAG, "Skipping manifest upload — stream ingress disabled");
+    return;
+#endif
 
     cJSON* root = buildManifestRoot();
     if (root == nullptr) {
@@ -389,25 +447,44 @@ void uploadManifestIfNeeded() {
         return;
     }
 
-    if (std::strlen(body) >= kManifestBodyMax) {
-        ESP_LOGE(TAG, "Manifest JSON too large (%u bytes)", static_cast<unsigned>(std::strlen(body)));
+    const char* build_identifier = heapwatch_get_build_identifier();
+    char manifest_hash_hex[kManifestHashHexLen + 1] = {};
+    sha256Hex(body, manifest_hash_hex, sizeof(manifest_hash_hex));
+
+    char stored_hash[kManifestHashHexLen + 1] = {};
+    char stored_build[kManifestBuildMax + 1] = {};
+    const bool has_stored = readNvsString(kNvsKeyManifestHash, stored_hash, sizeof(stored_hash)) &&
+                            readNvsString(kNvsKeyManifestBuild, stored_build, sizeof(stored_build));
+
+    if (has_stored && strcmp(stored_hash, manifest_hash_hex) == 0 &&
+        strcmp(stored_build, build_identifier) == 0) {
+        free(body);
+        g_uploaded_this_boot = true;
+        ESP_LOGI(TAG, "Command manifest unchanged — skip upload");
+        return;
+    }
+
+    if (!waitForStreamTcp(kStreamConnectTimeoutMs)) {
+        ESP_LOGW(TAG, "Stream ingress not ready for manifest upload");
         free(body);
         return;
     }
 
-    char url[kHttpUrlMax] = {};
-    snprintf(url, sizeof(url), "%s/ingress/command-manifest", HEAPWATCH_API_BASE_URL);
-
-    HttpResponseBuffer response = {};
-    const bool ok = httpPostJson(url, body, creds.device_api_key, &response);
+    const size_t body_len = strlen(body);
+    const bool streamed = streamManifestBody(body);
     free(body);
 
-    if (ok) {
-        g_uploaded_this_boot = true;
-        ESP_LOGI(TAG, "Command manifest uploaded");
-    } else {
-        ESP_LOGW(TAG, "Command manifest upload failed");
+    if (!streamed) {
+        ESP_LOGW(TAG, "Command manifest stream upload failed");
+        return;
     }
+
+    if (!writeNvsUploadMarker(manifest_hash_hex, build_identifier)) {
+        ESP_LOGW(TAG, "Manifest uploaded but NVS marker write failed");
+    }
+
+    g_uploaded_this_boot = true;
+    ESP_LOGI(TAG, "Command manifest streamed (%u bytes)", static_cast<unsigned>(body_len));
 }
 
 }  // namespace heapwatch::device_command

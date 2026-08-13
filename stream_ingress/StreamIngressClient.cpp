@@ -57,6 +57,7 @@ struct OutboundSlot {
     char channel_id[mux::kMaxChannelIdLen + 1] = {};
     size_t len = 0;
     bool busy = false;
+    uint8_t frame_type = mux::kFrameTypeData;
     uint8_t data[kMaxOutboundBytes] = {};
 };
 
@@ -87,10 +88,7 @@ uint8_t g_inbound_buf[kInboundPayloadMax];
 
 bool streamIngressEnabled() {
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
-    if (g_runtime_stream_api_key[0] != '\0') {
-        return true;
-    }
-    return CONFIG_HEAPWATCH_STREAM_API_KEY[0] != '\0';
+    return g_runtime_stream_api_key[0] != '\0';
 #else
     return false;
 #endif
@@ -100,11 +98,7 @@ const char* activeStreamApiKey() {
     if (g_runtime_stream_api_key[0] != '\0') {
         return g_runtime_stream_api_key;
     }
-#if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
-    return CONFIG_HEAPWATCH_STREAM_API_KEY;
-#else
     return "";
-#endif
 }
 
 void lock() {
@@ -241,9 +235,17 @@ bool connectTcp() {
     return true;
 }
 
-bool enqueueOutbound(const char* channel_id, const uint8_t* payload, size_t payload_len) {
-    if (g_outbound_queue == nullptr || channel_id == nullptr || payload == nullptr ||
-        payload_len == 0 || payload_len > kMaxOutboundBytes) {
+bool enqueueOutbound(const char* channel_id, uint8_t frame_type, const uint8_t* payload,
+                     size_t payload_len) {
+    if (g_outbound_queue == nullptr || channel_id == nullptr) {
+        return false;
+    }
+
+    if (frame_type == mux::kFrameTypeCtrl) {
+        if (payload_len != 0) {
+            return false;
+        }
+    } else if (payload == nullptr || payload_len == 0 || payload_len > kMaxOutboundBytes) {
         return false;
     }
 
@@ -260,7 +262,10 @@ bool enqueueOutbound(const char* channel_id, const uint8_t* payload, size_t payl
 
     OutboundSlot& slot = g_outbound_slots[free_slot];
     snprintf(slot.channel_id, sizeof(slot.channel_id), "%s", channel_id);
-    memcpy(slot.data, payload, payload_len);
+    slot.frame_type = frame_type;
+    if (payload_len > 0 && payload != nullptr) {
+        memcpy(slot.data, payload, payload_len);
+    }
     slot.len = payload_len;
     slot.busy = true;
 
@@ -287,7 +292,12 @@ void drainOutboundLocked() {
         }
 
         OutboundSlot& slot = g_outbound_slots[queued.slot_index];
-        if (!slot.busy || slot.len == 0) {
+        if (!slot.busy) {
+            slot.busy = false;
+            continue;
+        }
+
+        if (slot.len == 0 && slot.frame_type != mux::kFrameTypeCtrl) {
             slot.busy = false;
             continue;
         }
@@ -296,9 +306,9 @@ void drainOutboundLocked() {
 
         mux::Frame frame = {};
         snprintf(frame.channel_id, sizeof(frame.channel_id), "%s", slot.channel_id);
-        frame.type = mux::kFrameTypeData;
+        frame.type = slot.frame_type;
         frame.uptime_ms = 0;
-        frame.payload = slot.data;
+        frame.payload = slot.len > 0 ? slot.data : nullptr;
         frame.payload_len = slot.len;
 
         if (!mux::encode(frame, g_encode_buf, kEncodeMax, &encoded_len)) {
@@ -320,13 +330,14 @@ void drainOutboundLocked() {
     }
 }
 
-bool sendMuxFrame(const char* channel_id, const uint8_t* payload, size_t payload_len) {
+bool sendMuxFrame(const char* channel_id, uint8_t frame_type, const uint8_t* payload,
+                  size_t payload_len) {
     if (channel_id == nullptr) {
         return false;
     }
 
     lock();
-    const bool queued = enqueueOutbound(channel_id, payload, payload_len);
+    const bool queued = enqueueOutbound(channel_id, frame_type, payload, payload_len);
     unlock();
 
     if (!queued) {
@@ -634,25 +645,36 @@ void enqueueLogJson(const char* json_line) {
     unlock();
 }
 
+bool sendMuxDataFrame(const char* channel_id, const uint8_t* payload, size_t payload_len) {
+    return sendMuxFrame(channel_id, mux::kFrameTypeData, payload, payload_len);
+}
+
+bool sendMuxCtrlFrame(const char* channel_id) {
+    return sendMuxFrame(channel_id, mux::kFrameTypeCtrl, nullptr, 0);
+}
+
 bool sendFileBrowserJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxFrame(kChannelFileBrowser, reinterpret_cast<const uint8_t*>(json_line), strlen(json_line));
+    return sendMuxDataFrame(kChannelFileBrowser, reinterpret_cast<const uint8_t*>(json_line),
+                            strlen(json_line));
 }
 
 bool sendBleScanJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxFrame(kChannelBleScan, reinterpret_cast<const uint8_t*>(json_line), strlen(json_line));
+    return sendMuxDataFrame(kChannelBleScan, reinterpret_cast<const uint8_t*>(json_line),
+                            strlen(json_line));
 }
 
 bool sendBleEventJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxFrame(kChannelBleEvents, reinterpret_cast<const uint8_t*>(json_line), strlen(json_line));
+    return sendMuxDataFrame(kChannelBleEvents, reinterpret_cast<const uint8_t*>(json_line),
+                            strlen(json_line));
 }
 
 bool sendFsDownloadChunk(const char* command_id, const uint8_t* data, size_t len) {
@@ -663,7 +685,7 @@ bool sendFsDownloadChunk(const char* command_id, const uint8_t* data, size_t len
     char channel_id[mux::kMaxChannelIdLen + 1] = {};
     snprintf(channel_id, sizeof(channel_id), "%s/%s", kChannelFsDownload, command_id);
 
-    return sendMuxFrame(channel_id, data, len);
+    return sendMuxDataFrame(channel_id, data, len);
 }
 
 void flushOutbound() {

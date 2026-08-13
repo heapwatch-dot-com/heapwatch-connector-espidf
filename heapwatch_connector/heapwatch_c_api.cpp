@@ -19,6 +19,7 @@
  */
 
 #include "heapwatch.h"
+#include "heapwatch_build_metadata.h"
 
 #include <cstdio>
 #include <cstring>
@@ -32,7 +33,6 @@
 #include "device_command/DeviceCommandHandler.h"
 #include "device_command/SleepHooks.h"
 #include "connector_settings/ConnectorSettings.h"
-#include "device_identity/DeviceIdentity.h"
 #include "device_ota/OtaService.h"
 #include "../stream_ingress/StreamIngressClient.h"
 
@@ -43,30 +43,29 @@ constexpr char kTag[] = "heapwatch_c_api";
 /** Host sticky flag — ORed with OTA-in-progress in heapwatch_keep_running(). */
 bool g_host_keep_running = false;
 
-const char* g_build_identifier_ptr = "";
-const char* g_firmware_version_ptr = "";
+bool is_placeholder_build_identifier(const char* value) {
+    if (value == nullptr || std::strncmp(value, "sha256:", 7) != 0) {
+        return true;
+    }
+    for (const char* p = value + 7; *p != '\0'; ++p) {
+        if (*p != '0') {
+            return false;
+        }
+    }
+    return true;
+}
 
-void store_app_metadata(const heapwatch_config_t* config) {
-    g_build_identifier_ptr = "";
-    g_firmware_version_ptr = "";
-    if (config == nullptr) {
+void apply_build_metadata_to_connector() {
+    if (is_placeholder_build_identifier(HEAPWATCH_BUILD_IDENTIFIER)) {
+        ESP_LOGE(kTag,
+                 "HEAPWATCH_BUILD_IDENTIFIER is still the pre-link placeholder — "
+                 "run a full idf.py build so the post-link fingerprint step can run");
         return;
     }
-    if (config->build_identifier != nullptr && config->build_identifier[0] != '\0') {
-        g_build_identifier_ptr = config->build_identifier;
-    }
-    if (config->firmware_version != nullptr && config->firmware_version[0] != '\0') {
-        g_firmware_version_ptr = config->firmware_version;
-    }
+    HeapwatchConnector::getInstance().setCoreDumpBuildIdentifier(HEAPWATCH_BUILD_IDENTIFIER);
 }
 
-bool has_explicit_credentials(const heapwatch_config_t* config) {
-    return config != nullptr && config->tenant_slug != nullptr && config->tenant_slug[0] != '\0' &&
-           config->mqtt_password != nullptr && config->mqtt_password[0] != '\0';
-}
-
-bool apply_boot_credentials(const heapwatch::connector_bootstrap::BootCredentials& creds,
-                            const char* build_identifier) {
+bool apply_boot_credentials(const heapwatch::connector_bootstrap::BootCredentials& creds) {
     auto& connector = HeapwatchConnector::getInstance();
     connector.setTenantSlug(creds.tenant_slug);
     connector.setMqttDeviceUid(creds.device_uid);
@@ -80,43 +79,7 @@ bool apply_boot_credentials(const heapwatch::connector_bootstrap::BootCredential
     if (creds.stream_api_key[0] != '\0') {
         heapwatch::stream_ingress::setStreamApiKey(creds.stream_api_key);
     }
-    if (build_identifier != nullptr && build_identifier[0] != '\0') {
-        connector.setCoreDumpBuildIdentifier(build_identifier);
-    }
-    return connector.initialize(nullptr, HEAPWATCH_MQTT_BROKER_URI);
-}
-
-bool apply_explicit_credentials(const heapwatch_config_t* config) {
-    auto& connector = HeapwatchConnector::getInstance();
-    connector.setTenantSlug(config->tenant_slug);
-    connector.setMqttPassword(config->mqtt_password);
-
-    char device_uid[HEAPWATCH_MAX_DEVICE_UID_LEN] = {};
-    if (config->device_uid != nullptr && config->device_uid[0] != '\0') {
-        std::snprintf(device_uid, sizeof(device_uid), "%s", config->device_uid);
-    } else {
-        heapwatch::device_identity::getMacUid(device_uid, sizeof(device_uid));
-    }
-    if (device_uid[0] == '\0') {
-        ESP_LOGE(kTag, "device_uid empty and MAC fallback failed");
-        return false;
-    }
-    connector.setMqttDeviceUid(device_uid);
-
-    if (config->device_api_key != nullptr && config->device_api_key[0] != '\0') {
-        char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
-        std::snprintf(auth_header, sizeof(auth_header), "Bearer %s", config->device_api_key);
-        connector.setRestApiAuthToken(auth_header);
-
-        char upload_url[256] = {};
-        std::snprintf(upload_url, sizeof(upload_url), "%s/ingress/core-dump", HEAPWATCH_API_BASE_URL);
-        connector.setCoreDumpUploadUrl(upload_url);
-    }
-
-    if (config->build_identifier != nullptr && config->build_identifier[0] != '\0') {
-        connector.setCoreDumpBuildIdentifier(config->build_identifier);
-    }
-
+    apply_build_metadata_to_connector();
     return connector.initialize(nullptr, HEAPWATCH_MQTT_BROKER_URI);
 }
 
@@ -145,35 +108,26 @@ void heapwatch_sync_time_if_managed(void) {
 }
 
 esp_err_t heapwatch_init(const heapwatch_config_t* config) {
+    (void)config;
     const HeapwatchConnectorStatus prior = HeapwatchConnector::getInstance().getStatus();
     if (prior.initialized) {
         return ESP_ERR_HEAPWATCH_ALREADY_INITIALIZED;
     }
 
-    store_app_metadata(config);
+    if (is_placeholder_build_identifier(HEAPWATCH_BUILD_IDENTIFIER)) {
+        ESP_LOGE(kTag,
+                 "HEAPWATCH_BUILD_IDENTIFIER is still the pre-link placeholder — "
+                 "run a full idf.py build so the post-link fingerprint step can run");
+        return ESP_ERR_HEAPWATCH_INIT_FAILED;
+    }
+
     heapwatch_ensure_event_loop();
 
-    bool ok = false;
-    if (has_explicit_credentials(config)) {
-        ok = apply_explicit_credentials(config);
-    } else {
-        // Mixed NULL/non-NULL credential fields are invalid — either all via
-        // bootstrap, or explicit tenant+password at minimum.
-        if (config != nullptr &&
-            ((config->tenant_slug != nullptr && config->tenant_slug[0] != '\0') ||
-             (config->mqtt_password != nullptr && config->mqtt_password[0] != '\0') ||
-             (config->device_api_key != nullptr && config->device_api_key[0] != '\0'))) {
-            ESP_LOGE(kTag, "Partial credentials: supply tenant_slug + mqtt_password, or leave all NULL");
-            return ESP_ERR_HEAPWATCH_INVALID_ARG;
-        }
-
-        heapwatch::connector_bootstrap::BootCredentials creds = {};
-        if (!heapwatch::connector_bootstrap::resolveBootCredentials(&creds)) {
-            return ESP_ERR_HEAPWATCH_NOT_PROVISIONED;
-        }
-        const char* build_id = (config != nullptr) ? config->build_identifier : nullptr;
-        ok = apply_boot_credentials(creds, build_id);
+    heapwatch::connector_bootstrap::BootCredentials creds = {};
+    if (!heapwatch::connector_bootstrap::resolveBootCredentials(&creds)) {
+        return ESP_ERR_HEAPWATCH_NOT_PROVISIONED;
     }
+    const bool ok = apply_boot_credentials(creds);
 
     if (!ok) {
         return ESP_ERR_HEAPWATCH_INIT_FAILED;
@@ -485,8 +439,14 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
     return ESP_OK;
 }
 
-const char* heapwatch_get_build_identifier(void) { return g_build_identifier_ptr; }
+const char* heapwatch_get_build_identifier(void) { return HEAPWATCH_BUILD_IDENTIFIER; }
 
-const char* heapwatch_get_firmware_version(void) { return g_firmware_version_ptr; }
+const char* heapwatch_get_app_source_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }
+
+const char* heapwatch_get_connector_source_version(void) {
+    return HEAPWATCH_CONNECTOR_SOURCE_VERSION;
+}
+
+const char* heapwatch_get_firmware_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }
 
 }  // extern "C"

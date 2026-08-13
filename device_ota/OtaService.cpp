@@ -36,9 +36,10 @@ constexpr size_t kDownloadChunk = 256;
 uint8_t g_ota_io_buf[kDownloadChunk] = {};
 constexpr size_t kMaxDataPartitions = 4;
 constexpr size_t kPartitionNameMax = 32;
-// Yield + progress each chunk so MQTT can deliver ota/abort while HTTPS streams.
+// Yield every download chunk so MQTT can deliver ota/abort while HTTPS streams.
 constexpr size_t kMqttYieldEveryBytes = kDownloadChunk;
-constexpr size_t kProgressEveryBytes = kDownloadChunk;
+// MQTT ota/progress publishes — decoupled from HTTPS read chunk size.
+constexpr size_t kProgressEveryBytes = 128 * 1024;
 constexpr int kHttpTimeoutMs = 15000;
 
 struct DataPartitionJob {
@@ -173,8 +174,7 @@ void fail_job(int64_t session_id, const char* reason) {
 
 /**
  * Same device REST auth as coredump / credential rotation: Bearer device API key
- * via resolveBootCredentials (NVS provisioned → else lab Kconfig). Lab devices
- * often have no NVS after erase-flash but still run on CONFIG_HEAPWATCH_*.
+ * via resolveBootCredentials (NVS from enrollment, or fresh enrollment run).
  */
 bool apply_device_api_key_auth(esp_http_client_handle_t client) {
     if (client == nullptr) {
@@ -436,7 +436,7 @@ bool stream_flash_app(const OtaJob& job) {
         mbedtls_sha256_update(&sha_ctx, g_ota_io_buf, static_cast<size_t>(n));
         total += static_cast<size_t>(n);
 
-        // Progress at ~64 KiB; yield every ~4 KiB so MQTT can deliver ota/abort.
+        // Progress every 128 KiB; yield every download chunk so MQTT can deliver ota/abort.
         if (total - last_progress_bytes >= kProgressEveryBytes) {
             last_progress_bytes = total;
             char progress[64];

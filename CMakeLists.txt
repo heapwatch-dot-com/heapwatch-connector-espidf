@@ -38,3 +38,23 @@ idf_component_register(
     REQUIRES ${HEAPWATCH_REQUIRES}
     EMBED_TXTFILES "certs/heapwatch_local_ca.pem"
 )
+
+# Pre-build: git describe for client app + connector -> heapwatch_build_metadata.h
+set(HEAPWATCH_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
+set(HEAPWATCH_METADATA_HEADER "${HEAPWATCH_GENERATED_DIR}/heapwatch_build_metadata.h")
+set(HEAPWATCH_SCRIPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
+
+add_custom_command(
+    OUTPUT ${HEAPWATCH_METADATA_HEADER}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${HEAPWATCH_GENERATED_DIR}
+    COMMAND ${PYTHON} ${HEAPWATCH_SCRIPTS_DIR}/generate_build_metadata.py
+            --app-root ${CMAKE_SOURCE_DIR}
+            --connector-root ${CMAKE_CURRENT_SOURCE_DIR}
+            --output ${HEAPWATCH_METADATA_HEADER}
+    COMMENT "Generate heapwatch_build_metadata.h (app + connector git describe)"
+    VERBATIM
+)
+
+add_custom_target(heapwatch_regenerate_build_metadata DEPENDS ${HEAPWATCH_METADATA_HEADER})
+add_dependencies(${COMPONENT_LIB} heapwatch_regenerate_build_metadata)
+target_include_directories(${COMPONENT_LIB} PUBLIC "${HEAPWATCH_GENERATED_DIR}")

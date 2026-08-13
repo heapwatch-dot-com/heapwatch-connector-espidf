@@ -65,7 +65,8 @@ bool isCredentialOrInternalKey(const char* key) {
     return strcmp(key, "provisioned") == 0 || strcmp(key, "tenant_slug") == 0 ||
            strcmp(key, "device_uid") == 0 || strcmp(key, "mqtt_password") == 0 ||
            strcmp(key, "device_api_key") == 0 || strcmp(key, "boot_cycle") == 0 ||
-           strcmp(key, "last_crash_bc") == 0 || strcmp(key, "man_hash") == 0;
+           strcmp(key, "last_crash_bc") == 0 || strcmp(key, "man_hash") == 0 ||
+           strcmp(key, "man_build") == 0;
 }
 
 bool isSecretLikeKeyName(const char* key) {
@@ -496,7 +497,7 @@ bool writeJsonValueToNvs(nvs_handle_t handle, const char* key, const cJSON* valu
 }  // namespace
 
 void init() {
-    registerManagedCatalog("heapwatch", "Heapwatch connector", NVS_NAMESPACE, kHeapwatchFields,
+    registerManagedCatalog("heapwatch", "Heapwatch Connector", NVS_NAMESPACE, kHeapwatchFields,
                            sizeof(kHeapwatchFields) / sizeof(kHeapwatchFields[0]));
     reloadFromNvs();
     ESP_LOGI(TAG, "telemetry=%u ms log_lvl=%u outbox_drain=%u ms",

@@ -279,7 +279,8 @@ bool buildPayload(char* output, size_t output_len) {
         "{\"idf_target\":\"%s\",\"chip_model\":\"%s\",\"chip_revision\":%u,\"chip_cores\":%u,"
         "\"flash_size_bytes\":%lu,\"psram_size_bytes\":%lu,\"heap_total_bytes\":%lu,"
         "\"internal_heap_total_bytes\":%lu,\"min_free_heap_bytes\":%lu,"
-        "\"sdk_version\":\"%s\",\"app_version\":\"%s\",\"build_identifier\":\"%s\","
+        "\"sdk_version\":\"%s\",\"app_version\":\"%s\",\"connector_source_version\":\"%s\","
+        "\"build_identifier\":\"%s\","
         "\"build_date\":\"%s\",\"cpu_freq_mhz\":%u,\"reset_reason\":\"%s\","
         "\"secure_boot_enabled\":%s,\"flash_encryption_enabled\":%s",
         CONFIG_IDF_TARGET,
@@ -292,9 +293,10 @@ bool buildPayload(char* output, size_t output_len) {
         static_cast<unsigned long>(internal_heap_total),
         static_cast<unsigned long>(min_free_heap),
         esp_get_idf_version(),
-        (heapwatch_get_firmware_version()[0] != '\0')
-            ? heapwatch_get_firmware_version()
+        (heapwatch_get_app_source_version()[0] != '\0')
+            ? heapwatch_get_app_source_version()
             : (app_desc != nullptr ? app_desc->version : ""),
+        heapwatch_get_connector_source_version(),
         heapwatch_get_build_identifier(),
         build_date,
         CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,

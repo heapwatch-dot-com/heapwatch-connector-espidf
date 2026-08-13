@@ -19,15 +19,13 @@
  * Pure C ABI: include this header from main.c or main.cpp. Internals are C++;
  * this surface is the only compatibility contract for client firmware (VER1).
  *
- * Typical app_main (credentials from Kconfig / NVS via bootstrap):
+ * Typical app_main (credentials via NVS or device enrollment):
  *
  *   nvs_flash_init();
  *   heapwatch_ensure_event_loop();
  *   heapwatch_init_wifi_if_managed();
  *   heapwatch_sync_time_if_managed();
- *   heapwatch_config_t cfg = HEAPWATCH_CONFIG_DEFAULT();
- *   cfg.build_identifier = BUILD_IDENTIFIER;
- *   ESP_ERROR_CHECK(heapwatch_init(&cfg));
+ *   ESP_ERROR_CHECK(heapwatch_init(NULL));
  *   heapwatch_install_log_relay_if_enabled();
  *   heapwatch_set_network_ready(true);
  *   heapwatch_start_log_relay_if_enabled();
@@ -67,33 +65,17 @@ extern "C" {
    --------------------------------------------------------------------------- */
 
 /**
- * Init config. String fields may be NULL to resolve credentials via the
- * connector bootstrap (NVS → device enrollment → Kconfig lab settings).
- * When providing explicit credentials, tenant_slug and mqtt_password are
- * required; device_uid may be NULL/empty (MAC-derived fallback is applied
- * only on the bootstrap path — pass a UID when supplying credentials
- * explicitly).
+ * Init config placeholder — reserved for future options. Credentials are always
+ * resolved via bootstrap (NVS from a prior enrollment, else CONFIG_HEAPWATCH_ENROLLMENT_KEY).
  */
 typedef struct {
-    const char* tenant_slug;
-    const char* device_uid;
-    const char* mqtt_password;
-    const char* device_api_key;
-    /** Optional; used as the coredump/build fingerprint. NULL = omit. */
-    const char* build_identifier;
-    /** Optional human-readable firmware version (e.g. git describe). NULL = esp_app_desc version. */
-    const char* firmware_version;
+    uint8_t reserved;
 } heapwatch_config_t;
 
-/** Zero-init helper — all pointers NULL (bootstrap credential resolution). */
+/** Zero-init helper — credentials are never passed via this struct. */
 static inline heapwatch_config_t heapwatch_config_default(void) {
-    heapwatch_config_t config;
-    config.tenant_slug = NULL;
-    config.device_uid = NULL;
-    config.mqtt_password = NULL;
-    config.device_api_key = NULL;
-    config.build_identifier = NULL;
-    config.firmware_version = NULL;
+    heapwatch_config_t config = {};
+    config.reserved = 0;
     return config;
 }
 #define HEAPWATCH_CONFIG_DEFAULT() heapwatch_config_default()
@@ -149,8 +131,9 @@ void heapwatch_init_wifi_if_managed(void);
 void heapwatch_sync_time_if_managed(void);
 
 /**
- * Apply credentials, start dispatcher/metrics threads. Does not set network
+ * Apply credentials from bootstrap, start dispatcher/metrics threads. Does not set network
  * ready — call heapwatch_set_network_ready(true) once connectivity is up.
+ * @param config Reserved — pass NULL or HEAPWATCH_CONFIG_DEFAULT(); ignored today.
  */
 esp_err_t heapwatch_init(const heapwatch_config_t* config);
 
@@ -269,8 +252,13 @@ typedef struct {
  */
 esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t* catalog);
 
-/** Build metadata set via heapwatch_init(); empty string when unset. */
+/** Build metadata from generated heapwatch_build_metadata.h (compile-time). */
 const char* heapwatch_get_build_identifier(void);
+/** Client app git-describe string (HEAPWATCH_APP_SOURCE_VERSION). */
+const char* heapwatch_get_app_source_version(void);
+/** Connector component git-describe string (HEAPWATCH_CONNECTOR_SOURCE_VERSION). */
+const char* heapwatch_get_connector_source_version(void);
+/** @deprecated Use heapwatch_get_app_source_version(). */
 const char* heapwatch_get_firmware_version(void);
 
 #ifdef __cplusplus

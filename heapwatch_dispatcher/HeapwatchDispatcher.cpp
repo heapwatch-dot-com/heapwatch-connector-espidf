@@ -186,6 +186,9 @@ static const char* get_topic_for_message_type(enum MqttMessageType msg_type) {
         case MQTT_MESSAGE_TYPE_BLUETOOTH:
             snprintf(topic_buf, sizeof(topic_buf), "%s/device/%s/bluetooth", tenant, uid);
             return topic_buf;
+        case MQTT_MESSAGE_TYPE_CONFIG:
+            snprintf(topic_buf, sizeof(topic_buf), "%s/device/%s/config", tenant, uid);
+            return topic_buf;
         default:
             return "";
     }
