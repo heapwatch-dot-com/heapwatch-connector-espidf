@@ -115,6 +115,7 @@ bool sendCtrlEnd(const char* channel_id) {
     }
     return false;
 }
+bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
     while (xTaskGetTickCount() < deadline) {
         if (heapwatch::stream_ingress::sendMuxDataFrame(channel_id, data, len)) {
@@ -127,7 +128,7 @@ bool sendCtrlEnd(const char* channel_id) {
     return false;
 }
 
-bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
+bool streamManifestBody(const char* body) {
     if (body == nullptr) {
         return false;
     }
