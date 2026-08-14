@@ -5,6 +5,7 @@
 #include "device_identity/DeviceIdentity.h"
 #include "freertos/FreeRTOS.h"
 #include "heapwatch_config.h"
+#include "heapwatch_endpoints.h"
 
 namespace heapwatch::device_enrollment {
 

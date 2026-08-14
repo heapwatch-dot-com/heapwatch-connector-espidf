@@ -232,16 +232,16 @@ bool enroll(const char* api_base, const char* enrollment_key, const char* claime
         return false;
     }
 
-    cJSON* root = cJSON_Parse(response.data);
-    if (root == nullptr) {
+    cJSON* parsed = cJSON_Parse(response.data);
+    if (parsed == nullptr) {
         return false;
     }
 
-    const cJSON* data = cJSON_GetObjectItem(root, "data");
+    const cJSON* data = cJSON_GetObjectItem(parsed, "data");
     const bool ok =
         data != nullptr && cJSON_IsObject(data) &&
         parse_enroll_payload(data, device_uid_out, device_uid_out_len, status_out);
-    cJSON_Delete(root);
+    cJSON_Delete(parsed);
 
     if (ok) {
         ESP_LOGI(TAG, "Enrolled device %s status=%d", device_uid_out,
