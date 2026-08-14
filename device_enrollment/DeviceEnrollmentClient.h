@@ -20,8 +20,8 @@ enum class Status {
 
 /** POST /api/device-enrollment/enroll — server mints device_uid. */
 bool enroll(const char* api_base, const char* enrollment_key, const char* claimed_mac,
-            const char* build_identifier, const char* build_environment, char* device_uid_out,
-            size_t device_uid_out_len, Status* status_out);
+            const char* claimed_uid128, const char* build_identifier, const char* build_environment,
+            char* device_uid_out, size_t device_uid_out_len, Status* status_out);
 
 /** GET /api/device-enrollment/status */
 Status pollStatus(const char* api_base, const char* enrollment_key, const char* device_uid);
@@ -33,9 +33,15 @@ bool fetchProvisioning(const char* api_base, const char* enrollment_key, const c
 /** POST /api/devices/self/provisioning/confirm */
 bool confirmProvisioning(const char* api_base, const char* device_api_key);
 
+/** POST /api/devices/self/identities */
+bool postClaimedIdentities(const char* api_base, const char* device_api_key,
+                           const char* claimed_mac, const char* claimed_uid128,
+                           const char* claimed_customer_hardware_id);
+
 bool runUntilProvisioned(const char* api_base, const char* enrollment_key,
-                         const char* claimed_mac, const char* build_identifier,
-                         const char* build_environment, uint32_t poll_interval_ms,
+                         const char* claimed_mac, const char* claimed_uid128,
+                         const char* build_identifier, const char* build_environment,
+                         uint32_t poll_interval_ms,
                          heapwatch::device_credentials::Credentials* out);
 
 }  // namespace heapwatch::device_enrollment

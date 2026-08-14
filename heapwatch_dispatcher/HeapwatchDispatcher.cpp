@@ -29,6 +29,7 @@
 #include "esp_system.h"
 #include "mqtt_client.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "../device_command/DeviceCommandHandler.h"
 #include "../device_command/CommandManifest.h"
 #include "../device_network/DeviceNetworkReporter.h"
@@ -318,6 +319,10 @@ static void service_coredump_upload_if_due() {
 #endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD */
 }
 
+static void service_claimed_identities_post_if_due() {
+    (void)heapwatch::device_enrollment::serviceClaimedIdentitiesBootPostIfDue();
+}
+
 void heapwatch_dispatch_task(void* arg) {
     (void)arg;  // Unused parameter
     
@@ -331,6 +336,9 @@ void heapwatch_dispatch_task(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));
             continue;
         }
+
+        service_claimed_identities_post_if_due();
+
         // -----------------------------------------------------------------------
         // Step 1: Ensure MQTT client is connected
         // -----------------------------------------------------------------------

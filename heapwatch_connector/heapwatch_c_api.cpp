@@ -145,6 +145,10 @@ void heapwatch_set_network_ready(bool ready) {
     HeapwatchConnector::getInstance().setNetworkReady(ready);
 }
 
+void heapwatch_sync_claimed_identities(void) {
+    heapwatch::connector_bootstrap::syncClaimedIdentitiesIfProvisioned();
+}
+
 void heapwatch_set_boot_cycle_context(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
     HeapwatchConnector::getInstance().setBootCycleContext(boot_cycle, crash_boot_cycle);
 }

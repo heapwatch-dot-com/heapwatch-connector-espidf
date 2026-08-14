@@ -83,6 +83,9 @@ void installLogRelayHookIfEnabled();
  */
 void startLogRelayTaskIfEnabled();
 
+/** Fill-null-only backfill of claimed MAC / UID128 for provisioned devices (once per boot). */
+void syncClaimedIdentitiesIfProvisioned();
+
 uint32_t getWifiReconnectsTotal();
 uint32_t getLogLinesDroppedTotal();
 uint32_t getLogMqttDroppedTotal();

@@ -37,6 +37,8 @@
 
 #include "../connector_settings/ConnectorSettings.h"
 #include "device_enrollment/DeviceEnrollmentClient.h"
+#include "device_enrollment/ClaimedIdentitiesBootSync.h"
+#include "device_credentials/DeviceCredentialsStore.h"
 #include "device_identity/DeviceIdentity.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch.h"
@@ -446,7 +448,9 @@ bool runFactoryEnrollment(BootCredentials* creds) {
     }
 
     char claimed_mac[32] = {};
+    char claimed_uid128[33] = {};
     heapwatch::device_identity::getClaimedMac(claimed_mac, sizeof(claimed_mac));
+    heapwatch::device_identity::getClaimedUid128(claimed_uid128, sizeof(claimed_uid128));
 
     heapwatch::device_credentials::Credentials enrolled = {};
     const uint32_t poll_interval_ms = CONFIG_HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS > 0
@@ -455,7 +459,7 @@ bool runFactoryEnrollment(BootCredentials* creds) {
                                           : HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS;
 
     if (!heapwatch::device_enrollment::runUntilProvisioned(
-            HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac,
+            HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac, claimed_uid128,
             heapwatch_get_build_identifier(),
             CONFIG_HEAPWATCH_BUILD_ENV, poll_interval_ms, &enrolled)) {
         return false;
@@ -638,5 +642,9 @@ void startLogRelayTaskIfEnabled() {
 uint32_t getWifiReconnectsTotal() { return g_wifi_reconnects_total; }
 uint32_t getLogLinesDroppedTotal() { return g_log_lines_dropped_total; }
 uint32_t getLogMqttDroppedTotal() { return g_log_mqtt_dropped_total; }
+
+void syncClaimedIdentitiesIfProvisioned() {
+    heapwatch::device_enrollment::requestClaimedIdentitiesBootPostNow();
+}
 
 }  // namespace heapwatch::connector_bootstrap

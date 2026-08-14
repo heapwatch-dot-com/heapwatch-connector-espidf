@@ -186,8 +186,8 @@ bool is_waiting_for_operator(Status status) {
 }  // namespace
 
 bool enroll(const char* api_base, const char* enrollment_key, const char* claimed_mac,
-            const char* build_identifier, const char* build_environment, char* device_uid_out,
-            size_t device_uid_out_len, Status* status_out) {
+            const char* claimed_uid128, const char* build_identifier, const char* build_environment,
+            char* device_uid_out, size_t device_uid_out_len, Status* status_out) {
     if (api_base == nullptr || enrollment_key == nullptr || claimed_mac == nullptr ||
         device_uid_out == nullptr || device_uid_out_len == 0 || enrollment_key[0] == '\0' ||
         claimed_mac[0] == '\0') {
@@ -197,15 +197,38 @@ bool enroll(const char* api_base, const char* enrollment_key, const char* claime
     char url[HTTP_URL_MAX] = {};
     std::snprintf(url, sizeof(url), "%s/api/device-enrollment/enroll", api_base);
 
-    char body[HTTP_BODY_MAX] = {};
-    std::snprintf(body, sizeof(body),
-                  "{\"enrollment_key\":\"%s\",\"claimed_mac\":\"%s\","
-                  "\"build_identifier\":\"%s\",\"build_environment\":\"%s\"}",
-                  enrollment_key, claimed_mac, build_identifier != nullptr ? build_identifier : "",
-                  build_environment != nullptr ? build_environment : "development");
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) {
+        return false;
+    }
+
+    cJSON_AddStringToObject(root, "enrollment_key", enrollment_key);
+    if (claimed_mac[0] != '\0') {
+        cJSON_AddStringToObject(root, "claimed_mac", claimed_mac);
+    } else {
+        cJSON_AddNullToObject(root, "claimed_mac");
+    }
+    if (claimed_uid128 != nullptr && claimed_uid128[0] != '\0') {
+        cJSON_AddStringToObject(root, "claimed_uid128", claimed_uid128);
+    } else {
+        cJSON_AddNullToObject(root, "claimed_uid128");
+    }
+    cJSON_AddNullToObject(root, "claimed_customer_hardware_id");
+    cJSON_AddStringToObject(root, "build_identifier",
+                            build_identifier != nullptr ? build_identifier : "");
+    cJSON_AddStringToObject(root, "build_environment",
+                            build_environment != nullptr ? build_environment : "development");
+
+    char* body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (body == nullptr) {
+        return false;
+    }
 
     HttpResponseBuffer response = {};
-    if (!http_request(url, HTTP_METHOD_POST, body, nullptr, &response)) {
+    const bool http_ok = http_request(url, HTTP_METHOD_POST, body, nullptr, &response);
+    cJSON_free(body);
+    if (!http_ok) {
         return false;
     }
 
@@ -312,9 +335,60 @@ bool confirmProvisioning(const char* api_base, const char* device_api_key) {
     return true;
 }
 
+bool postClaimedIdentities(const char* api_base, const char* device_api_key,
+                           const char* claimed_mac, const char* claimed_uid128,
+                           const char* claimed_customer_hardware_id) {
+    if (api_base == nullptr || device_api_key == nullptr || device_api_key[0] == '\0') {
+        return false;
+    }
+
+    char url[HTTP_URL_MAX] = {};
+    std::snprintf(url, sizeof(url), "%s/api/devices/self/identities", api_base);
+
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) {
+        return false;
+    }
+
+    if (claimed_mac != nullptr && claimed_mac[0] != '\0') {
+        cJSON_AddStringToObject(root, "claimed_mac", claimed_mac);
+    } else {
+        cJSON_AddNullToObject(root, "claimed_mac");
+    }
+
+    if (claimed_uid128 != nullptr && claimed_uid128[0] != '\0') {
+        cJSON_AddStringToObject(root, "claimed_uid128", claimed_uid128);
+    } else {
+        cJSON_AddNullToObject(root, "claimed_uid128");
+    }
+
+    if (claimed_customer_hardware_id != nullptr && claimed_customer_hardware_id[0] != '\0') {
+        cJSON_AddStringToObject(root, "claimed_customer_hardware_id",
+                                claimed_customer_hardware_id);
+    } else {
+        cJSON_AddNullToObject(root, "claimed_customer_hardware_id");
+    }
+
+    char* body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (body == nullptr) {
+        return false;
+    }
+
+    HttpResponseBuffer response = {};
+    const bool ok = http_request(url, HTTP_METHOD_POST, body, device_api_key, &response);
+    cJSON_free(body);
+
+    if (ok) {
+        ESP_LOGI(TAG, "Posted claimed identities");
+    }
+
+    return ok;
+}
+
 bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const char* claimed_mac,
-                         const char* build_identifier, const char* build_environment,
-                         uint32_t poll_interval_ms,
+                         const char* claimed_uid128, const char* build_identifier,
+                         const char* build_environment, uint32_t poll_interval_ms,
                          heapwatch::device_credentials::Credentials* out) {
     if (api_base == nullptr || enrollment_key == nullptr || claimed_mac == nullptr ||
         out == nullptr || enrollment_key[0] == '\0' || claimed_mac[0] == '\0') {
@@ -324,8 +398,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
     char device_uid[HEAPWATCH_MAX_DEVICE_UID_LEN] = {};
     if (!heapwatch::device_credentials::loadPendingDeviceUid(device_uid, sizeof(device_uid))) {
         Status enroll_status = Status::kError;
-        if (!enroll(api_base, enrollment_key, claimed_mac, build_identifier, build_environment,
-                    device_uid, sizeof(device_uid), &enroll_status)) {
+        if (!enroll(api_base, enrollment_key, claimed_mac, claimed_uid128, build_identifier,
+                    build_environment, device_uid, sizeof(device_uid), &enroll_status)) {
             ESP_LOGE(TAG, "Initial enrollment submit failed");
             return false;
         }

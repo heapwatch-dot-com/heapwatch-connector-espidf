@@ -121,6 +121,12 @@
 #define HEAPWATCH_COREDUMP_RETRY_INTERVAL_MS 20000
 
 /**
+ * Delay between claimed-identities POST retry attempts on heapwatch_dispatcher once
+ * heapwatch_network_ready() is true (host-owned or managed networking).
+ */
+#define HEAPWATCH_IDENTITIES_RETRY_INTERVAL_MS 20000
+
+/**
  * Default delay between device enrollment poll requests (fallback only —
  * CONFIG_HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS is used directly where available).
  */

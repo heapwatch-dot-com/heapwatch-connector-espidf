@@ -142,6 +142,13 @@ void heapwatch_deinit(void);
 void heapwatch_set_network_ready(bool ready);
 
 /**
+ * Backfill claimed MAC / UID128 on the server for already-provisioned devices.
+ * Runs automatically on heapwatch_dispatcher once heapwatch_set_network_ready(true);
+ * call explicitly after network_ready when you want an immediate attempt.
+ */
+void heapwatch_sync_claimed_identities(void);
+
+/**
  * Optional: attribute STARTING_UP / coredump headers to a boot-cycle counter.
  * Call after heapwatch_init(), before queuing the STARTING_UP event.
  */
