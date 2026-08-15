@@ -554,6 +554,10 @@ void ensureDefaultEventLoop() {
 bool resolveBootCredentials(BootCredentials* creds) {
     if (loadBootCredentials(creds)) {
         ESP_LOGI(kTag, "Using NVS provisioned credentials for %s", creds->device_uid);
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
+#endif
         return true;
     }
 
@@ -610,8 +614,16 @@ void initWifiIfManaged() {
         abort();
     }
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-    heapwatch::device_enrollment::setIndicatorPhase(
-        heapwatch::device_enrollment::EnrollStateLedPhase::kEnrolling);
+    {
+        heapwatch::device_credentials::Credentials stored = {};
+        if (heapwatch::device_credentials::load(&stored) && stored.device_api_key[0] != '\0') {
+            heapwatch::device_enrollment::setIndicatorPhase(
+                heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
+        } else {
+            heapwatch::device_enrollment::setIndicatorPhase(
+                heapwatch::device_enrollment::EnrollStateLedPhase::kEnrolling);
+        }
+    }
 #endif
 #else
     ESP_LOGW(kTag, "HEAPWATCH_MANAGE_WIFI disabled; waiting for host app to bring up its own "
