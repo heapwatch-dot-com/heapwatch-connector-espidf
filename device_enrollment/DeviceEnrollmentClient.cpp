@@ -1,5 +1,7 @@
 #include "DeviceEnrollmentClient.h"
 
+#include "EnrollStateLedIndicator.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -182,6 +184,32 @@ bool is_terminal_failure(Status status) {
 
 bool is_waiting_for_operator(Status status) {
     return status == Status::kPending || status == Status::kReEnrollBlocked;
+}
+
+void updateIndicatorForEnrollmentStatus(Status status) {
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+    if (is_terminal_failure(status)) {
+        setIndicatorPhase(indicatorPhaseFromEnrollmentStatus(status));
+        return;
+    }
+
+    if (status == Status::kAcceptedAwaitingProvision) {
+        setIndicatorPhase(EnrollStateLedPhase::kAcceptedAwaitingProvision);
+        return;
+    }
+
+    if (is_waiting_for_operator(status)) {
+        setIndicatorPhase(indicatorPhaseFromEnrollmentStatus(status));
+        return;
+    }
+
+    if (status == Status::kError) {
+        setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+        return;
+    }
+
+    setIndicatorPhase(EnrollStateLedPhase::kEnrolling);
+#endif
 }
 }  // namespace
 
@@ -395,69 +423,103 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
         return false;
     }
 
-    char device_uid[HEAPWATCH_MAX_DEVICE_UID_LEN] = {};
-    if (!heapwatch::device_credentials::loadPendingDeviceUid(device_uid, sizeof(device_uid))) {
-        Status enroll_status = Status::kError;
-        if (!enroll(api_base, enrollment_key, claimed_mac, claimed_uid128, build_identifier,
-                    build_environment, device_uid, sizeof(device_uid), &enroll_status)) {
-            ESP_LOGE(TAG, "Initial enrollment submit failed");
-            return false;
-        }
-
-        if (is_terminal_failure(enroll_status)) {
-            ESP_LOGE(TAG, "Enrollment terminal status %d for %s", static_cast<int>(enroll_status),
-                     device_uid);
-            return false;
-        }
-
-        if (!heapwatch::device_credentials::savePendingDeviceUid(device_uid)) {
-            ESP_LOGW(TAG, "Failed to persist pending device uid %s", device_uid);
-        }
-    } else {
-        ESP_LOGI(TAG, "Resuming enrollment for pending device %s", device_uid);
-    }
-
     while (true) {
-        const Status status = pollStatus(api_base, enrollment_key, device_uid);
+        char device_uid[HEAPWATCH_MAX_DEVICE_UID_LEN] = {};
+        if (!heapwatch::device_credentials::loadPendingDeviceUid(device_uid, sizeof(device_uid))) {
+            while (true) {
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+                setIndicatorPhase(EnrollStateLedPhase::kEnrolling);
+#endif
+                Status enroll_status = Status::kError;
+                if (enroll(api_base, enrollment_key, claimed_mac, claimed_uid128, build_identifier,
+                           build_environment, device_uid, sizeof(device_uid), &enroll_status)) {
+                    updateIndicatorForEnrollmentStatus(enroll_status);
 
-        if (status == Status::kAcceptedAwaitingProvision) {
-            break;
-        }
-        if (is_terminal_failure(status)) {
-            ESP_LOGE(TAG, "Enrollment terminal status %d for %s", static_cast<int>(status),
-                     device_uid);
-            heapwatch::device_credentials::clearPendingDeviceUid();
-            return false;
-        }
-        if (status == Status::kProvisioned) {
-            ESP_LOGE(TAG, "Device %s already provisioned but NVS credentials missing", device_uid);
-            heapwatch::device_credentials::clearPendingDeviceUid();
-            return false;
-        }
-        if (status == Status::kError) {
-            ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying", device_uid);
-        } else if (is_waiting_for_operator(status)) {
-            ESP_LOGI(TAG, "Enrollment awaiting operator for %s (%d), waiting %u ms", device_uid,
-                     static_cast<int>(status), static_cast<unsigned>(poll_interval_ms));
+                    if (is_terminal_failure(enroll_status)) {
+                        ESP_LOGE(TAG, "Enrollment terminal status %d for %s, retrying in %u ms",
+                                 static_cast<int>(enroll_status), device_uid,
+                                 static_cast<unsigned>(poll_interval_ms));
+                        vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                        continue;
+                    }
+
+                    if (!heapwatch::device_credentials::savePendingDeviceUid(device_uid)) {
+                        ESP_LOGW(TAG, "Failed to persist pending device uid %s", device_uid);
+                    }
+                    break;
+                }
+
+                ESP_LOGW(TAG, "Enrollment submit failed, retrying in %u ms",
+                         static_cast<unsigned>(poll_interval_ms));
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+                setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+#endif
+                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+            }
         } else {
-            ESP_LOGI(TAG, "Enrollment status %d for %s, waiting %u ms", static_cast<int>(status),
-                     device_uid, static_cast<unsigned>(poll_interval_ms));
+            ESP_LOGI(TAG, "Resuming enrollment for pending device %s", device_uid);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
-    }
+        bool accepted_awaiting_provision = false;
+        while (!accepted_awaiting_provision) {
+            const Status status = pollStatus(api_base, enrollment_key, device_uid);
 
-    if (!fetchProvisioning(api_base, enrollment_key, device_uid, out)) {
-        ESP_LOGE(TAG, "Provisioning fetch failed for %s", device_uid);
-        return false;
-    }
+            updateIndicatorForEnrollmentStatus(status);
 
-    if (!confirmProvisioning(api_base, out->device_api_key)) {
-        ESP_LOGE(TAG, "Provisioning confirm failed for %s", device_uid);
-        return false;
-    }
+            if (status == Status::kAcceptedAwaitingProvision) {
+                accepted_awaiting_provision = true;
+                break;
+            }
+            if (is_terminal_failure(status)) {
+                ESP_LOGE(TAG, "Enrollment terminal status %d for %s, retrying in %u ms",
+                         static_cast<int>(status), device_uid,
+                         static_cast<unsigned>(poll_interval_ms));
+                heapwatch::device_credentials::clearPendingDeviceUid();
+                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                break;
+            }
+            if (status == Status::kProvisioned) {
+                ESP_LOGW(TAG, "Device %s already provisioned but NVS credentials missing, "
+                              "retrying provisioning in %u ms",
+                         device_uid, static_cast<unsigned>(poll_interval_ms));
+                heapwatch::device_credentials::clearPendingDeviceUid();
+                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                break;
+            }
+            if (status == Status::kError) {
+                ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying in %u ms", device_uid,
+                         static_cast<unsigned>(poll_interval_ms));
+            } else if (is_waiting_for_operator(status)) {
+                ESP_LOGI(TAG, "Enrollment awaiting operator for %s (%d), waiting %u ms",
+                         device_uid, static_cast<int>(status),
+                         static_cast<unsigned>(poll_interval_ms));
+            } else {
+                ESP_LOGI(TAG, "Enrollment status %d for %s, waiting %u ms",
+                         static_cast<int>(status), device_uid,
+                         static_cast<unsigned>(poll_interval_ms));
+            }
 
-    return true;
+            vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+        }
+
+        if (!accepted_awaiting_provision) {
+            continue;
+        }
+
+        while (true) {
+            if (fetchProvisioning(api_base, enrollment_key, device_uid, out) &&
+                confirmProvisioning(api_base, out->device_api_key)) {
+                return true;
+            }
+
+            ESP_LOGW(TAG, "Provisioning fetch/confirm failed for %s, retrying in %u ms",
+                     device_uid, static_cast<unsigned>(poll_interval_ms));
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+            setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+#endif
+            vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+        }
+    }
 }
 
 }  // namespace heapwatch::device_enrollment

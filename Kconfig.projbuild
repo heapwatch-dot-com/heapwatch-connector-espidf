@@ -63,6 +63,31 @@ menu "Heapwatch Connector"
             help
                 Delay between GET /api/device-enrollment/status polls while waiting
                 for operator Accept on the Pending devices queue.
+
+        config HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+            bool "Enroll state LED indicator"
+            default n
+            help
+                Drive a GPIO LED with distinct blink patterns for Wi-Fi connect,
+                enrollment HTTP, and each enrollment_status while provisioning.
+                Disabled at compile time when n — no LED task in the firmware image.
+
+        config HEAPWATCH_ENROLL_STATE_LED_GPIO
+            int "Enroll state LED GPIO pin"
+            default -1
+            range -1 48
+            depends on HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+            help
+                GPIO number for the status LED. Must be wired on the board.
+                -1 means unset (indicator stays off even if enabled).
+
+        config HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
+            bool "Enroll state LED active low"
+            default y
+            depends on HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+            help
+                y: LED turns on when GPIO is driven low (common on dev boards).
+                n: LED turns on when GPIO is driven high.
     endmenu
 
     menu "Feature toggles"

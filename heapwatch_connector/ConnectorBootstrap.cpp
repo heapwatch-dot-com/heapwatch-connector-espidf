@@ -37,6 +37,7 @@
 
 #include "../connector_settings/ConnectorSettings.h"
 #include "device_enrollment/DeviceEnrollmentClient.h"
+#include "device_enrollment/EnrollStateLedIndicator.h"
 #include "device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "device_credentials/DeviceCredentialsStore.h"
 #include "device_identity/DeviceIdentity.h"
@@ -462,8 +463,13 @@ bool runFactoryEnrollment(BootCredentials* creds) {
             HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac, claimed_uid128,
             heapwatch_get_build_identifier(),
             CONFIG_HEAPWATCH_BUILD_ENV, poll_interval_ms, &enrolled)) {
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kNetworkError);
         return false;
     }
+
+    heapwatch::device_enrollment::setIndicatorPhase(
+        heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
 
     if (!heapwatch::device_credentials::save(&enrolled)) {
         return false;
@@ -560,6 +566,11 @@ bool resolveBootCredentials(BootCredentials* creds) {
 
 void initWifiIfManaged() {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+    heapwatch::device_enrollment::startIndicator();
+    heapwatch::device_enrollment::setIndicatorPhase(
+        heapwatch::device_enrollment::EnrollStateLedPhase::kWifiConnecting);
+#endif
     g_wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
     esp_netif_create_default_wifi_sta();
@@ -589,9 +600,17 @@ void initWifiIfManaged() {
                                            pdFALSE, pdFALSE, portMAX_DELAY);
 
     if ((bits & kWifiConnectedBit) == 0) {
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
+#endif
         ESP_LOGE(kTag, "Unable to connect to Wi-Fi SSID '%s'", CONFIG_HEAPWATCH_WIFI_SSID);
         abort();
     }
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+    heapwatch::device_enrollment::setIndicatorPhase(
+        heapwatch::device_enrollment::EnrollStateLedPhase::kEnrolling);
+#endif
 #else
     ESP_LOGW(kTag, "HEAPWATCH_MANAGE_WIFI disabled; waiting for host app to bring up its own "
                    "netif and call HeapwatchConnector::setNetworkReady(true)");
