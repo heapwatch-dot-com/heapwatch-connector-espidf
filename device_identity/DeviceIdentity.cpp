@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "esp_efuse.h"
+#include "esp_efuse_table.h"
 #include "esp_mac.h"
 #include "esp_system.h"
 

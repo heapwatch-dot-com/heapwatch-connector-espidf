@@ -20,7 +20,11 @@ volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::kWifiConnecting;
 bool g_started = false;
 
 void driveLed(bool logical_on) {
-    const bool active_low = CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW;
+#if defined(CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW) && CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
+    const bool active_low = true;
+#else
+    const bool active_low = false;
+#endif
     const int level = (logical_on != active_low) ? 1 : 0;
     gpio_set_level(static_cast<gpio_num_t>(CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO), level);
 }
@@ -200,7 +204,11 @@ void startIndicator() {
     g_started = true;
     ESP_LOGI(kTag, "Enroll state LED on GPIO %d (active_low=%d)",
              CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO,
-             CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW ? 1 : 0);
+#if defined(CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW) && CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
+             1);
+#else
+             0);
+#endif
 }
 
 void setIndicatorPhase(EnrollStateLedPhase phase) { g_phase = phase; }
