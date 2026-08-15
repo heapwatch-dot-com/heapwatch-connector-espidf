@@ -479,12 +479,15 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 break;
             }
             if (status == Status::kProvisioned) {
-                ESP_LOGW(TAG, "Device %s already provisioned but NVS credentials missing, "
-                              "retrying provisioning in %u ms",
+                ESP_LOGW(TAG, "Device %s already provisioned — fetching credentials into NVS",
+                         device_uid);
+                if (fetchProvisioning(api_base, enrollment_key, device_uid, out)) {
+                    return true;
+                }
+                ESP_LOGW(TAG, "Provisioning fetch failed for provisioned %s, retrying in %u ms",
                          device_uid, static_cast<unsigned>(poll_interval_ms));
-                heapwatch::device_credentials::clearPendingDeviceUid();
                 vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
-                break;
+                continue;
             }
             if (status == Status::kError) {
                 ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying in %u ms", device_uid,

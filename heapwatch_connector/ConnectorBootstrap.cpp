@@ -468,12 +468,14 @@ bool runFactoryEnrollment(BootCredentials* creds) {
         return false;
     }
 
-    heapwatch::device_enrollment::setIndicatorPhase(
-        heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
-
     if (!heapwatch::device_credentials::save(&enrolled)) {
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kNetworkError);
         return false;
     }
+
+    heapwatch::device_enrollment::setIndicatorPhase(
+        heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
 
     std::strncpy(creds->tenant_slug, enrolled.tenant_slug, sizeof(creds->tenant_slug) - 1);
     std::strncpy(creds->device_uid, enrolled.device_uid, sizeof(creds->device_uid) - 1);
