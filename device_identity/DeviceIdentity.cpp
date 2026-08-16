@@ -1,7 +1,6 @@
 #include "DeviceIdentity.h"
 
 #include <cstdio>
-#include <cstring>
 
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
@@ -59,17 +58,7 @@ void getClaimedUid128(char* out, size_t out_len) {
 
     out[0] = '\0';
 
-#if CONFIG_IDF_TARGET_ESP32
-    uint8_t factory_mac[6] = {};
-    uint8_t sta_mac[6] = {};
-    esp_efuse_mac_get_default(factory_mac);
-    esp_read_mac(sta_mac, ESP_MAC_WIFI_STA);
-
-    uint8_t combined[12] = {};
-    std::memcpy(combined, factory_mac, 6);
-    std::memcpy(combined + 6, sta_mac, 6);
-    format_hex_lower(combined, sizeof(combined), out, out_len);
-#else
+#if !CONFIG_IDF_TARGET_ESP32
     uint8_t uid[16] = {};
     if (esp_efuse_read_field_blob(ESP_EFUSE_OPTIONAL_UNIQUE_ID, uid, 128) != ESP_OK) {
         return;
