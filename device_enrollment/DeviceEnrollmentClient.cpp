@@ -1,5 +1,6 @@
 #include "DeviceEnrollmentClient.h"
 
+#include "device_credentials/DeviceCredentialsStore.h"
 #include "EnrollStateLedIndicator.h"
 
 #include <cstdio>
@@ -184,6 +185,40 @@ bool is_terminal_failure(Status status) {
 
 bool is_waiting_for_operator(Status status) {
     return status == Status::kPending || status == Status::kReEnrollBlocked;
+}
+
+bool fetchSaveAndConfirmProvisioning(const char* api_base, const char* enrollment_key,
+                                     const char* device_uid,
+                                     heapwatch::device_credentials::Credentials* out) {
+    if (!fetchProvisioning(api_base, enrollment_key, device_uid, out)) {
+        return false;
+    }
+
+    if (!heapwatch::device_credentials::save(out)) {
+        ESP_LOGE(TAG, "Failed to save credentials before confirm for %s", out->device_uid);
+        return false;
+    }
+
+    if (!confirmProvisioning(api_base, out->device_api_key)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool fetchAndSaveProvisioning(const char* api_base, const char* enrollment_key,
+                              const char* device_uid,
+                              heapwatch::device_credentials::Credentials* out) {
+    if (!fetchProvisioning(api_base, enrollment_key, device_uid, out)) {
+        return false;
+    }
+
+    if (!heapwatch::device_credentials::save(out)) {
+        ESP_LOGE(TAG, "Failed to save recovered credentials for %s", out->device_uid);
+        return false;
+    }
+
+    return true;
 }
 
 void updateIndicatorForEnrollmentStatus(Status status) {
@@ -481,7 +516,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
             if (status == Status::kProvisioned) {
                 ESP_LOGW(TAG, "Device %s already provisioned — fetching credentials into NVS",
                          device_uid);
-                if (fetchProvisioning(api_base, enrollment_key, device_uid, out)) {
+                if (fetchAndSaveProvisioning(api_base, enrollment_key, device_uid, out)) {
                     return true;
                 }
                 ESP_LOGW(TAG, "Provisioning fetch failed for provisioned %s, retrying in %u ms",
@@ -510,12 +545,11 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
         }
 
         while (true) {
-            if (fetchProvisioning(api_base, enrollment_key, device_uid, out) &&
-                confirmProvisioning(api_base, out->device_api_key)) {
+            if (fetchSaveAndConfirmProvisioning(api_base, enrollment_key, device_uid, out)) {
                 return true;
             }
 
-            ESP_LOGW(TAG, "Provisioning fetch/confirm failed for %s, retrying in %u ms",
+            ESP_LOGW(TAG, "Provisioning fetch/save/confirm failed for %s, retrying in %u ms",
                      device_uid, static_cast<unsigned>(poll_interval_ms));
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
             setIndicatorPhase(EnrollStateLedPhase::kNetworkError);

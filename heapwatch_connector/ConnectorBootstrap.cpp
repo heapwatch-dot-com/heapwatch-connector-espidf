@@ -442,7 +442,7 @@ bool loadBootCredentials(BootCredentials* creds) {
     return true;
 }
 
-// Device enrollment: enroll → status poll → fetch → confirm.
+// Device enrollment: enroll → status poll → fetch → save NVS → confirm.
 bool runFactoryEnrollment(BootCredentials* creds) {
     if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
         return false;
@@ -463,12 +463,6 @@ bool runFactoryEnrollment(BootCredentials* creds) {
             HEAPWATCH_API_BASE_URL, CONFIG_HEAPWATCH_ENROLLMENT_KEY, claimed_mac, claimed_uid128,
             heapwatch_get_build_identifier(),
             CONFIG_HEAPWATCH_BUILD_ENV, poll_interval_ms, &enrolled)) {
-        heapwatch::device_enrollment::setIndicatorPhase(
-            heapwatch::device_enrollment::EnrollStateLedPhase::kNetworkError);
-        return false;
-    }
-
-    if (!heapwatch::device_credentials::save(&enrolled)) {
         heapwatch::device_enrollment::setIndicatorPhase(
             heapwatch::device_enrollment::EnrollStateLedPhase::kNetworkError);
         return false;
