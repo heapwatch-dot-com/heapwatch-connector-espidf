@@ -27,6 +27,7 @@
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "heapwatch_connector/ConnectorBootstrap.h"
+#include "heapwatch_connector/ConnectorLifecycle.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
 #include "heapwatch_connector/ParameterAPI.h"
 #include "heapwatch_endpoints.h"
@@ -43,49 +44,11 @@ constexpr char kTag[] = "heapwatch_c_api";
 /** Host sticky flag — ORed with OTA-in-progress in heapwatch_keep_running(). */
 bool g_host_keep_running = false;
 
-bool is_placeholder_build_identifier(const char* value) {
-    if (value == nullptr || std::strncmp(value, "sha256:", 7) != 0) {
-        return true;
-    }
-    for (const char* p = value + 7; *p != '\0'; ++p) {
-        if (*p != '0') {
-            return false;
-        }
-    }
-    return true;
-}
+// Post-link upload gate scans the shipped .bin for this exact string.
+__attribute__((used)) static const char k_embedded_build_identifier[] = HEAPWATCH_BUILD_IDENTIFIER;
 
-void apply_build_metadata_to_connector() {
-    if (is_placeholder_build_identifier(HEAPWATCH_BUILD_IDENTIFIER)) {
-        ESP_LOGE(kTag,
-                 "HEAPWATCH_BUILD_IDENTIFIER is still the pre-link placeholder — "
-                 "run a full idf.py build so the post-link fingerprint step can run");
-        return;
-    }
-    HeapwatchConnector::getInstance().setCoreDumpBuildIdentifier(HEAPWATCH_BUILD_IDENTIFIER);
-}
-
-bool apply_boot_credentials(const heapwatch::connector_bootstrap::BootCredentials& creds) {
-    auto& connector = HeapwatchConnector::getInstance();
-    connector.setTenantSlug(creds.tenant_slug);
-    connector.setMqttDeviceUid(creds.device_uid);
-    connector.setMqttPassword(creds.mqtt_password);
-    if (creds.coredump_upload_url[0] != '\0') {
-        connector.setCoreDumpUploadUrl(creds.coredump_upload_url);
-    }
-    if (creds.coredump_auth_header[0] != '\0') {
-        connector.setRestApiAuthToken(creds.coredump_auth_header);
-    }
-    if (creds.stream_api_key[0] != '\0') {
-        heapwatch::stream_ingress::setStreamApiKey(creds.stream_api_key);
-    }
-    apply_build_metadata_to_connector();
-    return connector.initialize(nullptr, HEAPWATCH_MQTT_BROKER_URI);
-}
-
-esp_err_t require_initialized() {
-    const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
-    if (!status.initialized) {
+esp_err_t require_queue_ready() {
+    if (!HeapwatchConnector::getInstance().isInfrastructureReady()) {
         return ESP_ERR_HEAPWATCH_NOT_INITIALIZED;
     }
     return ESP_OK;
@@ -95,54 +58,12 @@ esp_err_t require_initialized() {
 
 extern "C" {
 
-void heapwatch_ensure_event_loop(void) {
-    heapwatch::connector_bootstrap::ensureDefaultEventLoop();
-}
-
-void heapwatch_init_wifi_if_managed(void) {
-    heapwatch::connector_bootstrap::initWifiIfManaged();
-}
-
-void heapwatch_sync_time_if_managed(void) {
-    heapwatch::connector_bootstrap::syncTimeIfManaged();
-}
-
-esp_err_t heapwatch_init(const heapwatch_config_t* config) {
-    (void)config;
-    const HeapwatchConnectorStatus prior = HeapwatchConnector::getInstance().getStatus();
-    if (prior.initialized) {
-        return ESP_ERR_HEAPWATCH_ALREADY_INITIALIZED;
-    }
-
-    if (is_placeholder_build_identifier(HEAPWATCH_BUILD_IDENTIFIER)) {
-        ESP_LOGE(kTag,
-                 "HEAPWATCH_BUILD_IDENTIFIER is still the pre-link placeholder — "
-                 "run a full idf.py build so the post-link fingerprint step can run");
-        return ESP_ERR_HEAPWATCH_INIT_FAILED;
-    }
-
-    heapwatch_ensure_event_loop();
-
-    heapwatch::connector_bootstrap::BootCredentials creds = {};
-    if (!heapwatch::connector_bootstrap::resolveBootCredentials(&creds)) {
-        return ESP_ERR_HEAPWATCH_NOT_PROVISIONED;
-    }
-    const bool ok = apply_boot_credentials(creds);
-
-    if (!ok) {
-        return ESP_ERR_HEAPWATCH_INIT_FAILED;
-    }
-
-    HeapwatchConnector::getInstance().setNetworkReady(false);
-    return ESP_OK;
+esp_err_t heapwatch_initialize(void) {
+    return heapwatch::connector_lifecycle::initialize();
 }
 
 void heapwatch_deinit(void) {
     HeapwatchConnector::getInstance().deinitialize();
-}
-
-void heapwatch_set_network_ready(bool ready) {
-    HeapwatchConnector::getInstance().setNetworkReady(ready);
 }
 
 void heapwatch_sync_claimed_identities(void) {
@@ -158,6 +79,7 @@ esp_err_t heapwatch_get_status(heapwatch_status_t* out) {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
     const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
+    out->phase = heapwatch::connector_lifecycle::getPhase();
     out->initialized = status.initialized;
     out->network_ready = status.network_ready;
     out->mqtt_connected = status.mqtt_connected;
@@ -182,16 +104,8 @@ bool heapwatch_keep_running(void) {
     return g_host_keep_running || heapwatch::device_ota::isInProgress();
 }
 
-void heapwatch_install_log_relay_if_enabled(void) {
-    heapwatch::connector_bootstrap::installLogRelayHookIfEnabled();
-}
-
-void heapwatch_start_log_relay_if_enabled(void) {
-    heapwatch::connector_bootstrap::startLogRelayTaskIfEnabled();
-}
-
 esp_err_t heapwatch_queue_event(int event_type_id, int32_t boot_cycle) {
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -204,7 +118,7 @@ esp_err_t heapwatch_queue_log(HeapwatchConnectorSeverity severity, const char* m
     if (message == nullptr) {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -228,7 +142,7 @@ esp_err_t heapwatch_queue_parameter_int(const char* slug, int64_t value) {
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -240,7 +154,7 @@ esp_err_t heapwatch_queue_parameter_double(const char* slug, double value) {
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -252,7 +166,7 @@ esp_err_t heapwatch_update_parameter_int(const char* slug, int64_t value) {
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -264,7 +178,7 @@ esp_err_t heapwatch_update_parameter_double(const char* slug, double value) {
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -277,7 +191,7 @@ esp_err_t heapwatch_update_parameter_int_ranged(const char* slug, int64_t value,
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -290,7 +204,7 @@ esp_err_t heapwatch_update_parameter_double_ranged(const char* slug, double valu
     if (slug == nullptr || slug[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -302,7 +216,7 @@ esp_err_t heapwatch_update_power_mv(const char* source_name, int64_t mv) {
     if (source_name == nullptr || source_name[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -315,7 +229,7 @@ esp_err_t heapwatch_update_power_mv_ranged(const char* source_name, int64_t mv, 
     if (source_name == nullptr || source_name[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -327,7 +241,7 @@ esp_err_t heapwatch_update_power_percent(const char* source_name, double percent
     if (source_name == nullptr || source_name[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -339,7 +253,7 @@ esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_
     if (source_name == nullptr || source_name[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -348,7 +262,7 @@ esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_
 }
 
 esp_err_t heapwatch_update_cellular_signal(int rssi_dbm, int ber) {
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -357,7 +271,7 @@ esp_err_t heapwatch_update_cellular_signal(int rssi_dbm, int ber) {
 }
 
 esp_err_t heapwatch_queue_specs(void) {
-    const esp_err_t ready = require_initialized();
+    const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;
     }
@@ -443,7 +357,7 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
     return ESP_OK;
 }
 
-const char* heapwatch_get_build_identifier(void) { return HEAPWATCH_BUILD_IDENTIFIER; }
+const char* heapwatch_get_build_identifier(void) { return k_embedded_build_identifier; }
 
 const char* heapwatch_get_app_source_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }
 

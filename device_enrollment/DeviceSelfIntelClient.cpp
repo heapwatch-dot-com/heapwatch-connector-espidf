@@ -83,7 +83,14 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
     }
 
     if (status < 200 || status >= 300) {
-        ESP_LOGE(TAG, "HTTP status %d body=%s", status, response.data);
+        if (status == 401) {
+            ESP_LOGW(TAG,
+                     "Device API key rejected (401) — NVS credentials likely belong to another "
+                     "Heapwatch stack or a deleted device; re-enroll or erase NVS (namespace "
+                     "'heapwatch')");
+        } else {
+            ESP_LOGE(TAG, "HTTP status %d body=%s", status, response.data);
+        }
         return false;
     }
 

@@ -189,10 +189,17 @@ menu "Heapwatch Connector"
         config HEAPWATCH_ENABLE_COREDUMP_UPLOAD
             bool "Upload core dumps from flash on boot"
             default y
+            select ESP_COREDUMP_ENABLE_TO_FLASH
+            select ESP_COREDUMP_DATA_FORMAT_ELF
+            select ESP_COREDUMP_CHECKSUM_CRC32
+            select ESP_COREDUMP_CHECK_BOOT
             help
                 Checks for and uploads a pending core dump over HTTPS on boot,
                 retrying until it succeeds. Disabling skips the check entirely and
                 leaves any pending core dump in flash.
+
+                When enabled, also turns on ESP-IDF core dump to flash (required for
+                esp_core_dump_image_check). Add a coredump partition to partitions.csv.
 
         config HEAPWATCH_ENABLE_STANDARD_EVENTS
             bool "Dispatch built-in connector events"

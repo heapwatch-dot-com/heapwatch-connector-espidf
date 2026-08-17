@@ -2,6 +2,7 @@
 
 #include "device_credentials/DeviceCredentialsStore.h"
 #include "EnrollStateLedIndicator.h"
+#include "heapwatch_connector/ConnectorLifecycle.h"
 
 #include <cstdio>
 #include <cstring>
@@ -221,6 +222,18 @@ bool fetchAndSaveProvisioning(const char* api_base, const char* enrollment_key,
     return true;
 }
 
+void updateLifecyclePhaseForEnrollmentStatus(Status status) {
+    if (is_waiting_for_operator(status)) {
+        heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_WAITING_ACCEPT);
+        return;
+    }
+    if (status == Status::kAcceptedAwaitingProvision || status == Status::kProvisioned) {
+        heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_PROVISIONING);
+        return;
+    }
+    heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_PROVISIONING);
+}
+
 void updateIndicatorForEnrollmentStatus(Status status) {
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
     if (is_terminal_failure(status)) {
@@ -245,6 +258,7 @@ void updateIndicatorForEnrollmentStatus(Status status) {
 
     setIndicatorPhase(EnrollStateLedPhase::kEnrolling);
 #endif
+    updateLifecyclePhaseForEnrollmentStatus(status);
 }
 }  // namespace
 

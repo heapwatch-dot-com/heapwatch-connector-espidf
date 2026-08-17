@@ -41,12 +41,11 @@
 #include "device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "device_credentials/DeviceCredentialsStore.h"
 #include "device_identity/DeviceIdentity.h"
-#include "heapwatch_endpoints.h"
 #include "heapwatch.h"
+#include "heapwatch_endpoints.h"
+#include "heapwatch_connector/ConnectorLifecycle.h"
 
 namespace heapwatch::connector_bootstrap {
-
-namespace {
 
 constexpr char kTag[] = "connector_bootstrap";
 
@@ -54,16 +53,19 @@ constexpr EventBits_t kWifiConnectedBit = BIT0;
 constexpr EventBits_t kWifiFailBit = BIT1;
 constexpr int kWifiMaxRetry = 10;
 
+EventGroupHandle_t g_wifi_event_group = nullptr;
+int g_wifi_retry = 0;
+uint32_t g_wifi_reconnects_total = 0;
+volatile bool g_wifi_permanently_failed = false;
+volatile bool g_command_wifi_reconnect_active = false;
+
+namespace {
+
 constexpr uint32_t kLogForwardIntervalMs = 100;
 constexpr uint32_t kLogAssemblyFlushTimeoutMs = 250;
 constexpr size_t kLogLineMaxLen = 256;
 constexpr size_t kLogTagMaxLen = 32;
 constexpr size_t kLogRingCapacity = 64;
-
-EventGroupHandle_t g_wifi_event_group = nullptr;
-int g_wifi_retry = 0;
-uint32_t g_wifi_reconnects_total = 0;
-volatile bool g_command_wifi_reconnect_active = false;
 
 int (*g_default_log_vprintf)(const char* fmt, va_list args) = nullptr;
 uint32_t g_log_lines_dropped_total = 0;
@@ -396,16 +398,15 @@ void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
             ESP_LOGW(kTag, "Wi-Fi reconnect attempt %d/%d", g_wifi_retry, kWifiMaxRetry);
         } else {
             xEventGroupSetBits(g_wifi_event_group, kWifiFailBit);
+            g_wifi_permanently_failed = true;
+            heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
             ESP_LOGE(kTag, "Wi-Fi connect failed after %d retries", kWifiMaxRetry);
         }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        g_wifi_retry = 0;
-        xEventGroupSetBits(g_wifi_event_group, kWifiConnectedBit);
-        ESP_LOGI(kTag, "Wi-Fi connected and IP acquired");
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_INTERNET_CONNECTED);
     }
 }
 #endif /* CONFIG_HEAPWATCH_MANAGE_WIFI (wifiEventHandler) */
+
+}  // namespace
 
 void setCoredumpAuthHeader(BootCredentials* creds) {
     if (creds == nullptr || creds->device_api_key[0] == '\0') {
@@ -442,7 +443,6 @@ bool loadBootCredentials(BootCredentials* creds) {
     return true;
 }
 
-// Device enrollment: enroll → status poll → fetch → save NVS → confirm.
 bool runFactoryEnrollment(BootCredentials* creds) {
     if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
         return false;
@@ -481,41 +481,12 @@ bool runFactoryEnrollment(BootCredentials* creds) {
     return true;
 }
 
-struct EnrollmentTaskParams {
-    BootCredentials* creds = nullptr;
-    bool success = false;
-    SemaphoreHandle_t done = nullptr;
-};
+bool isWifiPermanentlyFailed() { return g_wifi_permanently_failed; }
 
-void enrollmentTaskEntry(void* param) {
-    auto* params = static_cast<EnrollmentTaskParams*>(param);
-    params->success = runFactoryEnrollment(params->creds);
-    if (params->done != nullptr) {
-        xSemaphoreGive(params->done);
-    }
-    vTaskDelete(nullptr);
+void clearWifiPermanentlyFailed() {
+    g_wifi_permanently_failed = false;
+    g_wifi_retry = 0;
 }
-
-bool runFactoryEnrollmentOnDedicatedTask(BootCredentials* creds) {
-    EnrollmentTaskParams params = {creds, false, xSemaphoreCreateBinary()};
-    if (params.done == nullptr) {
-        return false;
-    }
-
-    constexpr uint32_t kEnrollmentTaskStackBytes = 14336;
-    if (xTaskCreate(enrollmentTaskEntry, "hw_enroll", kEnrollmentTaskStackBytes, &params,
-                    tskIDLE_PRIORITY + 2, nullptr) != pdPASS) {
-        vSemaphoreDelete(params.done);
-        ESP_LOGE(kTag, "Failed to start enrollment task");
-        return false;
-    }
-
-    xSemaphoreTake(params.done, portMAX_DELAY);
-    vSemaphoreDelete(params.done);
-    return params.success;
-}
-
-}  // namespace
 
 bool requestWifiReconnect(uint32_t duration_s) {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
@@ -545,32 +516,20 @@ void ensureDefaultEventLoop() {
     }
 }
 
-bool resolveBootCredentials(BootCredentials* creds) {
-    if (loadBootCredentials(creds)) {
-        ESP_LOGI(kTag, "Using NVS provisioned credentials for %s", creds->device_uid);
-#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-        heapwatch::device_enrollment::setIndicatorPhase(
-            heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
-#endif
-        return true;
-    }
-
-    if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
-        ESP_LOGE(kTag, "No NVS credentials and CONFIG_HEAPWATCH_ENROLLMENT_KEY is empty");
-        return false;
-    }
-
-    ESP_LOGI(kTag, "Starting device enrollment");
-    return runFactoryEnrollmentOnDedicatedTask(creds);
+void startNetworkReporters() {
+    heapwatch::device_network::start();
+    heapwatch::device_radio::start();
 }
 
-void initWifiIfManaged() {
+void startWifiIfManaged() {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
     heapwatch::device_enrollment::startIndicator();
     heapwatch::device_enrollment::setIndicatorPhase(
         heapwatch::device_enrollment::EnrollStateLedPhase::kWifiConnecting);
 #endif
+    g_wifi_permanently_failed = false;
+    g_wifi_retry = 0;
     g_wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
     esp_netif_create_default_wifi_sta();
@@ -580,8 +539,6 @@ void initWifiIfManaged() {
 
     ESP_ERROR_CHECK(
         esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr));
-    ESP_ERROR_CHECK(
-        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiEventHandler, nullptr));
 
     wifi_config_t wifi_config = {};
     std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), CONFIG_HEAPWATCH_WIFI_SSID,
@@ -595,36 +552,10 @@ void initWifiIfManaged() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    EventBits_t bits = xEventGroupWaitBits(g_wifi_event_group, kWifiConnectedBit | kWifiFailBit,
-                                           pdFALSE, pdFALSE, portMAX_DELAY);
-
-    if ((bits & kWifiConnectedBit) == 0) {
-#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-        heapwatch::device_enrollment::setIndicatorPhase(
-            heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
-#endif
-        ESP_LOGE(kTag, "Unable to connect to Wi-Fi SSID '%s'", CONFIG_HEAPWATCH_WIFI_SSID);
-        abort();
-    }
-#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-    {
-        heapwatch::device_credentials::Credentials stored = {};
-        if (heapwatch::device_credentials::load(&stored) && stored.device_api_key[0] != '\0') {
-            heapwatch::device_enrollment::setIndicatorPhase(
-                heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
-        } else {
-            heapwatch::device_enrollment::setIndicatorPhase(
-                heapwatch::device_enrollment::EnrollStateLedPhase::kEnrolling);
-        }
-    }
-#endif
+    ESP_LOGI(kTag, "Wi-Fi STA started (non-blocking)");
 #else
-    ESP_LOGW(kTag, "HEAPWATCH_MANAGE_WIFI disabled; waiting for host app to bring up its own "
-                   "netif and call HeapwatchConnector::setNetworkReady(true)");
+    ESP_LOGI(kTag, "HEAPWATCH_MANAGE_WIFI disabled; host app owns networking");
 #endif /* CONFIG_HEAPWATCH_MANAGE_WIFI */
-    heapwatch::device_network::start();
-    heapwatch::device_radio::start();
 }
 
 void syncTimeIfManaged() {

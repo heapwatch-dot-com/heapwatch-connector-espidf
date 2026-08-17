@@ -45,41 +45,40 @@ struct BootCredentials {
 /** I1: idempotent; tolerates the event loop already existing (host app may have created it). */
 void ensureDefaultEventLoop();
 
-/**
- * Resolves device credentials: NVS-provisioned (from a prior enrollment) first,
- * otherwise device enrollment using CONFIG_HEAPWATCH_ENROLLMENT_KEY.
- */
-bool resolveBootCredentials(BootCredentials* creds);
+bool loadBootCredentials(BootCredentials* creds);
 
 /**
- * Brings up Wi-Fi STA and blocks until connected when HEAPWATCH_MANAGE_WIFI=y (aborts on
- * exhausted retries, matching prior main.cpp behavior). Logs and returns immediately,
- * performing no netif/Wi-Fi init, when HEAPWATCH_MANAGE_WIFI=n -- the host app owns
- * networking and must call HeapwatchConnector::setNetworkReady(true) itself once up.
+ * Non-blocking Wi-Fi STA bring-up when HEAPWATCH_MANAGE_WIFI=y. When disabled, the host app
+ * owns networking; IP events on any esp_netif still drive connector network readiness.
  */
-void initWifiIfManaged();
+void startWifiIfManaged();
+
+void startNetworkReporters();
+
+bool isWifiPermanentlyFailed();
+void clearWifiPermanentlyFailed();
+
+/** Runs factory enrollment loop on the calling task (bootstrap only — never app_main). */
+bool runFactoryEnrollment(BootCredentials* creds);
 
 /** Disconnect and reconnect Wi-Fi when HEAPWATCH_MANAGE_WIFI=y. Optional offline duration. */
 bool requestWifiReconnect(uint32_t duration_s);
 
 /**
  * Blocks (bounded, ~20s) until SNTP time sync succeeds when HEAPWATCH_MANAGE_TIME_SYNC=y.
- * Logs and returns immediately when HEAPWATCH_MANAGE_TIME_SYNC=n -- the host app is
- * responsible for system time in that case.
+ * Intended for the bootstrap task only — never call from app_main.
  */
 void syncTimeIfManaged();
 
 /**
  * Installs the ESP log vprintf hook that feeds the log-relay ring buffer, when
- * HEAPWATCH_ENABLE_LOG_COLLECTION=y. No-op otherwise. Call once, early in app_main, before
- * relying on any relayed log lines -- matches prior ordering (installed before
- * setNetworkReady(true)).
+ * HEAPWATCH_ENABLE_LOG_COLLECTION=y. Called automatically by heapwatch_initialize().
  */
 void installLogRelayHookIfEnabled();
 
 /**
  * Starts the "hw_log_forward" FreeRTOS task that drains the log-relay ring buffer into the
- * connector's log queue, when HEAPWATCH_ENABLE_LOG_COLLECTION=y. No-op otherwise.
+ * connector's log queue, when HEAPWATCH_ENABLE_LOG_COLLECTION=y.
  */
 void startLogRelayTaskIfEnabled();
 

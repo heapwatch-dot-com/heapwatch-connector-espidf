@@ -35,6 +35,11 @@
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_radio/BluetoothReporter.h"
 #include "../connector_settings/ConnectorSettings.h"
+#include "../device_command/GoingDarkPipeline.h"
+#include "../device_fs/DeviceFsCommandHandler.h"
+#include "../device_ota/OtaService.h"
+#include "../storage_stats/StorageStats.h"
+#include "../stream_ingress/StreamIngressClient.h"
 #include "ParameterStore.h"
 #include "heapwatch_connector_timing.h"
 
@@ -49,6 +54,7 @@ QueueSetHandle_t g_queue_set = nullptr;
 QueueHandle_t g_coredump_queue = nullptr;
 SemaphoreHandle_t g_publish_mutex = nullptr;
 bool g_initialized = false;
+bool g_infrastructure_ready = false;
 volatile bool g_dispatcher_running = false;
 volatile bool g_collector_running = false;
 volatile bool g_network_ready = false;
@@ -146,6 +152,21 @@ struct PublishLockGuard {
     PublishLockGuard(const PublishLockGuard&) = delete;
     PublishLockGuard& operator=(const PublishLockGuard&) = delete;
 };
+
+void initConnectorSubsystemsOnce() {
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+    initialized = true;
+
+    heapwatch::storage_stats::init();
+    heapwatch::connector_settings::init();
+    heapwatch::going_dark::init();
+    heapwatch::device_ota::init();
+    heapwatch::stream_ingress::init();
+    heapwatch::device_fs::init();
+}
 }
 
 HeapwatchConnector& HeapwatchConnector::getInstance() {
@@ -153,22 +174,11 @@ HeapwatchConnector& HeapwatchConnector::getInstance() {
     return instance;
 }
 
-bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_url) {
-    if (g_initialized) {
+bool HeapwatchConnector::ensureInfrastructure() {
+    if (g_infrastructure_ready) {
         return true;
     }
 
-    if (device_uid != nullptr) {
-        setMqttDeviceUid(device_uid);
-    }
-    if (broker_url != nullptr) {
-        snprintf(g_broker_uri, sizeof(g_broker_uri), "%s", broker_url);
-    }
-
-    // M1 (Phase 2b): three fixed-size queue tiers instead of one flat 2KB slot for
-    // every message — see heapwatch_config.h for the size rationale. The dispatcher
-    // services all three via a FreeRTOS Queue Set so it still blocks efficiently on
-    // "any queue has data" instead of polling each one with short timeouts.
     g_tiny_queue = xQueueCreate(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage));
     g_small_queue = xQueueCreate(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
     g_large_queue = xQueueCreate(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
@@ -210,14 +220,45 @@ bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_u
         }
     }
 
+    g_infrastructure_ready = true;
+    return true;
+}
+
+bool HeapwatchConnector::isInfrastructureReady() const { return g_infrastructure_ready; }
+
+bool HeapwatchConnector::activateWithBroker(const char* broker_url) {
+    if (g_initialized) {
+        return true;
+    }
+    if (!g_infrastructure_ready && !ensureInfrastructure()) {
+        return false;
+    }
+
+    if (broker_url != nullptr) {
+        snprintf(g_broker_uri, sizeof(g_broker_uri), "%s", broker_url);
+    }
+
+    initConnectorSubsystemsOnce();
     heapwatch_dispatcher_init();
     heapwatch::metrics_collector::init();
 
     g_initialized = true;
-    g_network_ready = false;
+    // network_ready is owned by IP_EVENT handlers — do not clear here or MQTT never starts.
     startDispatcherThread();
     startCollectorThread();
     return true;
+}
+
+bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_url) {
+    if (g_initialized) {
+        return true;
+    }
+
+    if (device_uid != nullptr) {
+        setMqttDeviceUid(device_uid);
+    }
+
+    return activateWithBroker(broker_url);
 }
 
 void HeapwatchConnector::deinitialize() {
@@ -242,6 +283,7 @@ void HeapwatchConnector::deinitialize() {
     }
 
     g_initialized = false;
+    g_infrastructure_ready = false;
     g_network_ready = false;
 }
 
@@ -419,7 +461,7 @@ bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const cha
     (void)context;
     return false;
 #else
-    if (!g_initialized || g_small_queue == nullptr || message == nullptr) {
+    if (!g_infrastructure_ready || g_small_queue == nullptr || message == nullptr) {
         return false;
     }
 
@@ -445,7 +487,7 @@ bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payloa
     (void)payload_len;
     return false;
 #else
-    if (!g_initialized || g_coredump_queue == nullptr || base64_payload == nullptr) {
+    if (!g_infrastructure_ready || g_coredump_queue == nullptr || base64_payload == nullptr) {
         return false;
     }
     if (payload_len == 0 || payload_len >= HEAPWATCH_COREDUMP_MAX_PAYLOAD_SIZE) {
@@ -470,7 +512,7 @@ bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payloa
 }
 
 bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
-#if !CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
+#if !CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD || !CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     return false;
 #else
     if (g_coredump_upload_url[0] == '\0') {
@@ -643,11 +685,11 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     ESP_LOGI(TAG, "Core dump upload completed (%u bytes raw, streamed) and coredump was erased from flash.",
              static_cast<unsigned>(dump_size));
     return true;
-#endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD */
+#endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 }
 
 void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
-    if (!g_initialized || g_tiny_queue == nullptr || name == nullptr) {
+    if (!g_infrastructure_ready || g_tiny_queue == nullptr || name == nullptr) {
         return;
     }
     PublishLockGuard lock;
@@ -676,7 +718,7 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
 }
 
 void HeapwatchConnector::queueParameter(const char* name, double value) {
-    if (!g_initialized || g_tiny_queue == nullptr || name == nullptr) {
+    if (!g_infrastructure_ready || g_tiny_queue == nullptr || name == nullptr) {
         return;
     }
     PublishLockGuard lock;
@@ -708,7 +750,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     (void)boot_cycle;
     return;
 #else
-    if (!g_initialized || g_tiny_queue == nullptr) {
+    if (!g_infrastructure_ready || g_tiny_queue == nullptr) {
         return;
     }
     PublishLockGuard lock;
@@ -757,7 +799,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
 
 void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* phase, int64_t bytes,
                                           int64_t total) {
-    if (!g_initialized || g_small_queue == nullptr || phase == nullptr || phase[0] == '\0') {
+    if (!g_infrastructure_ready || g_small_queue == nullptr || phase == nullptr || phase[0] == '\0') {
         return;
     }
 
@@ -795,7 +837,7 @@ void HeapwatchConnector::queueSpecs() {
 #if !CONFIG_HEAPWATCH_ENABLE_DEVICE_SPECS
     return;
 #else
-    if (!g_initialized || g_large_queue == nullptr) {
+    if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
 
@@ -831,7 +873,7 @@ void HeapwatchConnector::queueSpecs() {
 }
 
 void HeapwatchConnector::queueNetwork() {
-    if (!g_initialized || g_large_queue == nullptr) {
+    if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
 
@@ -867,7 +909,7 @@ void HeapwatchConnector::queueNetwork() {
 }
 
 void HeapwatchConnector::queueBluetoothSnapshot() {
-    if (!g_initialized || g_large_queue == nullptr) {
+    if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
 
@@ -921,7 +963,7 @@ void HeapwatchConnector::updateParameterDoubleRanged(const char* slug, double va
 }
 
 void HeapwatchConnector::flushParameters() {
-    if (!g_initialized || g_large_queue == nullptr) {
+    if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
 

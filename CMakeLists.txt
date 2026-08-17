@@ -51,10 +51,18 @@ add_custom_command(
             --app-root ${CMAKE_SOURCE_DIR}
             --connector-root ${CMAKE_CURRENT_SOURCE_DIR}
             --output ${HEAPWATCH_METADATA_HEADER}
-    COMMENT "Generate heapwatch_build_metadata.h (app + connector git describe)"
+    COMMENT "Generate heapwatch_build_metadata.h (app + connector versions, git or empty)"
     VERBATIM
 )
 
 add_custom_target(heapwatch_regenerate_build_metadata DEPENDS ${HEAPWATCH_METADATA_HEADER})
 add_dependencies(${COMPONENT_LIB} heapwatch_regenerate_build_metadata)
 target_include_directories(${COMPONENT_LIB} PUBLIC "${HEAPWATCH_GENERATED_DIR}")
+
+# Post-link fingerprint refresh rewrites this header; force recompile of TUs that embed it.
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/heapwatch_c_api.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/ConnectorLifecycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/device_command/CommandManifest.cpp"
+    PROPERTIES OBJECT_DEPENDS "${HEAPWATCH_METADATA_HEADER}"
+)

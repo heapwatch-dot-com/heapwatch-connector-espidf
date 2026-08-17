@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -26,7 +27,19 @@ HEAPWATCH_BUILD_IDENTIFIER_RE = re.compile(
 )
 
 
+def normalize_describe_version(raw: str) -> str:
+    version = raw.strip()
+    if version.startswith("v"):
+        version = version[1:]
+    return version
+
+
 def git_describe(repo_root: Path) -> str:
+    """
+    Best-effort git-describe for a repo root.
+
+    Returns an empty string when git is unavailable (no .git, not a checkout, etc.).
+    """
     safe_directory = str(repo_root.resolve())
     for args in (
         ["git", "-c", f"safe.directory={safe_directory}", "describe", "--tags", "--always", "--dirty"],
@@ -42,19 +55,24 @@ def git_describe(repo_root: Path) -> str:
         if ret.returncode != 0:
             continue
 
-        version = ret.stdout.strip()
-        if not version:
-            continue
+        version = normalize_describe_version(ret.stdout)
+        if version:
+            return version
 
-        if version.startswith("v"):
-            version = version[1:]
+    return ""
 
-        return version
 
-    raise RuntimeError(
-        f"Could not determine git version in {repo_root}. "
-        "Tag the repo (e.g. v1.0.0) or ensure .git is present."
-    )
+def resolve_source_version(repo_root: Path, env_var: str) -> str:
+    """
+    Resolve a source version string for build metadata.
+
+    Order: process env override, then git describe, else empty (no VCS).
+    """
+    override = os.environ.get(env_var, "").strip()
+    if override:
+        return normalize_describe_version(override)
+
+    return git_describe(repo_root)
 
 
 def render_header(

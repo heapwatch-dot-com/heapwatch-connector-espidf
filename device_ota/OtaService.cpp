@@ -182,7 +182,7 @@ bool apply_device_api_key_auth(esp_http_client_handle_t client) {
     }
 
     heapwatch::connector_bootstrap::BootCredentials creds = {};
-    if (!heapwatch::connector_bootstrap::resolveBootCredentials(&creds) ||
+    if (!heapwatch::connector_bootstrap::loadBootCredentials(&creds) ||
         creds.device_api_key[0] == '\0') {
         ESP_LOGE(kLogTag, "Device API key missing; cannot auth OTA download");
         return false;

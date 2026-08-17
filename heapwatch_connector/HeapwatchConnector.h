@@ -96,6 +96,13 @@ class HeapwatchConnector {
 public:
     static HeapwatchConnector& getInstance();
 
+    /** Creates MQTT queues/mutex — safe to call before credentials exist. */
+    bool ensureInfrastructure();
+    bool isInfrastructureReady() const;
+
+    /** Starts dispatcher/collector after credentials are applied. */
+    bool activateWithBroker(const char* broker_url);
+
     bool initialize(const char* device_uid, const char* broker_url);
     void deinitialize();
     void setNetworkReady(bool ready);

@@ -16,19 +16,10 @@
 /**
  * Heapwatch Connector for ESP-IDF — public C API (Phase 5b).
  *
- * Pure C ABI: include this header from main.c or main.cpp. Internals are C++;
- * this surface is the only compatibility contract for client firmware (VER1).
+ * Typical app_main:
  *
- * Typical app_main (credentials via NVS or device enrollment):
- *
- *   nvs_flash_init();
- *   heapwatch_ensure_event_loop();
- *   heapwatch_init_wifi_if_managed();
- *   heapwatch_sync_time_if_managed();
- *   ESP_ERROR_CHECK(heapwatch_init(NULL));
- *   heapwatch_install_log_relay_if_enabled();
- *   heapwatch_set_network_ready(true);
- *   heapwatch_start_log_relay_if_enabled();
+ *   ESP_ERROR_CHECK(heapwatch_initialize());
+ *   // ... your application (LVGL, sensors, etc.) — never blocks on enrollment ...
  */
 
 #ifndef HEAPWATCH_H
@@ -44,6 +35,22 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ---------------------------------------------------------------------------
+   Lifecycle phase (sidecar bootstrap — query via heapwatch_get_status)
+   --------------------------------------------------------------------------- */
+
+typedef enum {
+    HEAPWATCH_PHASE_MISCONFIGURED = 0,
+    HEAPWATCH_PHASE_STARTING,
+    HEAPWATCH_PHASE_AWAITING_NETWORK,
+    HEAPWATCH_PHASE_NETWORK_FAILED,
+    HEAPWATCH_PHASE_PROVISIONING,
+    HEAPWATCH_PHASE_WAITING_ACCEPT,
+    HEAPWATCH_PHASE_READY,
+    HEAPWATCH_PHASE_MQTT_CONNECTING,
+    HEAPWATCH_PHASE_MQTT_CONNECTED,
+} heapwatch_phase_t;
 
 /* ---------------------------------------------------------------------------
    Component-specific esp_err_t range (E1)
@@ -81,6 +88,7 @@ static inline heapwatch_config_t heapwatch_config_default(void) {
 #define HEAPWATCH_CONFIG_DEFAULT() heapwatch_config_default()
 
 typedef struct {
+    heapwatch_phase_t phase;
     bool initialized;
     bool network_ready;
     bool mqtt_connected;
@@ -120,31 +128,18 @@ typedef bool (*heapwatch_before_sleep_hook_t)(void* user_ctx);
    --------------------------------------------------------------------------- */
 
 /**
- * Idempotent default event-loop create (I1). Safe if the host already created it.
+ * One-call sidecar bootstrap: NVS, log relay, Wi-Fi/SNTP (when Kconfig-managed),
+ * background enrollment, and MQTT — returns immediately. Idempotent (second call is a no-op).
+ * Fails fast on fatal misconfiguration (empty enrollment key + no NVS creds, placeholder
+ * build fingerprint, NVS init failure).
  */
-void heapwatch_ensure_event_loop(void);
-
-/** Wi-Fi STA bring-up when HEAPWATCH_MANAGE_WIFI=y; no-op when n. */
-void heapwatch_init_wifi_if_managed(void);
-
-/** Bounded SNTP wait when HEAPWATCH_MANAGE_TIME_SYNC=y; no-op when n. */
-void heapwatch_sync_time_if_managed(void);
-
-/**
- * Apply credentials from bootstrap, start dispatcher/metrics threads. Does not set network
- * ready — call heapwatch_set_network_ready(true) once connectivity is up.
- * @param config Reserved — pass NULL or HEAPWATCH_CONFIG_DEFAULT(); ignored today.
- */
-esp_err_t heapwatch_init(const heapwatch_config_t* config);
+esp_err_t heapwatch_initialize(void);
 
 void heapwatch_deinit(void);
 
-void heapwatch_set_network_ready(bool ready);
-
 /**
  * Backfill claimed MAC / UID128 on the server for already-provisioned devices.
- * Runs automatically on heapwatch_dispatcher once heapwatch_set_network_ready(true);
- * call explicitly after network_ready when you want an immediate attempt.
+ * Runs automatically once MQTT is up; call explicitly for an immediate attempt.
  */
 void heapwatch_sync_claimed_identities(void);
 
@@ -168,9 +163,6 @@ void heapwatch_set_keep_running(bool keep_running);
  * is active. Check this before light/deep sleep.
  */
 bool heapwatch_keep_running(void);
-
-void heapwatch_install_log_relay_if_enabled(void);
-void heapwatch_start_log_relay_if_enabled(void);
 
 /* ---------------------------------------------------------------------------
    Telemetry

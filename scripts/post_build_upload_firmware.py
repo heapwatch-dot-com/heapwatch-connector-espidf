@@ -22,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from heapwatch_build_metadata import parse_header
+from heapwatch_upload_env import ensure_upload_env_configured
 
 IDF_VERSION_MAJOR_RE = re.compile(r"^\s*set\(IDF_VERSION_MAJOR\s+(\d+)\)\s*$")
 IDF_VERSION_MINOR_RE = re.compile(r"^\s*set\(IDF_VERSION_MINOR\s+(\d+)\)\s*$")
@@ -32,40 +33,6 @@ CONFIG_IDF_TARGET_RE = re.compile(r'^\s*CONFIG_IDF_TARGET="([^"]+)"\s*$', re.MUL
 def die(msg: str, code: int = 1) -> None:
     print(msg, file=sys.stderr)
     sys.exit(code)
-
-
-def load_dotenv(dotenv_path: Path) -> None:
-    """
-    Load KEY=VALUE pairs from .env into process environment.
-    Existing process vars win over .env values.
-    """
-    if not dotenv_path.is_file():
-        return
-
-    for line in dotenv_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        if key not in os.environ:
-            os.environ[key] = value
-
-
-def require_env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        die(f"ERROR: required environment variable {name} is not set.")
-    return value
 
 
 def is_strict_upload() -> bool:
@@ -86,13 +53,12 @@ def upload_firmware_bundle(
     build_identifier: str | None = None,
 ) -> None:
     resolved_app_root = app_root or build_dir.parent
-    dotenv_default = resolved_app_root / ".env"
-    load_dotenv(dotenv_default)
+    ensure_upload_env_configured(resolved_app_root)
 
-    base = require_env("HEAPWATCH_API_BASE").rstrip("/")
-    build_token = require_env("HEAPWATCH_BUILD_TOKEN")
-    tenant_uuid = require_env("HEAPWATCH_TENANT_UUID")
-    app_id = require_env("HEAPWATCH_APPLICATION_ID")
+    base = os.environ["HEAPWATCH_API_BASE"].strip().rstrip("/")
+    build_token = os.environ["HEAPWATCH_BUILD_TOKEN"].strip()
+    tenant_uuid = os.environ["HEAPWATCH_TENANT_UUID"].strip()
+    app_id = os.environ["HEAPWATCH_APPLICATION_ID"].strip()
     build_environment = os.environ.get("HEAPWATCH_BUILD_ENV", "development").strip()
     description = os.environ.get("HEAPWATCH_FIRMWARE_DESCRIPTION", "").strip() or None
 
@@ -113,11 +79,10 @@ def upload_firmware_bundle(
             die(f"ERROR: missing {label}: {path}")
 
     metadata = parse_header(metadata_header)
-    app_source_version = metadata["app_source_version"]
-    connector_source_version = metadata["connector_source_version"]
-    version, _ = api_version_fields(app_source_version)
-    source_version = app_source_version
+    app_source_version_raw = metadata["app_source_version"]
+    connector_source_version = normalize_optional_version(metadata["connector_source_version"])
     resolved_build_identifier = build_identifier or metadata["build_identifier"]
+    version, source_version = api_version_fields(app_source_version_raw, resolved_build_identifier)
     build_toolchain_version = detect_build_toolchain_version()
     build_toolchain_type = "esp_idf"
     git_commit = detect_git_commit(resolved_app_root)
@@ -180,10 +145,45 @@ def upload_firmware_bundle(
         print(f"WARNING: {message}", file=sys.stderr)
         return
 
+    print(format_firmware_upload_success(code, body))
+
+
+def format_firmware_upload_success(code: int, body: str) -> str:
+    """One-line success summary — avoid dumping the full API payload (binaries, URLs, …)."""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return f"Firmware upload OK (HTTP {code})"
+
+    if not isinstance(payload, dict):
+        return f"Firmware upload OK (HTTP {code})"
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        if code == 200 and "already_exists" in body:
+            return "Firmware already uploaded (HTTP 200 already_exists)"
+        return f"Firmware upload OK (HTTP {code})"
+
+    firmware_id = data.get("id")
+    version = data.get("version")
+    build_identifier = data.get("build_identifier")
+
+    parts: list[str] = []
+    if firmware_id is not None:
+        parts.append(f"id={firmware_id}")
+    if isinstance(version, str) and version:
+        parts.append(f"version={version}")
+    if isinstance(build_identifier, str) and build_identifier:
+        parts.append(f"build_identifier={build_identifier}")
+
     if code == 200 and "already_exists" in body:
-        print(f"Firmware already uploaded (HTTP 200 already_exists): {body!r}")
+        prefix = "Firmware already uploaded"
     else:
-        print(f"Firmware upload OK (HTTP {code}): {body!r}")
+        prefix = "Firmware upload OK"
+
+    if parts:
+        return f"{prefix} (HTTP {code}): {', '.join(parts)}"
+    return f"{prefix} (HTTP {code})"
 
 
 def detect_target_chip(*, build_dir: Path, sdkconfig_path: Path) -> str:
@@ -303,13 +303,31 @@ def detect_git_commit(app_root: Path) -> str | None:
     return None
 
 
-def api_version_fields(app_source_version: str) -> tuple[str, str]:
-    """API display version (e.g. v1.2.3) from HEAPWATCH_APP_SOURCE_VERSION first segment."""
+def normalize_optional_version(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def api_version_fields(app_source_version: str, build_identifier: str) -> tuple[str, str | None]:
+    """
+    API display version and optional source_version for firmware upload.
+
+    When git describe is unavailable, source_version is None and version is derived
+    from the trailing body of build_identifier (build fingerprint is still required).
+    """
     tag_part = app_source_version.split("-", 1)[0].strip()
-    if not tag_part:
-        die(f"ERROR: invalid HEAPWATCH_APP_SOURCE_VERSION: {app_source_version!r}")
-    display = tag_part if tag_part.startswith("v") else f"v{tag_part}"
-    return display, app_source_version
+    if tag_part:
+        display = tag_part if tag_part.startswith("v") else f"v{tag_part}"
+        normalized_source = app_source_version.strip() or None
+        return display, normalized_source
+
+    body = build_identifier.strip()
+    if body.lower().startswith("sha256:"):
+        body = body[7:].strip()
+    suffix = body[-12:] if len(body) >= 12 else (body or "unknown")
+    return f"v{suffix}", None
 
 
 def file_to_data_uri(path: Path) -> str:

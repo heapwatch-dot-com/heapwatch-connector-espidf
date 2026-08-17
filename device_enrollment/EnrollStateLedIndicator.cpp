@@ -236,16 +236,6 @@ EnrollStateLedPhase indicatorPhaseFromEnrollmentStatus(Status status) {
     return EnrollStateLedPhase::kNetworkError;
 }
 
-#else
-
-void startIndicator() {}
-
-void setIndicatorPhase(EnrollStateLedPhase /*phase*/) {}
-
-EnrollStateLedPhase indicatorPhaseFromEnrollmentStatus(Status /*status*/) {
-    return EnrollStateLedPhase::kOff;
-}
-
 #endif
 
 }  // namespace heapwatch::device_enrollment

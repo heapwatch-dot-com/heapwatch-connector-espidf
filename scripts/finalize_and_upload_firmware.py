@@ -80,7 +80,6 @@ def finalize_fingerprint(
 
     build_identifier = compute_build_identifier(elf_path, partition_path, sdkconfig)
     if update_build_identifier(metadata_header, build_identifier):
-        print(f"Updated {metadata_header} -> {build_identifier}")
         rebuild_project(build_dir, project_name)
 
         for path, label in ((elf_path, "ELF"), (bin_path, "application .bin")):
@@ -89,6 +88,7 @@ def finalize_fingerprint(
 
         build_identifier = compute_build_identifier(elf_path, partition_path, sdkconfig)
         update_build_identifier(metadata_header, build_identifier)
+        rebuild_project(build_dir, project_name)
 
     bin_bytes = bin_path.read_bytes()
     if build_identifier.encode("ascii") not in bin_bytes:
@@ -125,10 +125,10 @@ def main() -> None:
         )
     except FileNotFoundError as err:
         print(f"ERROR: {err}", file=sys.stderr)
-        sys.exit(1 if is_strict_upload() else 0)
+        sys.exit(1)
     except RuntimeError as err:
         print(f"ERROR: {err}", file=sys.stderr)
-        sys.exit(1 if is_strict_upload() else 0)
+        sys.exit(1)
     except Exception as err:  # noqa: BLE001 - top-level build hook
         print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1 if is_strict_upload() else 0)

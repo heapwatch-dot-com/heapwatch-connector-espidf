@@ -46,24 +46,15 @@ idf.py build
 ## Minimal `app_main`
 
 ```c
-#include "nvs_flash.h"
 #include "heapwatch.h"
 
 void app_main(void) {
-    nvs_flash_init();
-    heapwatch_ensure_event_loop();
-    heapwatch_init_wifi_if_managed();
-    heapwatch_sync_time_if_managed();
-
-    ESP_ERROR_CHECK(heapwatch_init(NULL));
-
-    heapwatch_set_network_ready(true);
-    heapwatch_install_log_relay_if_enabled();
-    heapwatch_start_log_relay_if_enabled();
+    ESP_ERROR_CHECK(heapwatch_initialize());
+    // ... your application code runs immediately; enrollment/MQTT are sidecar background tasks
 }
 ```
 
-Build metadata (app version, connector version, build fingerprint) is generated automatically — do **not** pass version fields into `heapwatch_init()`.
+Build metadata (app version, connector version, build fingerprint) is generated automatically — do **not** pass version fields into `heapwatch_initialize()`.
 
 Credentials are **never** passed in code or Kconfig. On first boot the device enrolls with `CONFIG_HEAPWATCH_ENROLLMENT_KEY`; after operator Accept + confirm, credentials live in NVS for subsequent boots.
 
@@ -127,8 +118,8 @@ Generated macros:
 
 | Macro | Source |
 |-------|--------|
-| `HEAPWATCH_APP_SOURCE_VERSION` | `git describe` in **your firmware repo** |
-| `HEAPWATCH_CONNECTOR_SOURCE_VERSION` | `git describe` in **this component** checkout |
+| `HEAPWATCH_APP_SOURCE_VERSION` | `git describe` in **your firmware repo**, or empty when no VCS |
+| `HEAPWATCH_CONNECTOR_SOURCE_VERSION` | `git describe` in **this component** checkout, or empty when no VCS |
 | `HEAPWATCH_BUILD_IDENTIFIER` | `sha256(elf + partition table + sdkconfig)` after link |
 
 Device specs MQTT payload includes `app_version` and `connector_source_version` from these strings.
@@ -137,7 +128,7 @@ Device specs MQTT payload includes `app_version` and `connector_source_version` 
 
 ### Upload credentials (`.env` in your firmware project root)
 
-Post-build upload reads a `.env` file next to `sdkconfig` (gitignored). Required keys:
+Pre-build metadata generation and post-build upload both require a `.env` file next to `sdkconfig` (gitignored). If any required key is missing, the build fails immediately with a list of what to set. Required keys:
 
 ```env
 HEAPWATCH_API_BASE=https://api.heapwatch.com
@@ -161,8 +152,9 @@ Create a build token in the Heapwatch UI: **Application → Build tokens**.
 ### Other upload requirements
 
 - `partitions.csv` in the firmware project root
-- Both repos must be **git checkouts** (standalone clones, not submodules without `.git`) so `git describe` works
-- Backend must accept `connector_source_version` on firmware upload (Heapwatch app ≥ 2026-08)
+- **Git is optional.** ZIP downloads or copied folders without `.git` build fine — version macros are empty and the upload sends `null` for `source_version` / `connector_source_version`. `build_identifier` (sha256 fingerprint) is always required and is what coredumps/OTA use.
+- Optional env overrides without git: `HEAPWATCH_APP_SOURCE_VERSION`, `HEAPWATCH_CONNECTOR_SOURCE_VERSION` (also read at pre-build).
+- Backend must accept nullable `connector_source_version` on firmware upload (Heapwatch app ≥ 2026-08)
 
 Scripts live in `scripts/`; wiring is in `CMakeLists.txt` (pre-build) and `project_include.cmake` (post-build upload target `heapwatch_firmware_upload`).
 
