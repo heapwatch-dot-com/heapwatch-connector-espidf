@@ -31,7 +31,7 @@ menu "Heapwatch Connector"
 
         config HEAPWATCH_WIFI_SSID
             string "SSID"
-            default "Jumbo"
+            default ""
             depends on HEAPWATCH_MANAGE_WIFI
 
         config HEAPWATCH_WIFI_PASSWORD
