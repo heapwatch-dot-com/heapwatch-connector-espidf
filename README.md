@@ -142,7 +142,7 @@ Post-build upload reads a `.env` file next to `sdkconfig` (gitignored). Required
 ```env
 HEAPWATCH_API_BASE=https://api.heapwatch.com
 HEAPWATCH_BUILD_TOKEN=sk_build_...
-HEAPWATCH_TENANT_ID=<tenant-uuid>
+HEAPWATCH_TENANT_UUID=<tenant-uuid>
 HEAPWATCH_APPLICATION_ID=<application-id>
 ```
 

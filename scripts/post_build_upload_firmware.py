@@ -91,7 +91,7 @@ def upload_firmware_bundle(
 
     base = require_env("HEAPWATCH_API_BASE").rstrip("/")
     build_token = require_env("HEAPWATCH_BUILD_TOKEN")
-    tenant_id = require_env("HEAPWATCH_TENANT_ID")
+    tenant_uuid = require_env("HEAPWATCH_TENANT_UUID")
     app_id = require_env("HEAPWATCH_APPLICATION_ID")
     build_environment = os.environ.get("HEAPWATCH_BUILD_ENV", "development").strip()
     description = os.environ.get("HEAPWATCH_FIRMWARE_DESCRIPTION", "").strip() or None
@@ -152,7 +152,7 @@ def upload_firmware_bundle(
     req.add_header("Accept", "application/json")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {build_token}")
-    req.add_header("X-Tenant-Id", tenant_id)
+    req.add_header("X-Tenant-Id", tenant_uuid)
 
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
