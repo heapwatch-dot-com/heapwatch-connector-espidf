@@ -34,6 +34,7 @@ constexpr size_t kSuffixMax = 64;
 
 enum class RequestKind : uint8_t {
     Restart,
+    Shutdown,
     Sleep,
     WifiReconnect,
 };
@@ -184,6 +185,16 @@ void runSleepPipeline(GoingDarkRequest request) {
     esp_deep_sleep_start();
 }
 
+void runShutdownPipeline(GoingDarkRequest request) {
+    if (!ackAndDrain(request, "shutdown accepted", HeapwatchShutdownAction::SleepHandoff)) {
+        return;
+    }
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    ESP_LOGI(TAG, "Entering indefinite deep sleep (shutdown)");
+    esp_deep_sleep_start();
+}
+
 void goingDarkTask(void* /*arg*/) {
     GoingDarkRequest request = {};
     while (true) {
@@ -194,6 +205,9 @@ void goingDarkTask(void* /*arg*/) {
         switch (request.kind) {
             case RequestKind::Restart:
                 runRestartPipeline(request);
+                break;
+            case RequestKind::Shutdown:
+                runShutdownPipeline(request);
                 break;
             case RequestKind::WifiReconnect:
                 runWifiReconnectPipeline(request);
@@ -249,6 +263,19 @@ bool scheduleRestart(const char* suffix, const char* command_id) {
     snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
     snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
     request.kind = RequestKind::Restart;
+
+    return scheduleRequest(request);
+}
+
+bool scheduleShutdown(const char* suffix, const char* command_id) {
+    if (suffix == nullptr || command_id == nullptr) {
+        return false;
+    }
+
+    GoingDarkRequest request = {};
+    snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
+    snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
+    request.kind = RequestKind::Shutdown;
 
     return scheduleRequest(request);
 }

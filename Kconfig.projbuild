@@ -1,5 +1,10 @@
 menu "Heapwatch Connector"
 
+    # Stream ingress is mandatory — not user-toggleable.
+    config HEAPWATCH_ENABLE_STREAM_INGRESS
+        bool
+        default y
+
     # HEAPWATCH_API_BASE / HEAPWATCH_MQTT_BROKER_URI removed from Kconfig (K1):
     # production endpoints are hardcoded in main/heapwatch_endpoints.h. Our own
     # local dev loop swaps to LAN endpoints via the internal-only
@@ -98,16 +103,6 @@ menu "Heapwatch Connector"
                 Installs the esp_log_set_vprintf() hook and relays captured lines over
                 MQTT (subject to the minimum severity below). Disabling excludes the
                 log-capture/relay pipeline from the build entirely.
-
-        config HEAPWATCH_ENABLE_STREAM_INGRESS
-            bool "Enable on-demand stream ingress TCP client"
-            default y
-            depends on HEAPWATCH_ENABLE_LOG_COLLECTION
-            help
-                When enabled, stream_open / stream_close MQTT commands open a muxed
-                TCP connection to backend-stream-ingress for high-rate log capture.
-                Requires a stream API key provisioned via enrollment (stored in NVS).
-                Logs are sent over both MQTT and the stream path while active (A/B).
 
         choice HEAPWATCH_MIN_LOG_SEVERITY
             prompt "Minimum log severity relayed over MQTT"

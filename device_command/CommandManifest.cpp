@@ -376,6 +376,8 @@ cJSON* buildManifestRoot() {
                true);
     addCommand(commands, "restart", "Restart", "Reboot the device.", "high", "terminal", false, true,
                60, true);
+    addCommand(commands, "shutdown", "Shutdown", "Power down the device (indefinite deep sleep).",
+               "critical", "terminal", false, true, 60, true);
     addCommand(commands, "specs_refresh", "Refresh specs", "Queue a device specs upload.", "low",
                "non_terminal", false, true, 30, false);
     addCommand(commands, "stream_open", "Open stream", "Open the stream ingress session.", "medium",
@@ -432,15 +434,14 @@ cJSON* buildManifestRoot() {
 
 }  // namespace
 
+cJSON* buildManifestRootObject() {
+    return buildManifestRoot();
+}
+
 void uploadManifestIfNeeded() {
     if (g_uploaded_this_boot) {
         return;
     }
-
-#if !CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
-    ESP_LOGW(TAG, "Skipping manifest upload — stream ingress disabled");
-    return;
-#endif
 
     cJSON* root = buildManifestRoot();
     if (root == nullptr) {

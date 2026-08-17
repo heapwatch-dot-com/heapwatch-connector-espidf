@@ -17,6 +17,7 @@
 #include "../stream_ingress/StreamIngressClient.h"
 #include "heapwatch/radio/BleDelegate.h"
 #include "ConfigCommands.h"
+#include "CommandManifest.h"
 #include "GoingDarkPipeline.h"
 #include "SleepCommands.h"
 
@@ -63,7 +64,8 @@ CommandRegistration g_registered_commands[kMaxRegisteredCommands] = {};
 
 bool is_builtin_name(const char* name) {
     return strcmp(name, "ping") == 0 || strcmp(name, "specs_refresh") == 0 ||
-           strcmp(name, "restart") == 0 || strcmp(name, "stream_open") == 0 ||
+           strcmp(name, "restart") == 0 || strcmp(name, "shutdown") == 0 ||
+           strcmp(name, "manifest/get") == 0 || strcmp(name, "stream_open") == 0 ||
            strcmp(name, "stream_close") == 0 || strcmp(name, "config/get") == 0 ||
            strcmp(name, "config/set") == 0 || strcmp(name, "config/persist") == 0 ||
            strcmp(name, "config/revert") == 0 || strcmp(name, "wifi_reconnect") == 0 ||
@@ -208,6 +210,31 @@ void handle_restart(const char* suffix, char* command_id) {
         publish_response(suffix, command_id, false, "busy", "Going-dark pipeline busy");
         free(command_id);
         return;
+    }
+
+    free(command_id);
+}
+
+void handle_shutdown(const char* suffix, char* command_id) {
+    if (!heapwatch::going_dark::scheduleShutdown(suffix, command_id)) {
+        publish_response(suffix, command_id, false, "busy", "Going-dark pipeline busy");
+        free(command_id);
+        return;
+    }
+
+    free(command_id);
+}
+
+void handle_manifest_get(const char* suffix, char* command_id) {
+    cJSON* manifest = heapwatch::device_command::buildManifestRootObject();
+    if (manifest == nullptr) {
+        publish_response(suffix, command_id, false, "internal_error", "Failed to build manifest");
+        free(command_id);
+        return;
+    }
+
+    if (!publish_ack_then_response_with_result(suffix, command_id, true, "", "manifest", manifest)) {
+        cJSON_Delete(manifest);
     }
 
     free(command_id);
@@ -399,6 +426,16 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
 
     if (strcmp(suffix, "restart") == 0) {
         handle_restart(suffix, command_id);
+        return;
+    }
+
+    if (strcmp(suffix, "shutdown") == 0) {
+        handle_shutdown(suffix, command_id);
+        return;
+    }
+
+    if (strcmp(suffix, "manifest/get") == 0) {
+        handle_manifest_get(suffix, command_id);
         return;
     }
 

@@ -13,6 +13,9 @@ enum class SleepKind : uint8_t {
 /** Start the going-dark pipeline for restart. Returns false if busy. */
 bool scheduleRestart(const char* suffix, const char* command_id);
 
+/** Start the going-dark pipeline for shutdown (indefinite deep sleep). Returns false if busy. */
+bool scheduleShutdown(const char* suffix, const char* command_id);
+
 /** Start the going-dark pipeline for sleep_light / sleep_deep. Returns false if busy. */
 bool scheduleSleep(const char* suffix, const char* command_id, SleepKind kind, uint32_t duration_s);
 
