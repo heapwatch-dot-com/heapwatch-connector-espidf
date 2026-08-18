@@ -114,6 +114,7 @@ menu "Heapwatch Connector"
 
             config HEAPWATCH_MIN_LOG_SEVERITY_DEBUG
                 bool "Debug"
+                imply LOG_DEFAULT_LEVEL_DEBUG
             config HEAPWATCH_MIN_LOG_SEVERITY_INFO
                 bool "Info"
             config HEAPWATCH_MIN_LOG_SEVERITY_WARNING
@@ -137,6 +138,14 @@ menu "Heapwatch Connector"
             help
                 Per-core CPU usage percentage, computed from the same FreeRTOS task
                 runtime-stats pass as task snapshots above.
+
+        config HEAPWATCH_NEEDS_FREERTOS_RUNTIME_STATS
+            bool
+            default y if HEAPWATCH_ENABLE_TASK_SNAPSHOTS || HEAPWATCH_ENABLE_CPU_SNAPSHOTS
+            select FREERTOS_USE_TRACE_FACILITY
+            select FREERTOS_GENERATE_RUN_TIME_STATS
+            select FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER
+            select FREERTOS_RUN_TIME_COUNTER_TYPE_U32
 
         config HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
             bool "Collect heap/PSRAM usage snapshots"

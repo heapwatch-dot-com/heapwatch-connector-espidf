@@ -39,6 +39,17 @@ idf_component_register(
     EMBED_TXTFILES "certs/heapwatch_local_ca.pem"
 )
 
+# Log relay includes FreeRTOS task names; names longer than this are truncated.
+# Cannot Kconfig-select an int default, so warn at configure time instead.
+if(CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION AND DEFINED CONFIG_FREERTOS_MAX_TASK_NAME_LEN)
+    if(CONFIG_FREERTOS_MAX_TASK_NAME_LEN LESS 16)
+        message(WARNING
+            "CONFIG_FREERTOS_MAX_TASK_NAME_LEN is ${CONFIG_FREERTOS_MAX_TASK_NAME_LEN} "
+            "(< 16). Heapwatch log collection may truncate task names; raise it in "
+            "menuconfig → Component config → FreeRTOS → Kernel.")
+    endif()
+endif()
+
 # Pre-build: git describe for client app + connector -> heapwatch_build_metadata.h
 set(HEAPWATCH_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 set(HEAPWATCH_METADATA_HEADER "${HEAPWATCH_GENERATED_DIR}/heapwatch_build_metadata.h")

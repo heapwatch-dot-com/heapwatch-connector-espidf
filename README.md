@@ -94,6 +94,12 @@ That swaps API/MQTT/stream hosts to the lab LAN endpoints defined in `heapwatch_
 | **Features** | log relay, specs, OTA, coredump upload, stream ingress, BLE, storage stats, … |
 | **Queues / timing** | metrics interval, log batch size, queue depths |
 
+Enabling **task snapshots** and/or **CPU snapshots** auto-selects FreeRTOS trace + runtime stats (`FREERTOS_USE_TRACE_FACILITY`, `FREERTOS_GENERATE_RUN_TIME_STATS`, ESP Timer clock, `uint32_t` counter). You do not need to paste those flags into `sdkconfig` by hand.
+
+Choosing **Debug** as the minimum relayed log severity implies ESP-IDF `LOG_DEFAULT_LEVEL_DEBUG` so debug lines are compiled in.
+
+If log collection is on and `CONFIG_FREERTOS_MAX_TASK_NAME_LEN` is below 16, CMake prints a warning at configure time (the default is 16).
+
 ### Enrollment workflow
 
 1. In Heapwatch UI: **Enrollment → Enrollment keys** → create a key (copy the plain `sk_enroll_…` once).
