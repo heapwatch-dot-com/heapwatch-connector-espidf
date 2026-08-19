@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from heapwatch_build_metadata import git_describe, resolve_source_version
+from heapwatch_multipart_upload import encode_multipart_form_data
 from heapwatch_upload_env import (
     ensure_upload_env_configured,
     format_missing_upload_env_error,
@@ -82,6 +83,19 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
             message,
             "Firmware already uploaded (HTTP 200): id=2, version=v1",
         )
+
+    def test_multipart_upload_encodes_file_fields_for_ci_endpoint(self) -> None:
+        body, content_type = encode_multipart_form_data(
+            {"version": "v1"},
+            {
+                "flasher_args": ("flasher_args.json", b"{}", "application/json"),
+                "flash_files[0x10000]": ("lysos-wifi-tester.bin", b"BIN", "application/octet-stream"),
+            },
+        )
+        self.assertIn("multipart/form-data; boundary=", content_type)
+        self.assertIn(b'name="flasher_args"; filename="flasher_args.json"', body)
+        self.assertIn(b'name="flash_files[0x10000]"; filename="lysos-wifi-tester.bin"', body)
+        self.assertIn(b"BIN", body)
 
     def test_missing_upload_env_lists_all_keys(self) -> None:
         import os

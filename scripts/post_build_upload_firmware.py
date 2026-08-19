@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -15,13 +14,13 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from heapwatch_build_metadata import parse_header
+from heapwatch_multipart_upload import encode_multipart_form_data, guess_mime_type
 from heapwatch_upload_env import ensure_upload_env_configured
 
 IDF_VERSION_MAJOR_RE = re.compile(r"^\s*set\(IDF_VERSION_MAJOR\s+(\d+)\)\s*$")
@@ -150,23 +149,33 @@ def upload_firmware_bundle(
     build_environment = os.environ.get("HEAPWATCH_BUILD_ENV", "development").strip()
     description = os.environ.get("HEAPWATCH_FIRMWARE_DESCRIPTION", "").strip() or None
 
-    bin_path = build_dir / f"{project_name}.bin"
-    elf_path = build_dir / f"{project_name}.elf"
-    part_path = build_dir / "partition_table" / "partition-table.bin"
+    flasher_args_path = build_dir / "flasher_args.json"
     partitions_csv_path = resolved_app_root / "partitions.csv"
     sdkconfig_path = resolved_app_root / "sdkconfig"
+    elf_path = build_dir / f"{project_name}.elf"
+    metadata_header_path = metadata_header
 
     for path, label in (
-        (bin_path, "application .bin"),
-        (elf_path, "ELF"),
-        (part_path, "partition-table.bin"),
+        (flasher_args_path, "flasher_args.json"),
         (partitions_csv_path, "partitions.csv"),
-        (metadata_header, "heapwatch_build_metadata.h"),
+        (sdkconfig_path, "sdkconfig"),
+        (elf_path, "ELF"),
+        (metadata_header_path, "heapwatch_build_metadata.h"),
     ):
         if not path.is_file():
             die(f"ERROR: missing {label}: {path}")
 
-    metadata = parse_header(metadata_header)
+    flasher_args_json = flasher_args_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        flasher_args = json.loads(flasher_args_json)
+    except json.JSONDecodeError:
+        die(f"ERROR: invalid JSON in {flasher_args_path}")
+
+    flash_files = flasher_args.get("flash_files")
+    if not isinstance(flash_files, dict) or not flash_files:
+        die(f"ERROR: {flasher_args_path} is missing flash_files.")
+
+    metadata = parse_header(metadata_header_path)
     app_source_version_raw = metadata["app_source_version"]
     connector_source_version = normalize_optional_version(metadata["connector_source_version"])
     resolved_build_identifier = build_identifier or metadata["build_identifier"]
@@ -174,36 +183,77 @@ def upload_firmware_bundle(
     build_toolchain_version = detect_build_toolchain_version()
     build_toolchain_type = "esp_idf"
     git_commit = detect_git_commit(resolved_app_root)
-    partitions_csv = partitions_csv_path.read_text(encoding="utf-8", errors="replace")
     target_chip = detect_target_chip(build_dir=build_dir, sdkconfig_path=sdkconfig_path)
 
     firmware_url = f"{base}/api/applications/{app_id}/firmwares/ci-upload"
-    post_body: dict[str, Any] = {
+
+    form_fields: dict[str, str] = {
         "version": version,
-        "source_version": source_version,
-        "connector_source_version": connector_source_version,
         "build_identifier": resolved_build_identifier,
         "target_chip": target_chip,
         "build_environment": build_environment,
         "build_toolchain_version": build_toolchain_version,
         "build_toolchain_type": build_toolchain_type,
-        "firmware_binary": file_to_data_uri(bin_path),
-        "elf_file": file_to_data_uri(elf_path),
-        "partition_data": file_to_data_uri(part_path),
-        "partitions_csv": partitions_csv,
+        "source_version": source_version or "",
+        "connector_source_version": connector_source_version or "",
     }
+
     if description:
-        post_body["description"] = description
+        form_fields["description"] = description
+
     if git_commit:
-        post_body["git_commit"] = git_commit
+        form_fields["git_commit"] = git_commit
+
+    multipart_files: dict[str, tuple[str, bytes, str]] = {
+        "flasher_args": (
+            "flasher_args.json",
+            flasher_args_json.encode("utf-8"),
+            "application/json",
+        ),
+        "partitions_csv": (
+            "partitions.csv",
+            partitions_csv_path.read_bytes(),
+            guess_mime_type("partitions.csv"),
+        ),
+        "sdkconfig": (
+            "sdkconfig",
+            sdkconfig_path.read_bytes(),
+            guess_mime_type("sdkconfig"),
+        ),
+        "elf": (
+            elf_path.name,
+            elf_path.read_bytes(),
+            guess_mime_type(elf_path.name),
+        ),
+    }
+
+    for offset, relative_path in flash_files.items():
+        if not isinstance(offset, str) or not isinstance(relative_path, str):
+            die(f"ERROR: invalid flash_files entry in {flasher_args_path}")
+
+        flash_path = resolve_flash_file_path(
+            build_dir=build_dir,
+            app_root=resolved_app_root,
+            relative_path=relative_path,
+        )
+        normalized_offset = offset.strip().lower()
+        field_name = f"flash_files[{normalized_offset}]"
+        file_title = Path(relative_path.replace("\\", "/")).name
+        multipart_files[field_name] = (
+            file_title,
+            flash_path.read_bytes(),
+            guess_mime_type(file_title),
+        )
+
+    body, content_type = encode_multipart_form_data(form_fields, multipart_files)
 
     req = urllib.request.Request(
         firmware_url,
-        data=json.dumps(post_body).encode("utf-8"),
+        data=body,
         method="POST",
     )
     req.add_header("Accept", "application/json")
-    req.add_header("Content-Type", "application/json")
+    req.add_header("Content-Type", content_type)
     req.add_header("Authorization", f"Bearer {build_token}")
     req.add_header("X-Tenant-Id", tenant_uuid)
 
@@ -234,6 +284,23 @@ def upload_firmware_bundle(
         return
 
     print(format_firmware_upload_success(code, body))
+
+
+def resolve_flash_file_path(build_dir: Path, app_root: Path, relative_path: str) -> Path:
+    normalized = relative_path.replace("\\", "/")
+    basename = Path(normalized).name
+    candidates = [
+        app_root / normalized,
+        build_dir / normalized,
+        build_dir / basename,
+        app_root / basename,
+    ]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    die(f"ERROR: flash file '{relative_path}' not found under {app_root} or {build_dir}")
 
 
 def format_firmware_upload_success(code: int, body: str) -> str:
@@ -416,12 +483,6 @@ def api_version_fields(app_source_version: str, build_identifier: str) -> tuple[
         body = body[7:].strip()
     suffix = body[-12:] if len(body) >= 12 else (body or "unknown")
     return f"v{suffix}", None
-
-
-def file_to_data_uri(path: Path) -> str:
-    raw = path.read_bytes()
-    encoded = base64.standard_b64encode(raw).decode("ascii")
-    return f"data:application/octet-stream;base64,{encoded}"
 
 
 def main() -> None:
