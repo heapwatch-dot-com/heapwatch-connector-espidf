@@ -35,6 +35,94 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".S", ".s"}
+SKIP_SOURCE_DIR_NAMES = {
+    ".git",
+    "build",
+    "builds",
+    "caches",
+    "managed_components",
+}
+
+
+def ensure_artifacts_match_successful_build(
+    *,
+    build_dir: Path,
+    project_name: str,
+    app_root: Path,
+    connector_root: Path,
+) -> None:
+    """
+    Refuse to upload leftover binaries from a previous successful build.
+
+    A failed compile leaves the last .elf/.bin in place. Uploading those with
+    freshly generated metadata (git describe / placeholder refresh) must not happen.
+    """
+    elf_path = build_dir / f"{project_name}.elf"
+    bin_path = build_dir / f"{project_name}.bin"
+    bin_timestamp = build_dir / ".bin_timestamp"
+
+    for path, label in (
+        (elf_path, "ELF"),
+        (bin_path, "application .bin"),
+        (bin_timestamp, ".bin_timestamp"),
+    ):
+        if not path.is_file():
+            raise RuntimeError(f"Refusing firmware upload: missing {label}: {path}")
+
+    elf_mtime = elf_path.stat().st_mtime
+    bin_mtime = bin_path.stat().st_mtime
+    stamp_mtime = bin_timestamp.stat().st_mtime
+
+    if bin_mtime + 1.0 < elf_mtime:
+        raise RuntimeError(
+            "Refusing firmware upload: application .bin is older than the ELF "
+            f"({bin_path} vs {elf_path}) — elf2image did not run after link."
+        )
+
+    if stamp_mtime + 1.0 < elf_mtime:
+        raise RuntimeError(
+            "Refusing firmware upload: .bin_timestamp is older than the ELF "
+            f"({bin_timestamp} vs {elf_path}) — app image was not regenerated."
+        )
+
+    stale = stale_sources_newer_than(
+        artifact_mtime=elf_mtime,
+        roots=(app_root, connector_root),
+    )
+    if stale:
+        preview = ", ".join(str(path) for path in stale[:8])
+        extra = f" (+{len(stale) - 8} more)" if len(stale) > 8 else ""
+        raise RuntimeError(
+            "Refusing firmware upload: source files are newer than the ELF "
+            f"(build did not succeed). Stale vs {elf_path}: {preview}{extra}"
+        )
+
+
+def stale_sources_newer_than(*, artifact_mtime: float, roots: tuple[Path, ...]) -> list[Path]:
+    stale: list[Path] = []
+    seen: set[Path] = set()
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        resolved_root = root.resolve()
+        for path in resolved_root.rglob("*"):
+            if not path.is_file() or path.suffix not in SOURCE_SUFFIXES:
+                continue
+            if any(part in SKIP_SOURCE_DIR_NAMES for part in path.parts):
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if path.stat().st_mtime > artifact_mtime + 1.0:
+                stale.append(path)
+
+    stale.sort()
+    return stale
+
+
 def is_strict_upload() -> bool:
     return os.environ.get("HEAPWATCH_UPLOAD_STRICT", "").strip().lower() in {
         "1",

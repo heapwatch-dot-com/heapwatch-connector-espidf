@@ -1,14 +1,14 @@
 # Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
 #
-# Runs after the application .bin exists:
-#  1. Compute composite HEAPWATCH_BUILD_IDENTIFIER and refresh heapwatch_build_metadata.h
-#  2. Re-link once when the fingerprint header changed
-#  3. Upload firmware bundle to Heapwatch (non-fatal locally unless HEAPWATCH_UPLOAD_STRICT=1)
+# Runs after a successful application elf2image (CMake stamp on .bin_timestamp):
+#  1. Refuse leftover binaries if compile/link did not succeed
+#  2. Compute composite HEAPWATCH_BUILD_IDENTIFIER and refresh heapwatch_build_metadata.h
+#  3. Re-link once when the fingerprint header changed
+#  4. Upload firmware bundle to Heapwatch (network errors are non-fatal unless HEAPWATCH_UPLOAD_STRICT=1)
 
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,16 +19,10 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from compute_build_identifier import compute_build_identifier
 from heapwatch_build_metadata import update_build_identifier
-from post_build_upload_firmware import upload_firmware_bundle
-
-
-def is_strict_upload() -> bool:
-    return os.environ.get("HEAPWATCH_UPLOAD_STRICT", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+from post_build_upload_firmware import (
+    ensure_artifacts_match_successful_build,
+    upload_firmware_bundle,
+)
 
 
 def rebuild_project(build_dir: Path, project_name: str) -> None:
@@ -111,6 +105,12 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        ensure_artifacts_match_successful_build(
+            build_dir=args.build_dir,
+            project_name=args.project_name,
+            app_root=Path.cwd(),
+            connector_root=SCRIPTS_DIR.parent,
+        )
         build_identifier = finalize_fingerprint(
             args.build_dir,
             args.project_name,
@@ -131,7 +131,7 @@ def main() -> None:
         sys.exit(1)
     except Exception as err:  # noqa: BLE001 - top-level build hook
         print(f"ERROR: {err}", file=sys.stderr)
-        sys.exit(1 if is_strict_upload() else 0)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

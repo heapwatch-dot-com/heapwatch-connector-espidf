@@ -162,7 +162,7 @@ Create a build token in the Heapwatch UI: **Application → Build tokens**.
 - Optional env overrides without git: `HEAPWATCH_APP_SOURCE_VERSION`, `HEAPWATCH_CONNECTOR_SOURCE_VERSION` (also read at pre-build).
 - Backend must accept nullable `connector_source_version` on firmware upload (Heapwatch app ≥ 2026-08)
 
-Scripts live in `scripts/`; wiring is in `CMakeLists.txt` (pre-build) and `project_include.cmake` (post-build upload target `heapwatch_firmware_upload`).
+Scripts live in `scripts/`; wiring is in `CMakeLists.txt` (pre-build) and `project_include.cmake` (post-build upload target `heapwatch_firmware_upload`). Upload runs only after a successful app `elf2image` (`.bin_timestamp` refresh) — a failed compile must not upload leftover binaries.
 
 ## Public C API
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,8 +16,10 @@ from heapwatch_upload_env import (
 )
 from post_build_upload_firmware import (
     api_version_fields,
+    ensure_artifacts_match_successful_build,
     format_firmware_upload_success,
     normalize_optional_version,
+    stale_sources_newer_than,
 )
 
 
@@ -160,6 +163,79 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
             for key, value in saved.items():
                 if value is not None:
                     os.environ[key] = value
+
+    def test_stale_sources_newer_than_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "main.cpp"
+            source.write_text("int main() { return 0; }\n", encoding="utf-8")
+            older = 1_700_000_000.0
+            newer = older + 60
+            os.utime(source, (newer, newer))
+            stale = stale_sources_newer_than(artifact_mtime=older, roots=(root,))
+            self.assertEqual(stale, [source])
+
+    def test_ensure_artifacts_refuse_stale_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_root = Path(tmp) / "app"
+            connector_root = Path(tmp) / "connector"
+            build_dir = app_root / "build"
+            app_root.mkdir()
+            connector_root.mkdir()
+            build_dir.mkdir()
+
+            elf_path = build_dir / "crasher.elf"
+            bin_path = build_dir / "crasher.bin"
+            stamp_path = build_dir / ".bin_timestamp"
+            source = app_root / "main.cpp"
+            source.write_text("int main() { return 1; }\n", encoding="utf-8")
+            for path in (elf_path, bin_path, stamp_path):
+                path.write_bytes(b"x")
+
+            older = 1_700_000_000.0
+            newer = older + 120
+            for path in (elf_path, bin_path, stamp_path):
+                os.utime(path, (older, older))
+            os.utime(source, (newer, newer))
+
+            with self.assertRaises(RuntimeError) as ctx:
+                ensure_artifacts_match_successful_build(
+                    build_dir=build_dir,
+                    project_name="crasher",
+                    app_root=app_root,
+                    connector_root=connector_root,
+                )
+            self.assertIn("source files are newer than the ELF", str(ctx.exception))
+
+    def test_ensure_artifacts_accept_fresh_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_root = Path(tmp) / "app"
+            connector_root = Path(tmp) / "connector"
+            build_dir = app_root / "build"
+            app_root.mkdir()
+            connector_root.mkdir()
+            build_dir.mkdir()
+
+            elf_path = build_dir / "crasher.elf"
+            bin_path = build_dir / "crasher.bin"
+            stamp_path = build_dir / ".bin_timestamp"
+            source = app_root / "main.cpp"
+            source.write_text("int main() { return 0; }\n", encoding="utf-8")
+            for path in (elf_path, bin_path, stamp_path):
+                path.write_bytes(b"x")
+
+            older = 1_700_000_000.0
+            newer = older + 120
+            os.utime(source, (older, older))
+            for path in (elf_path, bin_path, stamp_path):
+                os.utime(path, (newer, newer))
+
+            ensure_artifacts_match_successful_build(
+                build_dir=build_dir,
+                project_name="crasher",
+                app_root=app_root,
+                connector_root=connector_root,
+            )
 
 
 if __name__ == "__main__":
