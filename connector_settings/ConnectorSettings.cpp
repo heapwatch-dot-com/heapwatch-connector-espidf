@@ -21,6 +21,17 @@ constexpr char MASKED_SECRET[] = "••••••";
 constexpr char KEY_TEL_INT_MS[] = "tel_int_ms";
 constexpr char KEY_LOG_LVL[] = "log_lvl";
 constexpr char KEY_OUT_DRAIN_MS[] = "out_drain_ms";
+constexpr char KEY_TENANT_SLUG[] = "tenant_slug";
+constexpr char KEY_DEVICE_UID[] = "device_uid";
+constexpr char KEY_MQTT_PASSWORD[] = "mqtt_password";
+constexpr char KEY_DEVICE_API_KEY[] = "device_api_key";
+constexpr char KEY_STREAM_API_KEY[] = "stream_api_key";
+constexpr char KEY_PENDING_UID[] = "pending_uid";
+constexpr char KEY_PROVISIONED[] = "provisioned";
+constexpr char KEY_BOOT_CYCLE[] = "boot_cycle";
+constexpr char KEY_LAST_CRASH_BC[] = "last_crash_bc";
+constexpr char KEY_MAN_HASH[] = "man_hash";
+constexpr char KEY_MAN_BUILD[] = "man_build";
 
 constexpr uint32_t kDefaultOutboxDrainMs = 30000;
 constexpr uint32_t kMinTelemetryMs = 1000;
@@ -39,6 +50,31 @@ constexpr FieldSchema kHeapwatchFields[] = {
     {KEY_OUT_DRAIN_MS, "Outbox drain timeout",
      "Maximum time to drain the MQTT outbox before terminal offline actions.", "int", false,
      true, "ms", static_cast<int>(kMinOutboxDrainMs), static_cast<int>(kMaxOutboxDrainMs)},
+    {KEY_TENANT_SLUG, "Workspace slug",
+     "Heapwatch workspace identifier for MQTT and API routing.", "string", false, false, nullptr, 0,
+     0},
+    {KEY_DEVICE_UID, "Device UID", "Stable device identifier within the workspace.", "string",
+     false, false, nullptr, 0, 0},
+    {KEY_MQTT_PASSWORD, "MQTT password", "Broker authentication secret for this device.", "string",
+     true, false, nullptr, 0, 0},
+    {KEY_DEVICE_API_KEY, "Device API key",
+     "Bearer token for device-authenticated REST ingress.", "string", true, false, nullptr, 0, 0},
+    {KEY_STREAM_API_KEY, "Stream API key", "Separate secret for high-rate stream ingress.",
+     "string", true, false, nullptr, 0, 0},
+    {KEY_PENDING_UID, "Pending enrollment UID",
+     "Temporary device UID while enrollment is in progress.", "string", false, false, nullptr, 0,
+     0},
+    {KEY_PROVISIONED, "Provisioned", "Whether device credentials have been committed to NVS.",
+     "bool", false, false, nullptr, 0, 0},
+    {KEY_BOOT_CYCLE, "Boot cycle", "Monotonic boot counter persisted across reboots.", "int",
+     false, false, nullptr, 0, 0},
+    {KEY_LAST_CRASH_BC, "Last crash boot cycle",
+     "Boot cycle recorded when the previous crash occurred.", "int", false, false, nullptr, 0, 0},
+    {KEY_MAN_HASH, "Manifest hash", "SHA-256 of the last uploaded command manifest body.", "string",
+     false, false, nullptr, 0, 0},
+    {KEY_MAN_BUILD, "Manifest build identifier",
+     "Build identifier of the last uploaded command manifest.", "string", false, false, nullptr, 0,
+     0},
 };
 
 struct ManagedCatalog {
@@ -60,23 +96,6 @@ size_t g_catalog_count = 0;
 
 CachedSettings g_cache = {};
 CachedSettings g_persisted = {};
-
-bool isCredentialOrInternalKey(const char* key) {
-    return strcmp(key, "provisioned") == 0 || strcmp(key, "tenant_slug") == 0 ||
-           strcmp(key, "device_uid") == 0 || strcmp(key, "mqtt_password") == 0 ||
-           strcmp(key, "device_api_key") == 0 || strcmp(key, "boot_cycle") == 0 ||
-           strcmp(key, "last_crash_bc") == 0 || strcmp(key, "man_hash") == 0 ||
-           strcmp(key, "man_build") == 0;
-}
-
-bool isSecretLikeKeyName(const char* key) {
-    if (key == nullptr) {
-        return false;
-    }
-    return strstr(key, "password") != nullptr || strstr(key, "passwd") != nullptr ||
-           strstr(key, "pswd") != nullptr || strstr(key, "secret") != nullptr ||
-           strstr(key, "api_key") != nullptr || strstr(key, "token") != nullptr;
-}
 
 const ManagedCatalog* findCatalog(const char* nvs_namespace) {
     if (nvs_namespace == nullptr) {
@@ -100,6 +119,10 @@ const FieldSchema* findField(const ManagedCatalog* catalog, const char* nvs_key)
         }
     }
     return nullptr;
+}
+
+const FieldSchema* findCatalogField(const char* nvs_namespace, const char* nvs_key) {
+    return findField(findCatalog(nvs_namespace), nvs_key);
 }
 
 bool readU32(nvs_handle_t handle, const char* key, uint32_t* out, uint32_t fallback) {
@@ -268,8 +291,7 @@ void addEnumOptions(cJSON* field_obj, const char* nvs_key) {
     }
 }
 
-void addCachedFieldToJson(cJSON* values, const char* nvs_key, const CachedSettings& settings,
-                          bool mask_secrets) {
+void addCachedFieldToJson(cJSON* values, const char* nvs_key, const CachedSettings& settings) {
     if (strcmp(nvs_key, KEY_LOG_LVL) == 0) {
         cJSON_AddNumberToObject(values, nvs_key, static_cast<double>(settings.min_relay_severity));
         return;
@@ -282,10 +304,46 @@ void addCachedFieldToJson(cJSON* values, const char* nvs_key, const CachedSettin
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         cJSON_AddNumberToObject(values, nvs_key,
                                 static_cast<double>(settings.outbox_drain_timeout_ms));
+    }
+}
+
+bool isCachedPatchableKey(const char* nvs_key) {
+    return strcmp(nvs_key, KEY_LOG_LVL) == 0 || strcmp(nvs_key, KEY_TEL_INT_MS) == 0 ||
+           strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0;
+}
+
+cJSON* readCatalogFieldFromNvs(nvs_handle_t handle, const FieldSchema& field) {
+    if (strcmp(field.type, "bool") == 0) {
+        return readNvsValueAsJson(handle, field.nvs_key, NVS_TYPE_U8);
+    }
+    if (strcmp(field.type, "int") == 0 || strcmp(field.type, "enum") == 0) {
+        cJSON* value = readNvsValueAsJson(handle, field.nvs_key, NVS_TYPE_U32);
+        if (value != nullptr) {
+            return value;
+        }
+        return readNvsValueAsJson(handle, field.nvs_key, NVS_TYPE_U8);
+    }
+    if (strcmp(field.type, "string") == 0) {
+        return readNvsValueAsJson(handle, field.nvs_key, NVS_TYPE_STR);
+    }
+    return nullptr;
+}
+
+void addCatalogFieldToJson(cJSON* values, nvs_handle_t handle, const FieldSchema& field,
+                           const CachedSettings& settings) {
+    if (field.secret) {
+        cJSON_AddStringToObject(values, field.nvs_key, MASKED_SECRET);
         return;
     }
-    if (mask_secrets) {
-        cJSON_AddStringToObject(values, nvs_key, MASKED_SECRET);
+
+    if (isCachedPatchableKey(field.nvs_key)) {
+        addCachedFieldToJson(values, field.nvs_key, settings);
+        return;
+    }
+
+    cJSON* value = readCatalogFieldFromNvs(handle, field);
+    if (value != nullptr) {
+        cJSON_AddItemToObject(values, field.nvs_key, value);
     }
 }
 
@@ -392,7 +450,9 @@ cJSON* buildCatalogJson(const ManagedCatalog& catalog) {
         cJSON_AddNumberToObject(field_obj, "min", field.min_value);
         cJSON_AddNumberToObject(field_obj, "max", field.max_value);
 
-        if (strcmp(field.nvs_key, KEY_TEL_INT_MS) == 0) {
+        if (field.secret) {
+            cJSON_AddStringToObject(field_obj, "default", "");
+        } else if (strcmp(field.nvs_key, KEY_TEL_INT_MS) == 0) {
             cJSON_AddNumberToObject(field_obj, "default",
                                     static_cast<double>(HEAPWATCH_METRICS_INTERVAL_MS));
         } else if (strcmp(field.nvs_key, KEY_LOG_LVL) == 0) {
@@ -436,41 +496,15 @@ void collectNamespaces(std::vector<std::string>& namespaces) {
 
 cJSON* buildManagedValuesObject(const ManagedCatalog& catalog, const CachedSettings& settings) {
     cJSON* values = cJSON_CreateObject();
-    for (size_t i = 0; i < catalog.field_count; ++i) {
-        const FieldSchema& field = catalog.fields[i];
-        if (field.secret) {
-            cJSON_AddStringToObject(values, field.nvs_key, MASKED_SECRET);
-            continue;
-        }
-        addCachedFieldToJson(values, field.nvs_key, settings, false);
-    }
 
     nvs_handle_t handle = 0;
-    if (nvs_open(catalog.nvs_namespace, NVS_READONLY, &handle) == ESP_OK) {
-        nvs_iterator_t it = nullptr;
-        esp_err_t err =
-            nvs_entry_find(NVS_DEFAULT_PART_NAME, catalog.nvs_namespace, NVS_TYPE_ANY, &it);
-        while (err == ESP_OK) {
-            nvs_entry_info_t info = {};
-            nvs_entry_info(it, &info);
+    const bool has_handle = nvs_open(catalog.nvs_namespace, NVS_READONLY, &handle) == ESP_OK;
 
-            if (isCredentialOrInternalKey(info.key) || findField(&catalog, info.key) != nullptr) {
-                err = nvs_entry_next(&it);
-                continue;
-            }
+    for (size_t i = 0; i < catalog.field_count; ++i) {
+        addCatalogFieldToJson(values, has_handle ? handle : 0, catalog.fields[i], settings);
+    }
 
-            if (shouldMaskNvsKey(catalog.nvs_namespace, info.key)) {
-                cJSON_AddStringToObject(values, info.key, MASKED_SECRET);
-            } else {
-                cJSON* value = readNvsValueAsJson(handle, info.key, info.type);
-                if (value != nullptr) {
-                    cJSON_AddItemToObject(values, info.key, value);
-                }
-            }
-
-            err = nvs_entry_next(&it);
-        }
-        nvs_release_iterator(it);
+    if (has_handle) {
         nvs_close(handle);
     }
 
@@ -517,34 +551,23 @@ bool isManagedNamespace(const char* nvs_namespace) {
 }
 
 bool isPatchableKey(const char* nvs_key) {
-    const ManagedCatalog* catalog = findCatalog(NVS_NAMESPACE);
-    const FieldSchema* field = findField(catalog, nvs_key);
+    const FieldSchema* field = findCatalogField(NVS_NAMESPACE, nvs_key);
     return field != nullptr && field->patchable;
 }
 
 bool isSecretKey(const char* nvs_key) {
-    const ManagedCatalog* catalog = findCatalog(NVS_NAMESPACE);
-    const FieldSchema* field = findField(catalog, nvs_key);
+    const FieldSchema* field = findCatalogField(NVS_NAMESPACE, nvs_key);
     return field != nullptr && field->secret;
 }
 
 bool isInternalKey(const char* nvs_key) {
-    return nvs_key != nullptr && isCredentialOrInternalKey(nvs_key);
+    const FieldSchema* field = findCatalogField(NVS_NAMESPACE, nvs_key);
+    return field != nullptr && !field->patchable;
 }
 
 bool shouldMaskNvsKey(const char* nvs_namespace, const char* nvs_key) {
-    if (nvs_key == nullptr) {
-        return false;
-    }
-    if (isCredentialOrInternalKey(nvs_key)) {
-        return true;
-    }
-    const ManagedCatalog* catalog = findCatalog(nvs_namespace);
-    const FieldSchema* field = findField(catalog, nvs_key);
-    if (field != nullptr && field->secret) {
-        return true;
-    }
-    return isSecretLikeKeyName(nvs_key);
+    const FieldSchema* field = findCatalogField(nvs_namespace, nvs_key);
+    return field != nullptr && field->secret;
 }
 
 bool registerManagedCatalog(const char* catalog_id, const char* title, const char* nvs_namespace,
@@ -721,11 +744,6 @@ cJSON* buildUnmanagedNamespaceResponse(const char* nvs_namespace) {
         nvs_entry_info_t info = {};
         nvs_entry_info(it, &info);
 
-        if (isCredentialOrInternalKey(info.key)) {
-            err = nvs_entry_next(&it);
-            continue;
-        }
-
         if (shouldMaskNvsKey(nvs_namespace, info.key)) {
             cJSON_AddStringToObject(persisted, info.key, MASKED_SECRET);
         } else {
@@ -801,7 +819,8 @@ bool persistUnmanagedValues(const char* nvs_namespace, const cJSON* values, char
             }
             return false;
         }
-        if (isCredentialOrInternalKey(child->string)) {
+        const FieldSchema* field = findCatalogField(nvs_namespace, child->string);
+        if (field != nullptr && (!field->patchable || field->secret)) {
             nvs_close(handle);
             if (error_out != nullptr && error_out_len > 0) {
                 snprintf(error_out, error_out_len, "key not persistable");
@@ -833,5 +852,15 @@ cJSON* buildAllConfigCatalogsJson() {
     }
     return catalogs;
 }
+
+cJSON* buildUserConfigCatalogsJson() {
+    cJSON* catalogs = cJSON_CreateArray();
+    for (size_t i = 1; i < g_catalog_count; ++i) {
+        cJSON_AddItemToArray(catalogs, buildCatalogJson(g_catalogs[i]));
+    }
+    return catalogs;
+}
+
+bool hasUserConfigCatalogs() { return g_catalog_count > 1; }
 
 }  // namespace heapwatch::connector_settings

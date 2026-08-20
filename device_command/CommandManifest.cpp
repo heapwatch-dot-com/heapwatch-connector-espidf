@@ -3,6 +3,7 @@
 #include "CommandManifestBuiltin.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "cJSON.h"
@@ -12,6 +13,7 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 
+#include "../connector_settings/ConnectorSettings.h"
 #include "../stream_ingress/StreamIngressClient.h"
 #include "../stream_ingress/StreamIngressMux.h"
 #include "heapwatch.h"
@@ -161,18 +163,72 @@ bool streamManifestBody(const char* body) {
     return true;
 }
 
+cJSON* buildManifestRootObjectMerged() {
+    if (!heapwatch::connector_settings::hasUserConfigCatalogs()) {
+        return cJSON_Parse(kBuiltinCommandManifestJson);
+    }
+
+    cJSON* root = cJSON_Parse(kBuiltinCommandManifestJson);
+    if (root == nullptr) {
+        return nullptr;
+    }
+
+    cJSON* catalogs = cJSON_GetObjectItem(root, "config_catalogs");
+    if (!cJSON_IsArray(catalogs)) {
+        cJSON_Delete(root);
+        return cJSON_Parse(kBuiltinCommandManifestJson);
+    }
+
+    cJSON* user_catalogs = heapwatch::connector_settings::buildUserConfigCatalogsJson();
+    const cJSON* child = user_catalogs->child;
+    while (child != nullptr) {
+        cJSON_AddItemToArray(catalogs, cJSON_Duplicate(child, true));
+        child = child->next;
+    }
+    cJSON_Delete(user_catalogs);
+
+    return root;
+}
+
+const char* resolveManifestBody(bool* owned_out) {
+    if (owned_out != nullptr) {
+        *owned_out = false;
+    }
+
+    if (!heapwatch::connector_settings::hasUserConfigCatalogs()) {
+        return kBuiltinCommandManifestJson;
+    }
+
+    cJSON* root = buildManifestRootObjectMerged();
+    if (root == nullptr) {
+        return kBuiltinCommandManifestJson;
+    }
+
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (printed == nullptr) {
+        return kBuiltinCommandManifestJson;
+    }
+
+    if (owned_out != nullptr) {
+        *owned_out = true;
+    }
+    return printed;
+}
+
 }  // namespace
 
 const char* getBuiltinCommandManifestJson() { return kBuiltinCommandManifestJson; }
 
-cJSON* buildManifestRootObject() { return cJSON_Parse(kBuiltinCommandManifestJson); }
+cJSON* buildManifestRootObject() { return buildManifestRootObjectMerged(); }
 
 void uploadManifestIfNeeded() {
     if (g_uploaded_this_boot) {
         return;
     }
 
-    const char* body = kBuiltinCommandManifestJson;
+    bool body_owned = false;
+    const char* body = resolveManifestBody(&body_owned);
     const size_t body_len = strlen(body);
 
     const char* build_identifier = heapwatch_get_build_identifier();
@@ -186,6 +242,9 @@ void uploadManifestIfNeeded() {
 
     if (has_stored && strcmp(stored_hash, manifest_hash_hex) == 0 &&
         strcmp(stored_build, build_identifier) == 0) {
+        if (body_owned) {
+            cJSON_free(const_cast<char*>(body));
+        }
         g_uploaded_this_boot = true;
         ESP_LOGI(TAG, "Command manifest unchanged — skip upload");
         return;
@@ -193,12 +252,22 @@ void uploadManifestIfNeeded() {
 
     if (!waitForStreamTcp(kStreamConnectTimeoutMs)) {
         ESP_LOGW(TAG, "Stream ingress not ready for manifest upload");
+        if (body_owned) {
+            cJSON_free(const_cast<char*>(body));
+        }
         return;
     }
 
     if (!streamManifestBody(body)) {
         ESP_LOGW(TAG, "Command manifest stream upload failed");
+        if (body_owned) {
+            cJSON_free(const_cast<char*>(body));
+        }
         return;
+    }
+
+    if (body_owned) {
+        cJSON_free(const_cast<char*>(body));
     }
 
     if (!writeNvsUploadMarker(manifest_hash_hex, build_identifier)) {

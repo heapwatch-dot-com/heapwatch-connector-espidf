@@ -153,6 +153,39 @@ static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
     config.broker.verification.skip_cert_common_name_check = false;
 }
 
+/**
+ * Create esp-mqtt client: prefer MQTT v5 when compiled in (CONFIG_MQTT_PROTOCOL_5),
+ * fall back to v3.1.1 (CONFIG_MQTT_PROTOCOL_311) so client firmware builds without v5
+ * in sdkconfig still connect to the broker.
+ */
+static esp_mqtt_client_handle_t create_mqtt_client(esp_mqtt_client_config_t& config) {
+#if CONFIG_MQTT_PROTOCOL_5
+    config.session.protocol_ver = MQTT_PROTOCOL_V_5;
+    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&config);
+    if (client != nullptr) {
+        ESP_LOGI("HeapwatchDispatcher", "MQTT client created (protocol v5)");
+        return client;
+    }
+    ESP_LOGW("HeapwatchDispatcher", "MQTT v5 init failed, trying v3.1.1");
+#endif
+
+#if CONFIG_MQTT_PROTOCOL_311
+    config.session.protocol_ver = MQTT_PROTOCOL_V_3_1_1;
+    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&config);
+    if (client != nullptr) {
+        ESP_LOGI("HeapwatchDispatcher", "MQTT client created (protocol v3.1.1)");
+        return client;
+    }
+    ESP_LOGE("HeapwatchDispatcher", "MQTT v3.1.1 client init failed");
+#else
+    ESP_LOGE("HeapwatchDispatcher",
+             "No MQTT protocol enabled in sdkconfig (enable CONFIG_MQTT_PROTOCOL_5 and/or "
+             "CONFIG_MQTT_PROTOCOL_311)");
+#endif
+
+    return nullptr;
+}
+
 /* ============================================================================
    Topic Functions
    =========================================================================== */
@@ -368,7 +401,6 @@ void heapwatch_dispatch_task(void* arg) {
             config.credentials.username = g_mqtt_username.c_str();
             config.credentials.client_id = g_mqtt_username.c_str();
             config.credentials.authentication.password = heapwatch_get_broker_password();
-            config.session.protocol_ver = MQTT_PROTOCOL_V_5;
             config.session.keepalive = HEAPWATCH_MQTT_KEEPALIVE_SEC;
 
             std::snprintf(g_lwt_topic, sizeof(g_lwt_topic), "%s/device/%s/disconnected",
@@ -382,7 +414,7 @@ void heapwatch_dispatch_task(void* arg) {
             config.session.last_will.retain = 0;
             config.outbox.limit = k_mqtt_outbox_limit_bytes;
 
-            g_mqtt_client = esp_mqtt_client_init(&config);
+            g_mqtt_client = create_mqtt_client(config);
             if (!g_mqtt_client) {
                 ESP_LOGE("HeapwatchDispatcher", "Failed to create MQTT client");
                 vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));

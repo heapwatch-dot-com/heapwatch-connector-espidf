@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CommandManifestHeapwatchCatalog.inc.h"
 #include "heapwatch_build_metadata.h"
 
 namespace heapwatch::device_command {
@@ -122,6 +123,6 @@ static const char kBuiltinCommandManifestJson[] =
     "{\"slug\":\"ota/rollback\",\"name\":\"OTA rollback\",\"description\":\"Rollback to the "
     "previous firmware.\",\"risk\":\"high\",\"session\":\"terminal\",\"returns_payload\":false,"
     "\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":60,\"args\":[]}"
-    "],\"config_catalogs\":[]}";
+    "],\"config_catalogs\":" HEAPWATCH_BUILTIN_CONFIG_CATALOGS_JSON "}";
 
 }  // namespace heapwatch::device_command

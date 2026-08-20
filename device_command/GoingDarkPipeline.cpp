@@ -117,22 +117,24 @@ void runWifiReconnectPipeline(GoingDarkRequest request) {
         return;
     }
 
+    // Outbox drain only ensures the command ack (and any prior tail) was sent. Unlike
+    // restart/sleep the device keeps running — re-enable queuing before the Wi-Fi outage
+    // so metrics and events buffer in RAM and flush once MQTT is back.
+    heapwatch_dispatcher_disarm_shutdown();
+
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
     if (!heapwatch::connector_bootstrap::requestWifiReconnect(request.duration_s)) {
-        heapwatch_dispatcher_disarm_shutdown();
         g_active = false;
         ESP_LOGE(TAG, "Wi-Fi reconnect failed after ack");
         return;
     }
 #else
     (void)request.duration_s;
-    heapwatch_dispatcher_disarm_shutdown();
     g_active = false;
     ESP_LOGE(TAG, "Wi-Fi reconnect not available (HEAPWATCH_MANAGE_WIFI=n)");
     return;
 #endif
 
-    heapwatch_dispatcher_disarm_shutdown();
     g_active = false;
     ESP_LOGI(TAG, "Wi-Fi reconnect pipeline complete");
 }

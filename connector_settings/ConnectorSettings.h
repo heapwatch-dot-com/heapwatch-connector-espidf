@@ -67,4 +67,10 @@ bool persistUnmanagedValues(const char* nvs_namespace, const cJSON* values, char
 /** All registered catalogs for manifest upload. */
 cJSON* buildAllConfigCatalogsJson();
 
+/** User-registered catalogs only (excludes builtin heapwatch catalog at index 0). */
+cJSON* buildUserConfigCatalogsJson();
+
+/** True when the client app registered at least one config catalog via heapwatch_register_config_catalog. */
+bool hasUserConfigCatalogs();
+
 }  // namespace heapwatch::connector_settings
