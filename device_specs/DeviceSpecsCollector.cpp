@@ -252,10 +252,10 @@ bool buildPayload(char* output, size_t output_len) {
         flash_size = 0;
     }
 
-    const size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
     const size_t internal_heap_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
-    const size_t min_free_heap = esp_get_minimum_free_heap_size();
     const size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    const size_t heap_total = internal_heap_total + psram_total;
+    const size_t min_free_heap = esp_get_minimum_free_heap_size();
 
     const esp_app_desc_t* app_desc = esp_app_get_description();
     const esp_partition_t* running_partition = esp_ota_get_running_partition();
@@ -278,7 +278,7 @@ bool buildPayload(char* output, size_t output_len) {
         output_len,
         "{\"idf_target\":\"%s\",\"chip_model\":\"%s\",\"chip_revision\":%u,\"chip_cores\":%u,"
         "\"flash_size_bytes\":%lu,\"psram_size_bytes\":%lu,\"heap_total_bytes\":%lu,"
-        "\"internal_heap_total_bytes\":%lu,\"min_free_heap_bytes\":%lu,"
+        "\"heap_internal_total_bytes\":%lu,\"min_free_heap_bytes\":%lu,"
         "\"sdk_version\":\"%s\",\"app_version\":\"%s\",\"connector_source_version\":\"%s\","
         "\"build_identifier\":\"%s\","
         "\"build_date\":\"%s\",\"cpu_freq_mhz\":%u,\"reset_reason\":\"%s\","

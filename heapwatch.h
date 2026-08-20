@@ -188,6 +188,15 @@ esp_err_t heapwatch_update_parameter_int_ranged(const char* slug, int64_t value,
 esp_err_t heapwatch_update_parameter_double_ranged(const char* slug, double value,
                                                    double min_value, double max_value);
 
+/**
+ * Limits-only map updates. Does not require a live value; must not be used to
+ * push per-tick max as timeseries (bounds are dirty-flag / safety-net only).
+ */
+esp_err_t heapwatch_set_parameter_max(const char* slug, int64_t max_value);
+esp_err_t heapwatch_set_parameter_min(const char* slug, int64_t min_value);
+esp_err_t heapwatch_set_parameter_double_max(const char* slug, double max_value);
+esp_err_t heapwatch_set_parameter_double_min(const char* slug, double min_value);
+
 /** POW1 / CELL1 typed wrappers. */
 esp_err_t heapwatch_update_power_mv(const char* source_name, int64_t mv);
 esp_err_t heapwatch_update_power_mv_ranged(const char* source_name, int64_t mv, int64_t min_mv,

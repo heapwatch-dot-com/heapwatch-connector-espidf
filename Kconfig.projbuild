@@ -234,7 +234,7 @@ menu "Heapwatch Connector"
             default y
             help
                 Mounts the "storage" SPIFFS partition (see partitions.csv) at boot and
-                reports storage_free_bytes/storage_used_bytes via the generic parameter
+                reports storage.free_bytes/storage.used_bytes via the generic parameter
                 mechanism (PARAM1) once per telemetry round. Separate from NVS stats.
 
         config HEAPWATCH_ENABLE_SD_CARD_STATS
@@ -245,7 +245,7 @@ menu "Heapwatch Connector"
                 Attempts to mount a FAT-formatted SD card over SPI at boot using the pins
                 below. If no card is present or the mount fails, this is logged and
                 skipped -- never fatal, never retried. When mounted, its free/used bytes
-                are added to the same storage_free_bytes/storage_used_bytes totals as
+                are added to the same storage.free_bytes/storage.used_bytes totals as
                 the SPIFFS partition (aggregate "internal + removable storage" figure,
                 per PARAM2's fixed-slug design -- not a separate per-medium slug).
 

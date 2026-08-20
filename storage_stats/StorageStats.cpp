@@ -134,6 +134,7 @@ void collectAndReport() {
     bool have_any = false;
     uint64_t total_free_bytes = 0;
     uint64_t total_used_bytes = 0;
+    uint64_t mount_total_bytes = 0;
 
     if (g_spiffs_mounted) {
         size_t total_bytes = 0;
@@ -141,6 +142,7 @@ void collectAndReport() {
         if (esp_spiffs_info(kSpiffsPartitionLabel, &total_bytes, &used_bytes) == ESP_OK) {
             total_used_bytes += used_bytes;
             total_free_bytes += (total_bytes >= used_bytes) ? (total_bytes - used_bytes) : 0;
+            mount_total_bytes += total_bytes;
             have_any = true;
         }
     }
@@ -152,6 +154,7 @@ void collectAndReport() {
         if (esp_vfs_fat_info(kSdMountPoint, &sd_total_bytes, &sd_free_bytes) == ESP_OK) {
             total_free_bytes += sd_free_bytes;
             total_used_bytes += (sd_total_bytes >= sd_free_bytes) ? (sd_total_bytes - sd_free_bytes) : 0;
+            mount_total_bytes += sd_total_bytes;
             have_any = true;
         }
     }
@@ -162,8 +165,14 @@ void collectAndReport() {
     }
 
     auto& connector = HeapwatchConnector::getInstance();
-    connector.updateParameterInt("storage_free_bytes", static_cast<int64_t>(total_free_bytes));
-    connector.updateParameterInt("storage_used_bytes", static_cast<int64_t>(total_used_bytes));
+    connector.updateParameterInt("storage.free_bytes", static_cast<int64_t>(total_free_bytes));
+    connector.updateParameterInt("storage.used_bytes", static_cast<int64_t>(total_used_bytes));
+    if (mount_total_bytes > 0) {
+        connector.setParameterIntMin("storage.free_bytes", 0);
+        connector.setParameterIntMax("storage.free_bytes", static_cast<int64_t>(mount_total_bytes));
+        connector.setParameterIntMin("storage.used_bytes", 0);
+        connector.setParameterIntMax("storage.used_bytes", static_cast<int64_t>(mount_total_bytes));
+    }
 #endif  // CONFIG_HEAPWATCH_ENABLE_STORAGE_STATS
 }
 

@@ -309,8 +309,9 @@ typedef enum {
  * Fixed capacity of the in-RAM sparse parameter map (slug -> value/min/max)
  * that HeapwatchConnector::flushParameters() batches into one publish per
  * telemetry round. No malloc/free — a slug simply fails to register once this
- * many distinct slugs are live in a boot (auto-provisioned per-task/per-power-source
- * slugs count against this same budget).
+ * many distinct slugs are live in a boot (auto-provisioned per-power-source
+ * slugs and connector gauge limits count against this same budget). Per-task
+ * stack maxes are emitted from MetricsCollector, not this table (DRAM).
  */
 #define HEAPWATCH_MAX_PARAMETER_SLOTS 32
 

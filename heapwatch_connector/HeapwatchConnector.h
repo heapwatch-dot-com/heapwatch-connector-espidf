@@ -153,6 +153,15 @@ public:
                                       double max_value);
 
     /**
+     * Limits-only ParameterStore updates (PARAM1b). Does not require a live
+     * value; the next flushParameters() may publish only `slug_max` / `slug_min`.
+     */
+    void setParameterIntMax(const char* slug, int64_t max_value);
+    void setParameterIntMin(const char* slug, int64_t min_value);
+    void setParameterDoubleMax(const char* slug, double max_value);
+    void setParameterDoubleMin(const char* slug, double min_value);
+
+    /**
      * Flushes the entire current parameter map (see ParameterStore.h) as one
      * batched publish. Called once per telemetry round by MetricsCollector;
      * a no-op if the map is currently empty (no parameters ever updated).

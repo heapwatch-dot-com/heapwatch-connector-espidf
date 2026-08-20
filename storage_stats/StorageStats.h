@@ -26,7 +26,7 @@
 // Neither mount is fatal on failure: a fresh/unformatted SPIFFS partition is
 // auto-formatted on first boot (format_if_mount_failed=true); a missing/unwired SD
 // card just logs a warning and is skipped, and its stats are omitted from the
-// reported totals for that boot. Reports storage_free_bytes/storage_used_bytes via
+// reported totals for that boot. Reports storage.free_bytes/storage.used_bytes via
 // the generic parameter mechanism (PARAM1) -- see PARAM2 for the fixed-slug design.
 namespace heapwatch::storage_stats {
 
@@ -40,8 +40,8 @@ void init();
 /**
  * Queries free/used bytes across every successfully-mounted medium (SPIFFS always
  * attempted; SD card only if enabled and its mount succeeded) and reports the
- * aggregate via HeapwatchConnector::updateParameterInt("storage_free_bytes"/
- * "storage_used_bytes", ...). No-op if HEAPWATCH_ENABLE_STORAGE_STATS=n or nothing
+ * aggregate via HeapwatchConnector::updateParameterInt("storage.free_bytes"/
+ * "storage.used_bytes", ...). No-op if HEAPWATCH_ENABLE_STORAGE_STATS=n or nothing
  * is mounted. Call once per telemetry round from MetricsCollector.
  */
 void collectAndReport();

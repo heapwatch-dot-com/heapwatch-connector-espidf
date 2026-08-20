@@ -212,6 +212,54 @@ esp_err_t heapwatch_update_parameter_double_ranged(const char* slug, double valu
     return ESP_OK;
 }
 
+esp_err_t heapwatch_set_parameter_max(const char* slug, int64_t max_value) {
+    if (slug == nullptr || slug[0] == '\0') {
+        return ESP_ERR_HEAPWATCH_INVALID_ARG;
+    }
+    const esp_err_t ready = require_queue_ready();
+    if (ready != ESP_OK) {
+        return ready;
+    }
+    HeapwatchConnector::getInstance().setParameterIntMax(slug, max_value);
+    return ESP_OK;
+}
+
+esp_err_t heapwatch_set_parameter_min(const char* slug, int64_t min_value) {
+    if (slug == nullptr || slug[0] == '\0') {
+        return ESP_ERR_HEAPWATCH_INVALID_ARG;
+    }
+    const esp_err_t ready = require_queue_ready();
+    if (ready != ESP_OK) {
+        return ready;
+    }
+    HeapwatchConnector::getInstance().setParameterIntMin(slug, min_value);
+    return ESP_OK;
+}
+
+esp_err_t heapwatch_set_parameter_double_max(const char* slug, double max_value) {
+    if (slug == nullptr || slug[0] == '\0') {
+        return ESP_ERR_HEAPWATCH_INVALID_ARG;
+    }
+    const esp_err_t ready = require_queue_ready();
+    if (ready != ESP_OK) {
+        return ready;
+    }
+    HeapwatchConnector::getInstance().setParameterDoubleMax(slug, max_value);
+    return ESP_OK;
+}
+
+esp_err_t heapwatch_set_parameter_double_min(const char* slug, double min_value) {
+    if (slug == nullptr || slug[0] == '\0') {
+        return ESP_ERR_HEAPWATCH_INVALID_ARG;
+    }
+    const esp_err_t ready = require_queue_ready();
+    if (ready != ESP_OK) {
+        return ready;
+    }
+    HeapwatchConnector::getInstance().setParameterDoubleMin(slug, min_value);
+    return ESP_OK;
+}
+
 esp_err_t heapwatch_update_power_mv(const char* source_name, int64_t mv) {
     if (source_name == nullptr || source_name[0] == '\0') {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;

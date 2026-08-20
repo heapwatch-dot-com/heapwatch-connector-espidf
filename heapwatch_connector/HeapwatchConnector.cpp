@@ -962,6 +962,22 @@ void HeapwatchConnector::updateParameterDoubleRanged(const char* slug, double va
     heapwatch::parameter_store::updateDoubleRanged(slug, value, min_value, max_value);
 }
 
+void HeapwatchConnector::setParameterIntMax(const char* slug, int64_t max_value) {
+    heapwatch::parameter_store::setIntMax(slug, max_value);
+}
+
+void HeapwatchConnector::setParameterIntMin(const char* slug, int64_t min_value) {
+    heapwatch::parameter_store::setIntMin(slug, min_value);
+}
+
+void HeapwatchConnector::setParameterDoubleMax(const char* slug, double max_value) {
+    heapwatch::parameter_store::setDoubleMax(slug, max_value);
+}
+
+void HeapwatchConnector::setParameterDoubleMin(const char* slug, double min_value) {
+    heapwatch::parameter_store::setDoubleMin(slug, min_value);
+}
+
 void HeapwatchConnector::flushParameters() {
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;

@@ -15,6 +15,7 @@
 
 #include "ParameterStore.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -31,24 +32,35 @@ namespace {
 constexpr size_t kMaxSlugLen = 48;
 
 struct ParamSlot {
-    bool in_use = false;
     char slug[kMaxSlugLen] = {0};
-    bool is_double = false;
-
     int64_t int_value = 0;
     double double_value = 0.0;
-
-    bool has_bounds = false;
     int64_t int_min = 0;
     int64_t int_max = 0;
     double double_min = 0.0;
     double double_max = 0.0;
-
-    // PARAM1b: dirty-flag-gated resend -- true until the current bounds have
-    // actually been included in a flush once.
-    bool bounds_dirty = true;
     TickType_t last_bounds_sent_tick = 0;
+    uint8_t flags = 0;
 };
+
+constexpr uint8_t kSlotInUse = 1 << 0;
+constexpr uint8_t kSlotIsDouble = 1 << 1;
+constexpr uint8_t kSlotHasValue = 1 << 2;
+constexpr uint8_t kSlotHasMin = 1 << 3;
+constexpr uint8_t kSlotHasMax = 1 << 4;
+constexpr uint8_t kSlotBoundsDirty = 1 << 5;
+
+bool slot_flag(const ParamSlot& slot, uint8_t bit) {
+    return (slot.flags & bit) != 0;
+}
+
+void slot_set_flag(ParamSlot& slot, uint8_t bit, bool on) {
+    if (on) {
+        slot.flags = static_cast<uint8_t>(slot.flags | bit);
+    } else {
+        slot.flags = static_cast<uint8_t>(slot.flags & static_cast<uint8_t>(~bit));
+    }
+}
 
 ParamSlot g_slots[HEAPWATCH_MAX_PARAMETER_SLOTS];
 SemaphoreHandle_t g_mutex = nullptr;
@@ -67,15 +79,16 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
     }
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (g_slots[i].in_use && strncmp(g_slots[i].slug, slug, kMaxSlugLen) == 0) {
+        if (slot_flag(g_slots[i], kSlotInUse) && strncmp(g_slots[i].slug, slug, kMaxSlugLen) == 0) {
             return &g_slots[i];
         }
     }
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (!g_slots[i].in_use) {
+        if (!slot_flag(g_slots[i], kSlotInUse)) {
             g_slots[i] = ParamSlot();
-            g_slots[i].in_use = true;
+            slot_set_flag(g_slots[i], kSlotInUse, true);
+            slot_set_flag(g_slots[i], kSlotBoundsDirty, true);
             snprintf(g_slots[i].slug, sizeof(g_slots[i].slug), "%s", slug);
             return &g_slots[i];
         }
@@ -88,18 +101,19 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
     return nullptr;
 }
 
-// Bounds are re-included in a flush when they differ from what was last sent,
-// OR the rare safety-net resend interval has elapsed (PARAM1b) -- whichever
-// path fired, the caller is expected to mark the bounds as sent afterward.
 bool bounds_due_for_resend_locked(const ParamSlot& slot, TickType_t now) {
-    if (!slot.has_bounds) {
+    if (!slot_flag(slot, kSlotHasMin) && !slot_flag(slot, kSlotHasMax)) {
         return false;
     }
-    if (slot.bounds_dirty) {
+    if (slot_flag(slot, kSlotBoundsDirty)) {
         return true;
     }
     const TickType_t elapsed_ticks = now - slot.last_bounds_sent_tick;
     return elapsed_ticks >= pdMS_TO_TICKS(HEAPWATCH_PARAMETER_BOUNDS_RESEND_INTERVAL_MS);
+}
+
+bool slot_has_publishable_content_locked(const ParamSlot& slot, TickType_t now) {
+    return slot_flag(slot, kSlotHasValue) || bounds_due_for_resend_locked(slot, now);
 }
 
 }  // namespace
@@ -111,7 +125,8 @@ void updateInt(const char* slug, int64_t value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot->is_double = false;
+        slot_set_flag(*slot, kSlotIsDouble, false);
+        slot_set_flag(*slot, kSlotHasValue, true);
         slot->int_value = value;
     }
     xSemaphoreGive(mutex);
@@ -124,7 +139,8 @@ void updateDouble(const char* slug, double value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot->is_double = true;
+        slot_set_flag(*slot, kSlotIsDouble, true);
+        slot_set_flag(*slot, kSlotHasValue, true);
         slot->double_value = value;
     }
     xSemaphoreGive(mutex);
@@ -137,12 +153,15 @@ void updateIntRanged(const char* slug, int64_t value, int64_t min_value, int64_t
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot->is_double = false;
+        slot_set_flag(*slot, kSlotIsDouble, false);
+        slot_set_flag(*slot, kSlotHasValue, true);
         slot->int_value = value;
-        if (!slot->has_bounds || slot->int_min != min_value || slot->int_max != max_value) {
-            slot->bounds_dirty = true;
+        if (!slot_flag(*slot, kSlotHasMin) || !slot_flag(*slot, kSlotHasMax)
+            || slot->int_min != min_value || slot->int_max != max_value) {
+            slot_set_flag(*slot, kSlotBoundsDirty, true);
         }
-        slot->has_bounds = true;
+        slot_set_flag(*slot, kSlotHasMin, true);
+        slot_set_flag(*slot, kSlotHasMax, true);
         slot->int_min = min_value;
         slot->int_max = max_value;
     }
@@ -156,14 +175,101 @@ void updateDoubleRanged(const char* slug, double value, double min_value, double
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot->is_double = true;
+        slot_set_flag(*slot, kSlotIsDouble, true);
+        slot_set_flag(*slot, kSlotHasValue, true);
         slot->double_value = value;
-        if (!slot->has_bounds || slot->double_min != min_value || slot->double_max != max_value) {
-            slot->bounds_dirty = true;
+        if (!slot_flag(*slot, kSlotHasMin) || !slot_flag(*slot, kSlotHasMax)
+            || slot->double_min != min_value || slot->double_max != max_value) {
+            slot_set_flag(*slot, kSlotBoundsDirty, true);
         }
-        slot->has_bounds = true;
+        slot_set_flag(*slot, kSlotHasMin, true);
+        slot_set_flag(*slot, kSlotHasMax, true);
         slot->double_min = min_value;
         slot->double_max = max_value;
+    }
+    xSemaphoreGive(mutex);
+}
+
+void setIntMax(const char* slug, int64_t max_value) {
+    SemaphoreHandle_t mutex = get_or_create_mutex();
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    ParamSlot* slot = find_or_create_slot_locked(slug);
+    if (slot != nullptr) {
+        if (!slot_flag(*slot, kSlotHasValue)) {
+            slot_set_flag(*slot, kSlotIsDouble, false);
+        }
+        if (!slot_flag(*slot, kSlotIsDouble)) {
+            if (!slot_flag(*slot, kSlotHasMax) || slot->int_max != max_value) {
+                slot_set_flag(*slot, kSlotBoundsDirty, true);
+            }
+            slot_set_flag(*slot, kSlotHasMax, true);
+            slot->int_max = max_value;
+        }
+    }
+    xSemaphoreGive(mutex);
+}
+
+void setIntMin(const char* slug, int64_t min_value) {
+    SemaphoreHandle_t mutex = get_or_create_mutex();
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    ParamSlot* slot = find_or_create_slot_locked(slug);
+    if (slot != nullptr) {
+        if (!slot_flag(*slot, kSlotHasValue)) {
+            slot_set_flag(*slot, kSlotIsDouble, false);
+        }
+        if (!slot_flag(*slot, kSlotIsDouble)) {
+            if (!slot_flag(*slot, kSlotHasMin) || slot->int_min != min_value) {
+                slot_set_flag(*slot, kSlotBoundsDirty, true);
+            }
+            slot_set_flag(*slot, kSlotHasMin, true);
+            slot->int_min = min_value;
+        }
+    }
+    xSemaphoreGive(mutex);
+}
+
+void setDoubleMax(const char* slug, double max_value) {
+    SemaphoreHandle_t mutex = get_or_create_mutex();
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    ParamSlot* slot = find_or_create_slot_locked(slug);
+    if (slot != nullptr) {
+        if (!slot_flag(*slot, kSlotHasValue)) {
+            slot_set_flag(*slot, kSlotIsDouble, true);
+        }
+        if (slot_flag(*slot, kSlotIsDouble)) {
+            if (!slot_flag(*slot, kSlotHasMax) || slot->double_max != max_value) {
+                slot_set_flag(*slot, kSlotBoundsDirty, true);
+            }
+            slot_set_flag(*slot, kSlotHasMax, true);
+            slot->double_max = max_value;
+        }
+    }
+    xSemaphoreGive(mutex);
+}
+
+void setDoubleMin(const char* slug, double min_value) {
+    SemaphoreHandle_t mutex = get_or_create_mutex();
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+    ParamSlot* slot = find_or_create_slot_locked(slug);
+    if (slot != nullptr) {
+        if (!slot_flag(*slot, kSlotHasValue)) {
+            slot_set_flag(*slot, kSlotIsDouble, true);
+        }
+        if (slot_flag(*slot, kSlotIsDouble)) {
+            if (!slot_flag(*slot, kSlotHasMin) || slot->double_min != min_value) {
+                slot_set_flag(*slot, kSlotBoundsDirty, true);
+            }
+            slot_set_flag(*slot, kSlotHasMin, true);
+            slot->double_min = min_value;
+        }
     }
     xSemaphoreGive(mutex);
 }
@@ -178,22 +284,22 @@ bool buildFlushPayload(char* out, size_t out_size) {
         return false;
     }
 
-    bool any_slot_in_use = false;
-    for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (g_slots[i].in_use) {
-            any_slot_in_use = true;
-            break;
-        }
-    }
-    if (!any_slot_in_use) {
-        xSemaphoreGive(mutex);
-        return false;
-    }
-
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
     const TickType_t now = xTaskGetTickCount();
+
+    bool any_publishable = false;
+    for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
+        if (slot_flag(g_slots[i], kSlotInUse) && slot_has_publishable_content_locked(g_slots[i], now)) {
+            any_publishable = true;
+            break;
+        }
+    }
+    if (!any_publishable) {
+        xSemaphoreGive(mutex);
+        return false;
+    }
 
     size_t pos = 0;
     pos += snprintf(out + pos, out_size - pos, "{\"tsms\":%llu,\"utms\":%llu",
@@ -201,31 +307,43 @@ bool buildFlushPayload(char* out, size_t out_size) {
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS && pos < out_size; ++i) {
         ParamSlot& slot = g_slots[i];
-        if (!slot.in_use) {
+        if (!slot_flag(slot, kSlotInUse)) {
             continue;
         }
 
-        if (slot.is_double) {
-            pos += snprintf(out + pos, out_size - pos, ",\"%s\":%.6f", slot.slug, slot.double_value);
-        } else {
-            pos += snprintf(out + pos, out_size - pos, ",\"%s\":%lld", slot.slug,
-                             static_cast<long long>(slot.int_value));
+        if (slot_flag(slot, kSlotHasValue)) {
+            if (slot_flag(slot, kSlotIsDouble)) {
+                pos += snprintf(out + pos, out_size - pos, ",\"%s\":%.6f", slot.slug, slot.double_value);
+            } else {
+                pos += snprintf(out + pos, out_size - pos, ",\"%s\":%lld", slot.slug,
+                                 static_cast<long long>(slot.int_value));
+            }
         }
 
         if (bounds_due_for_resend_locked(slot, now) && pos < out_size) {
-            if (slot.is_double) {
-                pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%.6f,\"%s_max\":%.6f",
-                                 slot.slug, slot.double_min, slot.slug, slot.double_max);
+            if (slot_flag(slot, kSlotIsDouble)) {
+                if (slot_flag(slot, kSlotHasMin)) {
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%.6f", slot.slug,
+                                     slot.double_min);
+                }
+                if (slot_flag(slot, kSlotHasMax) && pos < out_size) {
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%.6f", slot.slug,
+                                     slot.double_max);
+                }
             } else {
-                pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%lld,\"%s_max\":%lld",
-                                 slot.slug, static_cast<long long>(slot.int_min), slot.slug,
-                                 static_cast<long long>(slot.int_max));
+                if (slot_flag(slot, kSlotHasMin)) {
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%lld", slot.slug,
+                                     static_cast<long long>(slot.int_min));
+                }
+                if (slot_flag(slot, kSlotHasMax) && pos < out_size) {
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%lld", slot.slug,
+                                     static_cast<long long>(slot.int_max));
+                }
             }
-            slot.bounds_dirty = false;
+            slot_set_flag(slot, kSlotBoundsDirty, false);
             slot.last_bounds_sent_tick = now;
         }
     }
-
     if (pos < out_size) {
         out[pos++] = '}';
     }

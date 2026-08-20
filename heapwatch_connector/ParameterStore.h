@@ -35,7 +35,9 @@
  * PARAM1b: `_min`/`_max` bounds are dirty-flag-gated -- only re-included in a
  * flush when they differ from what was last actually sent, or when the rare
  * safety-net resend interval has elapsed (see HEAPWATCH_PARAMETER_BOUNDS_RESEND_INTERVAL_MS).
- * The live `value` is always included every flush that finds the map non-empty.
+ * Live values are included every flush that has at least one valued slug.
+ * Limits-only slots (max/min set with no live value) are valid: a flush may
+ * contain only `slug_max` / `slug_min` keys.
  */
 namespace heapwatch::parameter_store {
 
@@ -52,11 +54,22 @@ void updateIntRanged(const char* slug, int64_t value, int64_t min_value, int64_t
 void updateDoubleRanged(const char* slug, double value, double min_value, double max_value);
 
 /**
- * Serializes the entire current map into `out` as one flat JSON object
- * (`{"tsms":...,"utms":...,"slug":value,...}`), clearing bound dirty-flags
- * for any bounds included in this flush. Returns false (and leaves `out`
- * untouched) if the map is currently empty -- callers should skip publishing
- * in that case rather than send an empty parameter message every round.
+ * Sets a slug's max (or min) without requiring a live value. Used for connector
+ * gauge limits (boot + change) and app custom-metric caps. Marks bounds dirty
+ * when the cap changes so the next flush is a valid limits-only `/parameter`
+ * message if no value has been written yet.
+ */
+void setIntMax(const char* slug, int64_t max_value);
+void setIntMin(const char* slug, int64_t min_value);
+void setDoubleMax(const char* slug, double max_value);
+void setDoubleMin(const char* slug, double min_value);
+
+/**
+ * Serializes the current map into `out` as one flat JSON object
+ * (`{"tsms":...,"utms":...,"slug":value,...}` plus due `_min`/`_max` keys),
+ * clearing bound dirty-flags for any bounds included in this flush. Returns
+ * false (and leaves `out` untouched) if there is nothing to publish — empty
+ * map, or only limits-only slots whose bounds are not due.
  */
 bool buildFlushPayload(char* out, size_t out_size);
 
