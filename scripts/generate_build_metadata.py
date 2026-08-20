@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+# Copyright (c) 2026 Heapwatch. All rights reserved.
 #
 # Pre-build: git describe for client app + connector -> heapwatch_build_metadata.h
 

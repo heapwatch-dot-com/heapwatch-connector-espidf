@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -29,6 +29,9 @@
 namespace heapwatch::metrics_collector {
 
 void init();
+
+/** Seed connector gauge _min/_max limits (call before first bounds flush on MQTT-up). */
+void refreshConnectorGaugeLimits();
 
 /**
  * @brief Metrics collector task function

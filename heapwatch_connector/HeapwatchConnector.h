@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -167,6 +167,9 @@ public:
      * a no-op if the map is currently empty (no parameters ever updated).
      */
     void flushParameters();
+
+    /** Flush dirty `_min`/`_max` bounds only (boot sync path). */
+    void flushParameterBounds();
 
     /** STAT1: see HeapwatchConnectorStatus. Always compiled in, cheap to call frequently. */
     HeapwatchConnectorStatus getStatus() const;

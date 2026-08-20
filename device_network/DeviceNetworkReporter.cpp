@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 
 #include "device_network/DeviceNetworkReporter.h"
 
@@ -23,6 +23,7 @@ constexpr size_t kMaxTrackedKeys = 8;
 constexpr size_t kKeyLen = 32;
 
 bool g_started = false;
+volatile bool g_topology_dirty = false;
 char g_prev_default_key[kKeyLen] = {};
 char g_prev_keys[kMaxTrackedKeys][kKeyLen] = {};
 size_t g_prev_key_count = 0;
@@ -291,7 +292,7 @@ void on_ip_or_wifi_event(void* /*arg*/, esp_event_base_t event_base, int32_t eve
         HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
     }
 
-    publishFullSync();
+    markTopologyDirty();
 }
 
 }  // namespace
@@ -329,6 +330,16 @@ void publishFullSync() {
     emit_events_for_scan(esp_netif_get_default_netif());
     HeapwatchConnector::getInstance().queueNetwork();
     ESP_LOGI(kTag, "Queued full /network sync");
+}
+
+void markTopologyDirty() { g_topology_dirty = true; }
+
+bool consumeTopologyDirty() {
+    if (!g_topology_dirty) {
+        return false;
+    }
+    g_topology_dirty = false;
+    return true;
 }
 
 void start() {

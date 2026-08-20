@@ -65,4 +65,7 @@ void flushOutbound();
 /** Register handler for inbound mux upload chunks on channel "fs_upload/{command_id}". */
 void setFsUploadChunkHandler(FsUploadChunkHandler handler);
 
+/** Queue a one-shot command manifest upload on hw_streaming (non-blocking). */
+void requestManifestUpload();
+
 }  // namespace heapwatch::stream_ingress

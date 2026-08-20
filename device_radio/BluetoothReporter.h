@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 
 #ifndef HEAPWATCH_DEVICE_RADIO_BLUETOOTH_REPORTER_H
 #define HEAPWATCH_DEVICE_RADIO_BLUETOOTH_REPORTER_H

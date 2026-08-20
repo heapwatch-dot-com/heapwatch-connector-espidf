@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+# Copyright (c) 2026 Heapwatch. All rights reserved.
 #
 # Runs after a successful application elf2image (CMake stamp on .bin_timestamp):
 #  1. Refuse leftover binaries if compile/link did not succeed

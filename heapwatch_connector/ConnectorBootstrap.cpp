@@ -1,4 +1,4 @@
-// Copyright (c) 2025-2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2025-2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,

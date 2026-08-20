@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -30,7 +30,9 @@
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_config.h"
+#include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../connector_settings/ConnectorSettings.h"
+#include "../device_network/DeviceNetworkReporter.h"
 #include "../storage_stats/StorageStats.h"
 
 namespace heapwatch::metrics_collector {
@@ -186,6 +188,12 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
 }
 }  // namespace
 
+void refreshConnectorGaugeLimits() {
+    const size_t core_count =
+        (portNUM_PROCESSORS <= kMaxCoresSupported) ? portNUM_PROCESSORS : kMaxCoresSupported;
+    refresh_connector_gauge_limits(core_count);
+}
+
 void init() {
     g_start_time_us = static_cast<uint64_t>(esp_timer_get_time());
 }
@@ -205,7 +213,21 @@ void collectTask(void* arg) {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
+    bool prev_mqtt_connected = g_mqtt_connected;
+    bool boot_static_enqueued = false;
+
     while (heapwatch_collector_running()) {
+        const bool mqtt_now = g_mqtt_connected;
+        if (heapwatch_should_enqueue_boot_static(prev_mqtt_connected, mqtt_now, boot_static_enqueued)) {
+            heapwatch::connector_boot_sync::runBootStaticSync();
+            boot_static_enqueued = true;
+        } else if (prev_mqtt_connected && !mqtt_now) {
+            HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_DISCONNECTED);
+        } else if (heapwatch::device_network::consumeTopologyDirty() && mqtt_now) {
+            heapwatch::device_network::publishFullSync();
+        }
+        prev_mqtt_connected = mqtt_now;
+
         vTaskDelay(pdMS_TO_TICKS(heapwatch::connector_settings::telemetryIntervalMs()));
         if (!heapwatch_collector_running()) {
             break;

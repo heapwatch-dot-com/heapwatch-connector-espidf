@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+# Copyright (c) 2026 Heapwatch. All rights reserved.
 #
 # Upload firmware metadata + binaries to Heapwatch CI endpoint.
 # Called from finalize_and_upload_firmware.py after the application .bin exists.

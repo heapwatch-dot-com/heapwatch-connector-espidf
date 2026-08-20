@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -314,14 +314,6 @@ typedef enum {
  * stack maxes are emitted from MetricsCollector, not this table (DRAM).
  */
 #define HEAPWATCH_MAX_PARAMETER_SLOTS 32
-
-/**
- * PARAM1b: a slug's _min/_max bounds are only re-included in a flush when they
- * actually changed since last sent (dirty-flag gated) -- EXCEPT for this rare
- * safety-net resend, so a long-uptime device with a narrow dashboard time
- * window still has a support band to show (see task_plan.md PARAM1b).
- */
-#define HEAPWATCH_PARAMETER_BOUNDS_RESEND_INTERVAL_MS (60UL * 60UL * 1000UL)
 
 /* ============================================================================
    Power State (POW1; Heapwatch-owned, no framework equivalent to leak per PORT1)

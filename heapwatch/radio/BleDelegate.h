@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // Public C API for customer-owned BLE stacks. Register a vtable to override the
 // built-in NimBLE report-only provider.

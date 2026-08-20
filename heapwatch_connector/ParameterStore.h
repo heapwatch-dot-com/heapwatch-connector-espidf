@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -32,9 +32,8 @@
  * `{slug: value, ...}` object, not one message per value), and it delivers
  * "coalesced, last-value-wins" for free.
  *
- * PARAM1b: `_min`/`_max` bounds are dirty-flag-gated -- only re-included in a
- * flush when they differ from what was last actually sent, or when the rare
- * safety-net resend interval has elapsed (see HEAPWATCH_PARAMETER_BOUNDS_RESEND_INTERVAL_MS).
+ * PARAM1b: `_min`/`_max` bounds are dirty-flag-gated — only re-included when
+ * `kSlotBoundsDirty` is set. Dirty clears only after successful outbound queue accept.
  * Live values are included every flush that has at least one valued slug.
  * Limits-only slots (max/min set with no live value) are valid: a flush may
  * contain only `slug_max` / `slug_min` keys.
@@ -66,11 +65,12 @@ void setDoubleMin(const char* slug, double min_value);
 
 /**
  * Serializes the current map into `out` as one flat JSON object
- * (`{"tsms":...,"utms":...,"slug":value,...}` plus due `_min`/`_max` keys),
- * clearing bound dirty-flags for any bounds included in this flush. Returns
- * false (and leaves `out` untouched) if there is nothing to publish — empty
- * map, or only limits-only slots whose bounds are not due.
+ * (`{"tsms":...,"utms":...,"slug":value,...}` plus dirty `_min`/`_max` keys). Returns
+ * false (and leaves `out` untouched) if there is nothing to publish.
  */
 bool buildFlushPayload(char* out, size_t out_size);
+
+/** Clears bounds dirty flags after the payload built above was accepted by the outbound queue. */
+void acknowledgeBoundsSent();
 
 }  // namespace heapwatch::parameter_store

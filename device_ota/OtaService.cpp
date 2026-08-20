@@ -32,13 +32,12 @@ constexpr size_t kDownloadChunk = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
 #else
 constexpr size_t kDownloadChunk = 256;
 #endif
-// BSS — single hw_ota task; keeps chunk RAM off the 12 KiB task stack.
+constexpr uint32_t kOtaTaskStackBytes = 12288;
+// BSS — keeps download chunk RAM off the hw_ota task stack.
 uint8_t g_ota_io_buf[kDownloadChunk] = {};
 constexpr size_t kMaxDataPartitions = 4;
 constexpr size_t kPartitionNameMax = 32;
-// Yield every download chunk so MQTT can deliver ota/abort while HTTPS streams.
 constexpr size_t kMqttYieldEveryBytes = kDownloadChunk;
-// MQTT ota/progress publishes — decoupled from HTTPS read chunk size.
 constexpr size_t kProgressEveryBytes = 128 * 1024;
 constexpr int kHttpTimeoutMs = 15000;
 
@@ -66,9 +65,9 @@ enum class Phase : uint8_t {
 };
 
 SemaphoreHandle_t g_mutex = nullptr;
+TaskHandle_t g_ota_task = nullptr;
 volatile bool g_abort_requested = false;
 volatile Phase g_phase = Phase::Idle;
-TaskHandle_t g_task = nullptr;
 OtaJob g_job = {};
 
 void log_phase(int64_t session_id, const char* phase, const char* detail = nullptr) {
@@ -167,15 +166,10 @@ void fail_job(int64_t session_id, const char* reason) {
     if (g_mutex != nullptr && xSemaphoreTake(g_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         g_phase = Phase::Idle;
         g_abort_requested = false;
-        g_task = nullptr;
         xSemaphoreGive(g_mutex);
     }
 }
 
-/**
- * Same device REST auth as coredump / credential rotation: Bearer device API key
- * via resolveBootCredentials (NVS from enrollment, or fresh enrollment run).
- */
 bool apply_device_api_key_auth(esp_http_client_handle_t client) {
     if (client == nullptr) {
         return false;
@@ -233,8 +227,7 @@ bool flash_data_partition(const DataPartitionJob& part, int64_t session_id) {
         return false;
     }
 
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
+    if (esp_http_client_open(client, 0) != ESP_OK) {
         esp_http_client_cleanup(client);
         return false;
     }
@@ -334,8 +327,6 @@ bool stream_flash_app(const OtaJob& job) {
              static_cast<unsigned long>(update->size));
     log_phase(job.ota_session_id, "flash", slot_detail);
 
-    // Streaming HTTPS → OTA partition. Event order stays monotonic for the backend:
-    // STARTED → DOWNLOADING → DOWNLOADED → FLASHING → FLASHED → SUCCESSFUL
     emit_event(HEAPWATCH_EVENT_FW_UPDATE_DOWNLOADING);
     log_phase(job.ota_session_id, "download", "starting");
     emit_progress(job.ota_session_id, "downloading", 0,
@@ -359,8 +350,7 @@ bool stream_flash_app(const OtaJob& job) {
         return false;
     }
 
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
+    if (esp_http_client_open(client, 0) != ESP_OK) {
         esp_http_client_cleanup(client);
         fail_job(job.ota_session_id, "reason=http_open");
         return false;
@@ -378,8 +368,7 @@ bool stream_flash_app(const OtaJob& job) {
     esp_ota_handle_t ota_handle = 0;
     const size_t image_size =
         job.code_size > 0 ? static_cast<size_t>(job.code_size) : OTA_SIZE_UNKNOWN;
-    err = esp_ota_begin(update, image_size, &ota_handle);
-    if (err != ESP_OK) {
+    if (esp_ota_begin(update, image_size, &ota_handle) != ESP_OK) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         fail_job(job.ota_session_id, "reason=ota_begin");
@@ -403,7 +392,6 @@ bool stream_flash_app(const OtaJob& job) {
             if (g_mutex != nullptr && xSemaphoreTake(g_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                 g_phase = Phase::Idle;
                 g_abort_requested = false;
-                g_task = nullptr;
                 xSemaphoreGive(g_mutex);
             }
             return false;
@@ -423,8 +411,7 @@ bool stream_flash_app(const OtaJob& job) {
             break;
         }
 
-        err = esp_ota_write(ota_handle, g_ota_io_buf, static_cast<size_t>(n));
-        if (err != ESP_OK) {
+        if (esp_ota_write(ota_handle, g_ota_io_buf, static_cast<size_t>(n)) != ESP_OK) {
             esp_ota_abort(ota_handle);
             mbedtls_sha256_free(&sha_ctx);
             esp_http_client_close(client);
@@ -436,7 +423,6 @@ bool stream_flash_app(const OtaJob& job) {
         mbedtls_sha256_update(&sha_ctx, g_ota_io_buf, static_cast<size_t>(n));
         total += static_cast<size_t>(n);
 
-        // Progress every 128 KiB; yield every download chunk so MQTT can deliver ota/abort.
         if (total - last_progress_bytes >= kProgressEveryBytes) {
             last_progress_bytes = total;
             char progress[64];
@@ -485,8 +471,7 @@ bool stream_flash_app(const OtaJob& job) {
                   expected_total > 0 ? expected_total : static_cast<int64_t>(total));
     log_phase(job.ota_session_id, "flashing", "finalize");
 
-    err = esp_ota_end(ota_handle);
-    if (err != ESP_OK) {
+    if (esp_ota_end(ota_handle) != ESP_OK) {
         fail_job(job.ota_session_id, "reason=ota_end");
         return false;
     }
@@ -498,7 +483,6 @@ bool stream_flash_app(const OtaJob& job) {
                 if (g_mutex != nullptr && xSemaphoreTake(g_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                     g_phase = Phase::Idle;
                     g_abort_requested = false;
-                    g_task = nullptr;
                     xSemaphoreGive(g_mutex);
                 }
                 return false;
@@ -510,20 +494,17 @@ bool stream_flash_app(const OtaJob& job) {
         }
     }
 
-    // Last chance to abort before switching the boot pointer.
     if (g_abort_requested) {
         log_phase(job.ota_session_id, "aborted", "reason=user_abort_before_boot_pointer");
         if (g_mutex != nullptr && xSemaphoreTake(g_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
             g_phase = Phase::Idle;
             g_abort_requested = false;
-            g_task = nullptr;
             xSemaphoreGive(g_mutex);
         }
         return false;
     }
 
-    err = esp_ota_set_boot_partition(update);
-    if (err != ESP_OK) {
+    if (esp_ota_set_boot_partition(update) != ESP_OK) {
         fail_job(job.ota_session_id, "reason=set_boot_partition");
         return false;
     }
@@ -545,23 +526,31 @@ bool stream_flash_app(const OtaJob& job) {
     return true;
 }
 
-void ota_task(void* /*arg*/) {
-    // Use file-local g_job in place (anonymous namespace). No stack snapshot: start
-    // rejects concurrent jobs and abort only sets g_abort_requested.
+void runOtaJob(const OtaJob& job) {
     emit_event(HEAPWATCH_EVENT_FW_UPDATE_STARTED);
-    log_phase(g_job.ota_session_id, "accepted", nullptr);
-    emit_progress(g_job.ota_session_id, "started", 0, g_job.code_size > 0 ? g_job.code_size : 0);
+    log_phase(job.ota_session_id, "accepted", nullptr);
+    emit_progress(job.ota_session_id, "started", 0, job.code_size > 0 ? job.code_size : 0);
 
-    (void)stream_flash_app(g_job);
+    (void)stream_flash_app(job);
 
     if (g_mutex != nullptr && xSemaphoreTake(g_mutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
         if (g_phase != Phase::BootPointerSwitched) {
             g_phase = Phase::Idle;
         }
-        g_task = nullptr;
+        g_abort_requested = false;
         xSemaphoreGive(g_mutex);
     }
-    vTaskDelete(nullptr);
+}
+
+void otaWorkerTask(void* /*arg*/) {
+    while (true) {
+        // Block until hw_command arms a job (task notification — lighter than a binary
+        // semaphore and cannot accumulate stray wake counts).
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        OtaJob job = g_job;
+        runOtaJob(job);
+    }
 }
 
 bool parse_start_payload(const char* payload, size_t payload_len, OtaJob* job) {
@@ -628,7 +617,7 @@ bool handle_start(const char* command_id, const char* payload, size_t payload_le
         }
     }
 
-    if (g_mutex == nullptr) {
+    if (g_mutex == nullptr || g_ota_task == nullptr) {
         heapwatch::device_command::publishCommandResponse("ota/start", command_id, false, "other",
                                                           "OTA service not initialized");
         return true;
@@ -640,7 +629,7 @@ bool handle_start(const char* command_id, const char* payload, size_t payload_le
         return true;
     }
 
-    if (g_phase == Phase::Running || g_task != nullptr) {
+    if (g_phase == Phase::Running) {
         xSemaphoreGive(g_mutex);
         heapwatch::device_command::publishCommandResponse("ota/start", command_id, false, "busy",
                                                           "OTA already in progress");
@@ -650,20 +639,10 @@ bool handle_start(const char* command_id, const char* payload, size_t payload_le
     g_job = job;
     g_abort_requested = false;
     g_phase = Phase::Running;
-
-    BaseType_t created =
-        xTaskCreate(ota_task, "hw_ota", 12288, nullptr, tskIDLE_PRIORITY + 3, &g_task);
-    if (created != pdPASS) {
-        g_phase = Phase::Idle;
-        g_task = nullptr;
-        xSemaphoreGive(g_mutex);
-        heapwatch::device_command::publishCommandResponse("ota/start", command_id, false, "other",
-                                                          "Failed to create OTA task");
-        return true;
-    }
-
     xSemaphoreGive(g_mutex);
+
     heapwatch::device_command::publishCommandResponse("ota/start", command_id, true, "", "OTA started");
+    xTaskNotifyGive(g_ota_task);
     return true;
 }
 
@@ -714,7 +693,6 @@ bool handle_confirm(const char* command_id) {
     emit_event(HEAPWATCH_EVENT_FW_UPDATE_CONFIRMED);
     heapwatch::device_command::publishCommandResponse("ota/confirm", command_id, true, "",
                                                       "Firmware permanently confirmed");
-    // Specs carry ota_pending_confirm; republish so capability matches the confirmed image.
     HeapwatchConnector::getInstance().queueSpecs();
     return true;
 }
@@ -727,7 +705,6 @@ bool handle_rollback(const char* command_id) {
         return true;
     }
 
-    // Prefer last_invalid when available; otherwise the other OTA slot.
     const esp_partition_t* previous = esp_ota_get_last_invalid_partition();
     if (previous == nullptr) {
         if (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0) {
@@ -770,6 +747,15 @@ void init() {
     if (g_mutex == nullptr) {
         g_mutex = xSemaphoreCreateMutex();
     }
+
+    if (g_ota_task == nullptr) {
+        if (xTaskCreate(otaWorkerTask, "hw_ota", kOtaTaskStackBytes, nullptr, tskIDLE_PRIORITY + 3,
+                        &g_ota_task) != pdPASS) {
+            ESP_LOGE(kLogTag, "FATAL: failed to create persistent hw_ota task");
+            g_ota_task = nullptr;
+        }
+    }
+
     const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
     if (next != nullptr) {
         ESP_LOGI(kLogTag, "OTA service ready (next slot=%s size=%lu chunk=%u B)", next->label,
@@ -807,8 +793,6 @@ bool handleMqttCommand(const char* suffix, const char* command_id, const char* p
     if (strcmp(suffix, "ota/abort") == 0) {
         return handle_abort(command_id);
     }
-    // During HTTPS OTA only Safe Abort is allowed — confirm/rollback wait until
-    // the transfer finishes and the device is idle (typically PENDING_VERIFY).
     if (isInProgress() && (strcmp(suffix, "ota/confirm") == 0 || strcmp(suffix, "ota/rollback") == 0)) {
         ESP_LOGW(kLogTag, "Rejecting %s — OTA in progress", suffix);
         heapwatch::device_command::publishCommandResponse(

@@ -188,4 +188,4 @@ certs/                      TLS trust (local dev CA when needed)
 
 ## License
 
-Copyright © Viktor Jamrich Enterprises s.r.o. See file headers and contact admin@heapwatch.com for licensing.
+Copyright © Heapwatch. See file headers and contact admin@heapwatch.com for licensing.

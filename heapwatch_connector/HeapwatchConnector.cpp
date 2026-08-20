@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -35,6 +35,7 @@
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_radio/BluetoothReporter.h"
 #include "../connector_settings/ConnectorSettings.h"
+#include "../device_command/CommandWorker.h"
 #include "../device_command/GoingDarkPipeline.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
 #include "../device_ota/OtaService.h"
@@ -47,6 +48,8 @@ namespace {
 static constexpr char TAG[] = "HeapwatchConnector";
 /** OTA progress + FW_UPDATE events: block on full queue instead of dropping. */
 static constexpr TickType_t kOtaMqttQueueWait = pdMS_TO_TICKS(1000);
+/** Boot-critical large/tiny publishes: short block instead of silent drop. */
+static constexpr TickType_t kBootCriticalQueueWait = pdMS_TO_TICKS(250);
 QueueHandle_t g_tiny_queue = nullptr;
 QueueHandle_t g_small_queue = nullptr;
 QueueHandle_t g_large_queue = nullptr;
@@ -163,6 +166,7 @@ void initConnectorSubsystemsOnce() {
     heapwatch::storage_stats::init();
     heapwatch::connector_settings::init();
     heapwatch::going_dark::init();
+    heapwatch::device_command::initCommandWorker();
     heapwatch::device_ota::init();
     heapwatch::stream_ingress::init();
     heapwatch::device_fs::init();
@@ -868,7 +872,7 @@ void HeapwatchConnector::queueSpecs() {
 #endif
 
     heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_SPECS, strlen(g_scratch_large_msg.payload));
-    xQueueSend(g_large_queue, &g_scratch_large_msg, 0);
+    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_DEVICE_SPECS */
 }
 
@@ -905,7 +909,7 @@ void HeapwatchConnector::queueNetwork() {
 
     heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_NETWORK,
                                         strlen(g_scratch_large_msg.payload));
-    xQueueSend(g_large_queue, &g_scratch_large_msg, 0);
+    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::queueBluetoothSnapshot() {
@@ -941,7 +945,7 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
 
     heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_BLUETOOTH,
                                         strlen(g_scratch_large_msg.payload));
-    xQueueSend(g_large_queue, &g_scratch_large_msg, 0);
+    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::updateParameterInt(const char* slug, int64_t value) {
@@ -996,7 +1000,13 @@ void HeapwatchConnector::flushParameters() {
     g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
     heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_PARAMETER,
                                          strlen(g_scratch_large_msg.payload));
-    xQueueSend(g_large_queue, &g_scratch_large_msg, 0);
+    if (xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait) == pdTRUE) {
+        heapwatch::parameter_store::acknowledgeBoundsSent();
+    }
+}
+
+void HeapwatchConnector::flushParameterBounds() {
+    flushParameters();
 }
 
 HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {

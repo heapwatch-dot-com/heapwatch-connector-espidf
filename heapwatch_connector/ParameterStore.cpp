@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -101,19 +101,8 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
     return nullptr;
 }
 
-bool bounds_due_for_resend_locked(const ParamSlot& slot, TickType_t now) {
-    if (!slot_flag(slot, kSlotHasMin) && !slot_flag(slot, kSlotHasMax)) {
-        return false;
-    }
-    if (slot_flag(slot, kSlotBoundsDirty)) {
-        return true;
-    }
-    const TickType_t elapsed_ticks = now - slot.last_bounds_sent_tick;
-    return elapsed_ticks >= pdMS_TO_TICKS(HEAPWATCH_PARAMETER_BOUNDS_RESEND_INTERVAL_MS);
-}
-
-bool slot_has_publishable_content_locked(const ParamSlot& slot, TickType_t now) {
-    return slot_flag(slot, kSlotHasValue) || bounds_due_for_resend_locked(slot, now);
+bool slot_has_publishable_content_locked(const ParamSlot& slot) {
+    return slot_flag(slot, kSlotHasValue) || slot_flag(slot, kSlotBoundsDirty);
 }
 
 }  // namespace
@@ -287,11 +276,10 @@ bool buildFlushPayload(char* out, size_t out_size) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
-    const TickType_t now = xTaskGetTickCount();
 
     bool any_publishable = false;
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (slot_flag(g_slots[i], kSlotInUse) && slot_has_publishable_content_locked(g_slots[i], now)) {
+        if (slot_flag(g_slots[i], kSlotInUse) && slot_has_publishable_content_locked(g_slots[i])) {
             any_publishable = true;
             break;
         }
@@ -320,7 +308,7 @@ bool buildFlushPayload(char* out, size_t out_size) {
             }
         }
 
-        if (bounds_due_for_resend_locked(slot, now) && pos < out_size) {
+        if (slot_flag(slot, kSlotBoundsDirty) && pos < out_size) {
             if (slot_flag(slot, kSlotIsDouble)) {
                 if (slot_flag(slot, kSlotHasMin)) {
                     pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%.6f", slot.slug,
@@ -340,8 +328,6 @@ bool buildFlushPayload(char* out, size_t out_size) {
                                      static_cast<long long>(slot.int_max));
                 }
             }
-            slot_set_flag(slot, kSlotBoundsDirty, false);
-            slot.last_bounds_sent_tick = now;
         }
     }
     if (pos < out_size) {
@@ -355,6 +341,25 @@ bool buildFlushPayload(char* out, size_t out_size) {
 
     xSemaphoreGive(mutex);
     return true;
+}
+
+void acknowledgeBoundsSent() {
+    SemaphoreHandle_t mutex = get_or_create_mutex();
+    if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
+        ParamSlot& slot = g_slots[i];
+        if (!slot_flag(slot, kSlotInUse) || !slot_flag(slot, kSlotBoundsDirty)) {
+            continue;
+        }
+        slot_set_flag(slot, kSlotBoundsDirty, false);
+        slot.last_bounds_sent_tick = now;
+    }
+
+    xSemaphoreGive(mutex);
 }
 
 }  // namespace heapwatch::parameter_store

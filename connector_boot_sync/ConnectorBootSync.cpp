@@ -1,0 +1,35 @@
+#include "ConnectorBootSync.h"
+
+#include "esp_log.h"
+#include "sdkconfig.h"
+
+#include "../device_command/CommandManifest.h"
+#include "../device_network/DeviceNetworkReporter.h"
+#include "../device_radio/BluetoothReporter.h"
+#include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_config.h"
+#include "../metrics_collector/MetricsCollector.h"
+
+namespace heapwatch::connector_boot_sync {
+
+namespace {
+
+constexpr char TAG[] = "BootSync";
+
+}  // namespace
+
+void runBootStaticSync() {
+    ESP_LOGI(TAG, "MQTT-up boot sync — enqueueing static payloads");
+
+    heapwatch::metrics_collector::refreshConnectorGaugeLimits();
+    HeapwatchConnector::getInstance().queueSpecs();
+    HeapwatchConnector::getInstance().flushParameterBounds();
+    heapwatch::device_network::publishFullSync();
+#if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
+    heapwatch::device_radio::publishFullSync();
+#endif
+    HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_CONNECTED);
+    heapwatch::device_command::requestManifestUpload();
+}
+
+}  // namespace heapwatch::connector_boot_sync

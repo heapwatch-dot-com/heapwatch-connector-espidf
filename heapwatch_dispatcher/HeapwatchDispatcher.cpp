@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 //
 // This software is part of the Heapwatch Connector for ESP-IDF project.
 // Unauthorized copying, modification, or distribution of this software,
@@ -30,11 +30,7 @@
 #include "mqtt_client.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "device_enrollment/ClaimedIdentitiesBootSync.h"
-#include "../device_command/DeviceCommandHandler.h"
-#include "../device_command/CommandManifest.h"
-#include "../device_network/DeviceNetworkReporter.h"
-#include "../device_radio/BluetoothReporter.h"
-#include "device_credential_rotation/DeviceCredentialRotationClient.h"
+#include "../device_command/CommandWorker.h"
 #include "heapwatch_config.h"
 #include "heapwatch_endpoints.h"
 #include "sdkconfig.h"
@@ -121,6 +117,24 @@ static void try_publish_queue_head(QueueHandle_t queue) {
 
     (void)xQueueReceive(queue, &msg, 0);
     g_publish_blocked_queue = nullptr;
+}
+
+/** Boot-critical outbound first: large (specs/bounds/network) → tiny (events) → small (telemetry). */
+static bool try_publish_priority_outbound(QueueHandle_t large_queue, QueueHandle_t tiny_queue,
+                                          QueueHandle_t small_queue) {
+    if (large_queue != nullptr && uxQueueMessagesWaiting(large_queue) > 0) {
+        try_publish_queue_head<LargeMqttMessage>(large_queue);
+        return true;
+    }
+    if (tiny_queue != nullptr && uxQueueMessagesWaiting(tiny_queue) > 0) {
+        try_publish_queue_head<TinyMqttMessage>(tiny_queue);
+        return true;
+    }
+    if (small_queue != nullptr && uxQueueMessagesWaiting(small_queue) > 0) {
+        try_publish_queue_head<SmallMqttMessage>(small_queue);
+        return true;
+    }
+    return false;
 }
 
 static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
@@ -249,75 +263,25 @@ static void subscribe_command_topics() {
     ESP_LOGI("HeapwatchDispatcher", "Subscribed to %s", g_command_topic);
 }
 
-static void handle_rotation_due_event() {
-    heapwatch::device_credentials::Credentials current = {};
-    if (!heapwatch::device_credentials::load(&current)) {
-        current.tenant_slug[0] = '\0';
-        std::strncpy(current.tenant_slug, heapwatch_get_tenant_slug(),
-                     sizeof(current.tenant_slug) - 1);
-        std::strncpy(current.device_uid, heapwatch_get_device_uid(),
-                     sizeof(current.device_uid) - 1);
-        std::strncpy(current.mqtt_password, heapwatch_get_broker_password(),
-                     sizeof(current.mqtt_password) - 1);
-        const char* auth = heapwatch_get_rest_api_auth_token();
-        if (auth != nullptr && std::strncmp(auth, "Bearer ", 7) == 0) {
-            std::strncpy(current.device_api_key, auth + 7, sizeof(current.device_api_key) - 1);
-        }
-    }
-
-    heapwatch::device_credentials::Credentials updated = {};
-    if (!heapwatch::device_credential_rotation::fetchAndConfirm(HEAPWATCH_API_BASE_URL, &current,
-                                                                 &updated)) {
-        ESP_LOGE("HeapwatchDispatcher", "Credential rotation failed");
-        return;
-    }
-
-    if (!heapwatch::device_credentials::save(&updated)) {
-        ESP_LOGE("HeapwatchDispatcher", "Failed to persist rotated credentials");
-        return;
-    }
-
-    HeapwatchConnector::getInstance().setMqttPassword(updated.mqtt_password);
-    char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
-    std::snprintf(auth_header, sizeof(auth_header), "Bearer %s", updated.device_api_key);
-    HeapwatchConnector::getInstance().setRestApiAuthToken(auth_header);
-    heapwatch_dispatcher_request_reconnect();
-}
-
 static void mqtt_event_handler(void*, esp_event_base_t, int32_t event_id, void* event_data) {
     if (event_id == MQTT_EVENT_CONNECTED) {
         g_mqtt_connected = true;
-        if (g_mqtt_shutting_down) {
-            ESP_LOGI("HeapwatchDispatcher", "MQTT connected during shutdown — draining outbox only");
-            return;
-        }
-        subscribe_command_topics();
-        heapwatch::device_command::uploadManifestIfNeeded();
-        HeapwatchConnector::getInstance().queueSpecs();
-        heapwatch::device_network::publishFullSync();
-        heapwatch::device_radio::publishFullSync();
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_CONNECTED);
     } else if (event_id == MQTT_EVENT_DISCONNECTED || event_id == MQTT_EVENT_ERROR) {
         g_mqtt_connected = false;
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_DISCONNECTED);
-    } else if (event_id == MQTT_EVENT_DATA && event_data != nullptr) {
+    } else if (event_id == MQTT_EVENT_DATA && event_data != nullptr && !g_mqtt_shutting_down) {
         const auto* event = static_cast<esp_mqtt_event_handle_t>(event_data);
-        if (event->topic_len > 0 && event->data_len > 0) {
-            const std::string topic(event->topic, static_cast<size_t>(event->topic_len));
-            if (topic.find("credential_rotation_due") != std::string::npos) {
-                if (g_mqtt_shutting_down) {
-                    return;
-                }
-                ESP_LOGI("HeapwatchDispatcher", "Credential rotation due event received");
-                handle_rotation_due_event();
-            } else if (topic.find("/command/device/") != std::string::npos) {
-                if (g_mqtt_shutting_down) {
-                    return;
-                }
-                heapwatch::device_command::handleMqttMessage(
-                    event->topic, static_cast<size_t>(event->topic_len), event->data,
-                    static_cast<size_t>(event->data_len), event->retain);
-            }
+        if (event->topic_len <= 0 || event->data_len <= 0) {
+            return;
+        }
+
+        const std::string topic(event->topic, static_cast<size_t>(event->topic_len));
+        if (topic.find("credential_rotation_due") != std::string::npos) {
+            ESP_LOGI("HeapwatchDispatcher", "Credential rotation due — queueing for hw_command");
+            (void)heapwatch::device_command::enqueueCredentialRotation();
+        } else if (topic.find("/command/device/") != std::string::npos) {
+            (void)heapwatch::device_command::enqueueMqttCommand(
+                event->topic, static_cast<size_t>(event->topic_len), event->data,
+                static_cast<size_t>(event->data_len), event->retain);
         }
     }
 }
@@ -360,6 +324,7 @@ void heapwatch_dispatch_task(void* arg) {
     (void)arg;  // Unused parameter
     
     ESP_LOGI("HeapwatchDispatcher", "MQTT dispatcher thread started");
+    bool dispatcher_prev_mqtt_connected = false;
 
     while (true) {
         if (!heapwatch_dispatcher_running()) {
@@ -440,9 +405,15 @@ void heapwatch_dispatch_task(void* arg) {
         // -----------------------------------------------------------------------
         
         if (!g_mqtt_connected) {
+            dispatcher_prev_mqtt_connected = false;
             vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));
             continue;
         }
+
+        if (!dispatcher_prev_mqtt_connected && !g_mqtt_shutting_down) {
+            subscribe_command_topics();
+        }
+        dispatcher_prev_mqtt_connected = true;
 
         if (g_mqtt_shutting_down) {
             const int outbox_bytes = esp_mqtt_client_get_outbox_size(g_mqtt_client);
@@ -505,6 +476,10 @@ void heapwatch_dispatch_task(void* arg) {
 
         // Prefer a queue whose head was already peeked but MQTT outbox rejected it.
         QueueSetMemberHandle_t activated_queue = g_publish_blocked_queue;
+        if (activated_queue == nullptr &&
+            try_publish_priority_outbound(large_queue, tiny_queue, small_queue)) {
+            continue;
+        }
         if (activated_queue == nullptr) {
             activated_queue =
                 (queue_set != nullptr) ? xQueueSelectFromSet(queue_set, pdMS_TO_TICKS(250)) : nullptr;

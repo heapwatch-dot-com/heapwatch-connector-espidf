@@ -19,6 +19,7 @@
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_endpoints.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
+#include "../device_command/CommandManifest.h"
 #include "StreamIngressMux.h"
 
 namespace heapwatch::stream_ingress {
@@ -73,6 +74,7 @@ bool g_tcp_requested = false;
 bool g_log_capture_requested = false;
 bool g_close_requested = false;
 bool g_connected = false;
+bool g_manifest_upload_requested = false;
 int g_socket_fd = -1;
 
 FsUploadChunkHandler g_fs_upload_handler = nullptr;
@@ -502,6 +504,18 @@ void workerTask(void* arg) {
         // FS work shares this task — no dedicated hw_device_fs / hw_fs_download stacks.
         heapwatch::device_fs::pollPendingWork();
 
+        lock();
+        const bool manifest_wanted = g_manifest_upload_requested;
+        unlock();
+        if (manifest_wanted && !heapwatch::device_command::manifestUploadedThisBoot()) {
+            heapwatch::device_command::uploadManifestIfNeeded();
+            if (heapwatch::device_command::manifestUploadedThisBoot()) {
+                lock();
+                g_manifest_upload_requested = false;
+                unlock();
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -530,9 +544,9 @@ static void ensureWorkerStarted() {
     }
     if (g_worker_task == nullptr) {
         // Create only when TCP is actually needed — saves ~8KiB stack at boot for MQTT.
-        if (xTaskCreate(workerTask, "hw_stream_ingress", kWorkerStackBytes, nullptr,
+        if (xTaskCreate(workerTask, "hw_streaming", kWorkerStackBytes, nullptr,
                         tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create hw_stream_ingress task");
+            ESP_LOGE(TAG, "Failed to create hw_streaming task");
             g_worker_task = nullptr;
         }
     }
@@ -696,6 +710,19 @@ void flushOutbound() {
 
 void setFsUploadChunkHandler(FsUploadChunkHandler handler) {
     g_fs_upload_handler = handler;
+}
+
+void requestManifestUpload() {
+    if (!streamIngressEnabled()) {
+        return;
+    }
+
+    ensureWorkerStarted();
+    lock();
+    g_manifest_upload_requested = true;
+    g_tcp_requested = true;
+    g_close_requested = false;
+    unlock();
 }
 
 }  // namespace heapwatch::stream_ingress

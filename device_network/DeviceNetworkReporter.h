@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Viktor Jamrich Enterprises s.r.o. All rights reserved.
+// Copyright (c) 2026 Heapwatch. All rights reserved.
 
 #ifndef HEAPWATCH_DEVICE_NETWORK_REPORTER_H
 #define HEAPWATCH_DEVICE_NETWORK_REPORTER_H
@@ -15,6 +15,12 @@ void start();
  * and enqueue a full `/network` MQTT publish.
  */
 void publishFullSync();
+
+/** Mark that netif topology changed; collector publishes when MQTT is up. */
+void markTopologyDirty();
+
+/** Returns true once per mark — clears the flag. */
+bool consumeTopologyDirty();
 
 /**
  * Build `{"netifs":[...]}` into out (including braces). Returns false on overflow.

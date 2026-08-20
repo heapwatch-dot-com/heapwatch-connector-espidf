@@ -1,5 +1,6 @@
 file(GLOB_RECURSE HEAPWATCH_CONNECTOR_SRCS
     "${CMAKE_CURRENT_SOURCE_DIR}/boot_cycle/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/connector_boot_sync/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/connector_settings/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/device_command/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/device_credential_rotation/*.cpp"

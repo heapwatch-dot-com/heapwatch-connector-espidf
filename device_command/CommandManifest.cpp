@@ -278,4 +278,8 @@ void uploadManifestIfNeeded() {
     ESP_LOGI(TAG, "Command manifest streamed (%u bytes)", static_cast<unsigned>(body_len));
 }
 
+void requestManifestUpload() { heapwatch::stream_ingress::requestManifestUpload(); }
+
+bool manifestUploadedThisBoot() { return g_uploaded_this_boot; }
+
 }  // namespace heapwatch::device_command
