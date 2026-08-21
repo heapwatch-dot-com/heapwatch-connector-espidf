@@ -70,10 +70,10 @@ constexpr FieldSchema kHeapwatchFields[] = {
      false, false, nullptr, 0, 0},
     {KEY_LAST_CRASH_BC, "Last crash boot cycle",
      "Boot cycle recorded when the previous crash occurred.", "int", false, false, nullptr, 0, 0},
-    {KEY_MAN_HASH, "Manifest hash", "SHA-256 of the last uploaded command manifest body.", "string",
+    {KEY_MAN_HASH, "Command catalog hash", "SHA-256 of the last uploaded command catalog body.", "string",
      false, false, nullptr, 0, 0},
-    {KEY_MAN_BUILD, "Manifest build identifier",
-     "Build identifier of the last uploaded command manifest.", "string", false, false, nullptr, 0,
+    {KEY_MAN_BUILD, "Command catalog build identifier",
+     "Build identifier of the last uploaded command catalog.", "string", false, false, nullptr, 0,
      0},
 };
 

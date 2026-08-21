@@ -13,7 +13,7 @@ static inline bool heapwatch_should_enqueue_boot_static(bool prev_mqtt_connected
 
 namespace heapwatch::connector_boot_sync {
 
-/** Run deterministic boot one-offs (specs, bounds, network, manifest request, …). */
+/** Run deterministic boot one-offs (specs, bounds, network, command catalog request, …). */
 void runBootStaticSync();
 
 }  // namespace heapwatch::connector_boot_sync

@@ -19,7 +19,9 @@
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_endpoints.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
-#include "../device_command/CommandManifest.h"
+#include "../device_command/CommandCatalog.h"
+#include "../device_command/ConfigCatalog.h"
+#include "../device_command/ConfigSnapshot.h"
 #include "StreamIngressMux.h"
 
 namespace heapwatch::stream_ingress {
@@ -74,7 +76,7 @@ bool g_tcp_requested = false;
 bool g_log_capture_requested = false;
 bool g_close_requested = false;
 bool g_connected = false;
-bool g_manifest_upload_requested = false;
+bool g_boot_stream_upload_requested = false;
 int g_socket_fd = -1;
 
 FsUploadChunkHandler g_fs_upload_handler = nullptr;
@@ -504,14 +506,41 @@ void workerTask(void* arg) {
         // FS work shares this task — no dedicated hw_device_fs / hw_fs_download stacks.
         heapwatch::device_fs::pollPendingWork();
 
+        bool command_catalog_force = false;
+        if (heapwatch::device_command::consumeCommandCatalogUploadRequest(&command_catalog_force)) {
+            heapwatch::device_command::uploadCommandCatalog(command_catalog_force);
+        }
+
+        bool catalog_force = false;
+        if (heapwatch::device_command::consumeConfigCatalogUploadRequest(&catalog_force)) {
+            heapwatch::device_command::uploadConfigCatalog(catalog_force);
+        }
+
+        char snapshot_namespace[32] = {};
+        bool snapshot_force = false;
+        if (heapwatch::device_command::consumeConfigSnapshotUploadRequest(
+                snapshot_namespace, sizeof(snapshot_namespace), &snapshot_force)) {
+            heapwatch::device_command::uploadConfigSnapshot(snapshot_namespace, snapshot_force);
+        }
+
         lock();
-        const bool manifest_wanted = g_manifest_upload_requested;
+        const bool boot_uploads_pending = g_boot_stream_upload_requested;
         unlock();
-        if (manifest_wanted && !heapwatch::device_command::manifestUploadedThisBoot()) {
-            heapwatch::device_command::uploadManifestIfNeeded();
-            if (heapwatch::device_command::manifestUploadedThisBoot()) {
+        if (boot_uploads_pending) {
+            if (!heapwatch::device_command::commandCatalogUploadedThisBoot()) {
+                heapwatch::device_command::uploadCommandCatalog(false);
+            }
+            if (!heapwatch::device_command::configCatalogUploadedThisBoot()) {
+                heapwatch::device_command::uploadConfigCatalog(false);
+            }
+            if (!heapwatch::device_command::configSnapshotUploadedThisBoot()) {
+                heapwatch::device_command::uploadConfigSnapshot("*", false);
+            }
+            if (heapwatch::device_command::commandCatalogUploadedThisBoot() &&
+                heapwatch::device_command::configCatalogUploadedThisBoot() &&
+                heapwatch::device_command::configSnapshotUploadedThisBoot()) {
                 lock();
-                g_manifest_upload_requested = false;
+                g_boot_stream_upload_requested = false;
                 unlock();
             }
         }
@@ -712,17 +741,34 @@ void setFsUploadChunkHandler(FsUploadChunkHandler handler) {
     g_fs_upload_handler = handler;
 }
 
-void requestManifestUpload() {
+void ensureBootStreamUploadWorker() {
     if (!streamIngressEnabled()) {
         return;
     }
 
     ensureWorkerStarted();
     lock();
-    g_manifest_upload_requested = true;
     g_tcp_requested = true;
     g_close_requested = false;
     unlock();
+}
+
+void requestCommandCatalogUpload() {
+    heapwatch::device_command::requestCommandCatalogUpload(false);
+}
+
+void requestBootStreamUploads() {
+    if (!streamIngressEnabled()) {
+        return;
+    }
+
+    ensureBootStreamUploadWorker();
+    lock();
+    g_boot_stream_upload_requested = true;
+    unlock();
+    heapwatch::device_command::requestCommandCatalogUpload(false);
+    heapwatch::device_command::requestConfigCatalogUpload(false);
+    heapwatch::device_command::requestConfigSnapshotUpload("*", false);
 }
 
 }  // namespace heapwatch::stream_ingress

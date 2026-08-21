@@ -39,23 +39,6 @@ bool readNamespace(const cJSON* root, char* out, size_t out_len) {
     return true;
 }
 
-bool isWildcardNamespace(const char* nvs_namespace) {
-    return nvs_namespace != nullptr &&
-           (strcmp(nvs_namespace, "*") == 0 || strcmp(nvs_namespace, "all") == 0);
-}
-
-cJSON* buildNamespaceGetResult(const char* nvs_namespace) {
-    if (isWildcardNamespace(nvs_namespace)) {
-        return heapwatch::connector_settings::buildFullPartitionResponse();
-    }
-
-    if (heapwatch::connector_settings::isManagedNamespace(nvs_namespace)) {
-        return heapwatch::connector_settings::buildManagedNamespaceResponse(nvs_namespace);
-    }
-
-    return heapwatch::connector_settings::buildUnmanagedNamespaceResponse(nvs_namespace);
-}
-
 cJSON* buildPostMutationResult(const char* nvs_namespace) {
     if (heapwatch::connector_settings::isManagedNamespace(nvs_namespace)) {
         return heapwatch::connector_settings::buildManagedNamespaceResponse(nvs_namespace);
@@ -65,40 +48,6 @@ cJSON* buildPostMutationResult(const char* nvs_namespace) {
 }
 
 }  // namespace
-
-void handleConfigGet(const char* suffix, char* command_id, const char* payload, size_t payload_len) {
-    cJSON* root = nullptr;
-    char namespace_buf[32] = {};
-
-    if (payload_len > 0) {
-        root = cJSON_ParseWithLength(payload, static_cast<int>(payload_len));
-        if (root == nullptr) {
-            publishWithResult(suffix, command_id, false, "bad_args", "Invalid JSON payload", nullptr);
-            free(command_id);
-            return;
-        }
-
-        if (!readNamespace(root, namespace_buf, sizeof(namespace_buf))) {
-            cJSON_Delete(root);
-            publishWithResult(suffix, command_id, false, "bad_args", "namespace is required", nullptr);
-            free(command_id);
-            return;
-        }
-        cJSON_Delete(root);
-    } else {
-        snprintf(namespace_buf, sizeof(namespace_buf), "*");
-    }
-
-    cJSON* result = buildNamespaceGetResult(namespace_buf);
-    if (result == nullptr) {
-        publishWithResult(suffix, command_id, false, "bad_args", "Unsupported namespace", nullptr);
-        free(command_id);
-        return;
-    }
-
-    publishAckThenWithResult(suffix, command_id, true, "", "config loaded", result);
-    free(command_id);
-}
 
 void handleConfigSet(const char* suffix, char* command_id, const char* payload, size_t payload_len) {
     cJSON* root = cJSON_ParseWithLength(payload, static_cast<int>(payload_len));

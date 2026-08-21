@@ -17,7 +17,9 @@
 #include "../stream_ingress/StreamIngressClient.h"
 #include "heapwatch/radio/BleDelegate.h"
 #include "ConfigCommands.h"
-#include "CommandManifest.h"
+#include "ConfigCatalog.h"
+#include "ConfigSnapshot.h"
+#include "CommandCatalog.h"
 #include "GoingDarkPipeline.h"
 #include "SleepCommands.h"
 
@@ -65,8 +67,9 @@ CommandRegistration g_registered_commands[kMaxRegisteredCommands] = {};
 bool is_builtin_name(const char* name) {
     return strcmp(name, "ping") == 0 || strcmp(name, "specs_refresh") == 0 ||
            strcmp(name, "restart") == 0 || strcmp(name, "shutdown") == 0 ||
-           strcmp(name, "manifest/get") == 0 || strcmp(name, "stream_open") == 0 ||
-           strcmp(name, "stream_close") == 0 || strcmp(name, "config/get") == 0 ||
+           strcmp(name, "command/catalog/get") == 0 ||
+           strcmp(name, "config/catalog/get") == 0 || strcmp(name, "config/snapshot/get") == 0 ||
+           strcmp(name, "stream_open") == 0 || strcmp(name, "stream_close") == 0 ||
            strcmp(name, "config/set") == 0 || strcmp(name, "config/persist") == 0 ||
            strcmp(name, "config/revert") == 0 || strcmp(name, "wifi_reconnect") == 0 ||
            strcmp(name, "bluetooth/get") == 0 || strcmp(name, "bluetooth/scan") == 0 ||
@@ -225,18 +228,35 @@ void handle_shutdown(const char* suffix, char* command_id) {
     free(command_id);
 }
 
-void handle_manifest_get(const char* suffix, char* command_id) {
-    cJSON* manifest = heapwatch::device_command::buildManifestRootObject();
-    if (manifest == nullptr) {
-        publish_response(suffix, command_id, false, "internal_error", "Failed to build manifest");
-        free(command_id);
-        return;
+void handle_command_catalog_get(const char* suffix, char* command_id) {
+    requestCommandCatalogUpload(true);
+    publish_ack(suffix, command_id, "command catalog upload queued");
+    free(command_id);
+}
+
+void handle_config_catalog_get(const char* suffix, char* command_id) {
+    requestConfigCatalogUpload(true);
+    publish_ack(suffix, command_id, "config catalog upload queued");
+    free(command_id);
+}
+
+void handle_config_snapshot_get(const char* suffix, char* command_id, const char* payload,
+                                size_t payload_len) {
+    char namespace_buf[32] = "*";
+
+    if (payload_len > 0) {
+        cJSON* root = cJSON_ParseWithLength(payload, static_cast<int>(payload_len));
+        if (root != nullptr) {
+            const cJSON* ns = cJSON_GetObjectItem(root, "namespace");
+            if (cJSON_IsString(ns) && ns->valuestring != nullptr && ns->valuestring[0] != '\0') {
+                snprintf(namespace_buf, sizeof(namespace_buf), "%s", ns->valuestring);
+            }
+            cJSON_Delete(root);
+        }
     }
 
-    if (!publish_ack_then_response_with_result(suffix, command_id, true, "", "manifest", manifest)) {
-        cJSON_Delete(manifest);
-    }
-
+    requestConfigSnapshotUpload(namespace_buf, true);
+    publish_ack(suffix, command_id, "config snapshot upload queued");
     free(command_id);
 }
 
@@ -434,8 +454,18 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
         return;
     }
 
-    if (strcmp(suffix, "manifest/get") == 0) {
-        handle_manifest_get(suffix, command_id);
+    if (strcmp(suffix, "command/catalog/get") == 0) {
+        handle_command_catalog_get(suffix, command_id);
+        return;
+    }
+
+    if (strcmp(suffix, "config/catalog/get") == 0) {
+        handle_config_catalog_get(suffix, command_id);
+        return;
+    }
+
+    if (strcmp(suffix, "config/snapshot/get") == 0) {
+        handle_config_snapshot_get(suffix, command_id, payload, payload_len);
         return;
     }
 
@@ -456,11 +486,6 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
 
     if (strcmp(suffix, "bluetooth/scan") == 0) {
         handle_bluetooth_scan(suffix, command_id, payload, payload_len);
-        return;
-    }
-
-    if (strcmp(suffix, "config/get") == 0) {
-        handleConfigGet(suffix, command_id, payload, payload_len);
         return;
     }
 

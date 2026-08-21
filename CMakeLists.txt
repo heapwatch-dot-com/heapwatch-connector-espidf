@@ -75,6 +75,6 @@ target_include_directories(${COMPONENT_LIB} PUBLIC "${HEAPWATCH_GENERATED_DIR}")
 set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/heapwatch_c_api.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/ConnectorLifecycle.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_command/CommandManifest.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/device_command/CommandCatalog.cpp"
     PROPERTIES OBJECT_DEPENDS "${HEAPWATCH_METADATA_HEADER}"
 )

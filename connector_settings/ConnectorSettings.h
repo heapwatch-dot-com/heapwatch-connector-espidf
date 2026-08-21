@@ -64,7 +64,7 @@ cJSON* buildFullPartitionResponse();
 bool persistUnmanagedValues(const char* nvs_namespace, const cJSON* values, char* error_out,
                             size_t error_out_len);
 
-/** All registered catalogs for manifest upload. */
+/** All registered catalogs for config catalog upload. */
 cJSON* buildAllConfigCatalogsJson();
 
 /** User-registered catalogs only (excludes builtin heapwatch catalog at index 0). */

@@ -1,12 +1,11 @@
 #pragma once
 
-#include "CommandManifestHeapwatchCatalog.inc.h"
 #include "heapwatch_build_metadata.h"
 
 namespace heapwatch::device_command {
 
-// Builtin connector command manifest v2 — lives in flash (.rodata), no runtime cJSON build.
-static const char kBuiltinCommandManifestJson[] =
+// Builtin connector command catalog v2 — commands[] only (config catalogs are separate).
+static const char kBuiltinCommandCatalogJson[] =
     "{\"manifest_version\":2,\"build_identifier\":\"" HEAPWATCH_BUILD_IDENTIFIER "\","
     "\"commands\":["
     "{\"slug\":\"ping\",\"name\":\"Ping\",\"description\":\"Connectivity "
@@ -30,11 +29,6 @@ static const char kBuiltinCommandManifestJson[] =
     "ingress session.\",\"risk\":\"medium\",\"session\":\"non_terminal\","
     "\"returns_payload\":false,\"builtin\":true,\"panel_visible\":false,"
     "\"response_timeout_s\":30,\"args\":[]},"
-    "{\"slug\":\"config/get\",\"name\":\"Get config\",\"description\":\"Read NVS values for a "
-    "namespace.\",\"risk\":\"low\",\"session\":\"non_terminal\",\"returns_payload\":true,"
-    "\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":30,\"args\":[{\"name\":"
-    "\"namespace\",\"type\":\"string\",\"label\":\"NVS namespace\",\"required\":true,"
-    "\"default\":\"*\"}]},"
     "{\"slug\":\"config/set\",\"name\":\"Set config\",\"description\":\"Set in-RAM config values "
     "for a managed namespace.\",\"risk\":\"medium\",\"session\":\"non_terminal\","
     "\"returns_payload\":true,\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":30,"
@@ -123,6 +117,6 @@ static const char kBuiltinCommandManifestJson[] =
     "{\"slug\":\"ota/rollback\",\"name\":\"OTA rollback\",\"description\":\"Rollback to the "
     "previous firmware.\",\"risk\":\"high\",\"session\":\"terminal\",\"returns_payload\":false,"
     "\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":60,\"args\":[]}"
-    "],\"config_catalogs\":" HEAPWATCH_BUILTIN_CONFIG_CATALOGS_JSON "}";
+    "]}";
 
 }  // namespace heapwatch::device_command

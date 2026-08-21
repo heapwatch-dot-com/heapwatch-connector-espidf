@@ -3,7 +3,7 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
-#include "../device_command/CommandManifest.h"
+#include "../stream_ingress/StreamIngressClient.h"
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_radio/BluetoothReporter.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
@@ -29,7 +29,7 @@ void runBootStaticSync() {
     heapwatch::device_radio::publishFullSync();
 #endif
     HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_CONNECTED);
-    heapwatch::device_command::requestManifestUpload();
+    heapwatch::stream_ingress::requestBootStreamUploads();
 }
 
 }  // namespace heapwatch::connector_boot_sync

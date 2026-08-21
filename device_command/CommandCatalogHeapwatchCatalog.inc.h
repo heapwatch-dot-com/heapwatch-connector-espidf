@@ -18,8 +18,7 @@
     "level\",\"description\":\"Minimum ESP-IDF log severity relayed to "       \
     "Heapwatch over MQTT.\",\"type\":\"enum\",\"secret\":false,\"patchable\":"  \
     "true,\"min\":0,\"max\":4,\"default\":" HW_CATALOG_INT(                    \
-        HEAPWATCH_MIN_RELAY_SEVERITY) ","                                       \
-    "\"options\":[{\"value\":\"0\",\"label\":\"Debug\"},{\"value\":\"1\","      \
+        HEAPWATCH_MIN_RELAY_SEVERITY) ",\"options\":[{\"value\":\"0\",\"label\":\"Debug\"},{\"value\":\"1\","      \
     "\"label\":\"Info\"},{\"value\":\"2\",\"label\":\"Warning\"},{\"value\":"  \
     "\"3\",\"label\":\"Error\"},{\"value\":\"4\",\"label\":\"Critical\"}]},"   \
     "{\"nvs_key\":\"out_drain_ms\",\"name\":\"Outbox drain "                    \
@@ -57,11 +56,11 @@
     "{\"nvs_key\":\"last_crash_bc\",\"name\":\"Last crash boot "                \
     "cycle\",\"description\":\"Boot cycle recorded when the previous crash "     \
     "occurred.\",\"type\":\"int\",\"secret\":false,\"patchable\":false},"       \
-    "{\"nvs_key\":\"man_hash\",\"name\":\"Manifest "                            \
-    "hash\",\"description\":\"SHA-256 of the last uploaded command manifest "    \
+    "{\"nvs_key\":\"man_hash\",\"name\":\"Command catalog "                            \
+    "hash\",\"description\":\"SHA-256 of the last uploaded command catalog "    \
     "body.\",\"type\":\"string\",\"secret\":false,\"patchable\":false},"         \
-    "{\"nvs_key\":\"man_build\",\"name\":\"Manifest build "                     \
+    "{\"nvs_key\":\"man_build\",\"name\":\"Command catalog build "                     \
     "identifier\",\"description\":\"Build identifier of the last uploaded "      \
-    "command manifest.\",\"type\":\"string\",\"secret\":false,\"patchable\":"   \
+    "command catalog.\",\"type\":\"string\",\"secret\":false,\"patchable\":"   \
     "false}"                                                                    \
     "]}]"
