@@ -1,6 +1,7 @@
-version: "0.2.0"
+version: "0.4.0"
 description: Heapwatch Connector for ESP-IDF — crash analytics telemetry SDK
 url: https://github.com/viktorjamrich/heapwatch-connector-espidf
+documentation: https://docs.heapwatch.com/integration/getting-started/overview
 repository: git@github.com:viktorjamrich/heapwatch-connector-espidf.git
 dependencies:
   # ESP-IDF 6 removed the built-in `json` component; use managed cJSON instead.
