@@ -1,33 +1,25 @@
 menu "Heapwatch Connector"
 
-    # Stream ingress is mandatory — not user-toggleable.
+    # Stream ingress is mandatory
     config HEAPWATCH_ENABLE_STREAM_INGRESS
         bool
         default y
 
-    # HEAPWATCH_API_BASE / HEAPWATCH_MQTT_BROKER_URI removed from Kconfig (K1):
-    # production endpoints are hardcoded in main/heapwatch_endpoints.h. Our own
-    # local dev loop swaps to LAN endpoints via the internal-only
-    # HEAPWATCH_DEV_LOCAL_NETWORK compile macro in that same header (K2) —
-    # never exposed here, never shipped to clients.
-
     config HEAPWATCH_BUILD_ENV
-        string "Build environment"
+        string "Build Environment"
         default "development"
         help
-            Sent with device enrollment: development, testing, staging, or production.
-            Pure business/reporting label — does NOT switch network endpoints
-            (see HEAPWATCH_DEV_LOCAL_NETWORK in heapwatch_endpoints.h for that).
+            This is sent when the device tries to enroll: development, testing, staging, or production.
 
     menu "Wi-Fi"
         config HEAPWATCH_MANAGE_WIFI
-            bool "Connector manages Wi-Fi connection"
+            bool "Auto-Manage Wi-Fi Connection"
             default y
             help
                 y: the connector brings up Wi-Fi itself using the SSID/password below.
-                n: the connector does not touch networking at all — the host app brings
+                n: the connector does not touch networking at all — your application brings
                 up its own netif (Wi-Fi, Ethernet, cellular modem, ...) on its own
-                schedule and calls heapwatch's setNetworkReady(true) once it's up.
+                schedule and Heapwatch connector picks it up
 
         config HEAPWATCH_WIFI_SSID
             string "SSID"
@@ -40,45 +32,43 @@ menu "Heapwatch Connector"
             depends on HEAPWATCH_MANAGE_WIFI
     endmenu
 
-    menu "Time sync"
+    menu "Time Sync"
         config HEAPWATCH_MANAGE_TIME_SYNC
-            bool "Connector manages SNTP time sync"
+            bool "Auto-Manage Time Sync"
             default y
             help
-                n: the client manages system time themselves (SNTP or otherwise);
-                the connector will not call any SNTP APIs.
+                y: the connector automatically manages time sync with the internet so the device gets its time and date
+                n: your application manages time sync
     endmenu
 
-    menu "Device enrollment"
-        comment "One firmware image per batch. Devices provision via enrollment only."
-        comment "Create a key in Heapwatch: Enrollment → Enrollment keys."
+    menu "Heapwatch Connection"
+        comment "Your device connects to Heapwatch by requesting access credentials from Heapwatch via REST API. For this you need to enter a valid Enrollment Key."
+        comment "Get your Enrollment Key from Heapwatch UI."
 
         config HEAPWATCH_ENROLLMENT_KEY
-            string "Enrollment key"
+            string "Enrollment Key"
             default ""
             help
-                Enrollment key (sk_enroll_…) baked into this firmware batch. On first
-                boot (empty NVS), the device enrolls via POST enroll → GET status poll
-                → POST fetch → POST confirm. After confirm, credentials live in NVS.
+                Enrollment key (sk_enroll_…) is a short-lived one-off key to request login credentials
+                from Heapwatch. This key is baked into your firmware and expired once enrollment suceeds.
 
         config HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS
-            int "Enrollment status poll interval (ms)"
+            int "Enrollment Status Poll Interval (ms)"
             default 60000
             range 5000 300000
             help
-                Delay between GET /api/device-enrollment/status polls while waiting
-                for operator Accept on the Pending devices queue.
+                Once your device requests credentials from Heapwatch, it will start to check its "enrollment status". This is the interval in which the device will call Heapwatch to check if its enrollment has been accepted and login credentials ready to be downloaded.
 
         config HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-            bool "Enroll state LED indicator"
+            bool "Enroll State LED Indicator"
             default n
             help
-                Drive a GPIO LED with distinct blink patterns for Wi-Fi connect,
-                enrollment HTTP, and each enrollment_status while provisioning.
-                Disabled at compile time when n — no LED task in the firmware image.
+                Great way to see and debug enrollment status. If you have a spare LED on your board, you can assign
+                it to enrollment status and it will blink according the current enrollment state. Blinking table can be
+                found in Heapwatch UI / Enrollment Page.
 
         config HEAPWATCH_ENROLL_STATE_LED_GPIO
-            int "Enroll state LED GPIO pin"
+            int "Enroll State LED GPIO Pin"
             default -1
             range -1 48
             depends on HEAPWATCH_ENROLL_STATE_LED_INDICATOR
@@ -87,7 +77,7 @@ menu "Heapwatch Connector"
                 -1 means unset (indicator stays off even if enabled).
 
         config HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
-            bool "Enroll state LED active low"
+            bool "Enroll State LED Active Low"
             default y
             depends on HEAPWATCH_ENROLL_STATE_LED_INDICATOR
             help
@@ -95,21 +85,20 @@ menu "Heapwatch Connector"
                 n: LED turns on when GPIO is driven high.
     endmenu
 
-    menu "Feature toggles"
+    menu "Features"
         config HEAPWATCH_ENABLE_LOG_COLLECTION
-            bool "Collect and relay ESP-IDF logs"
+            bool "Collect ESP-IDF Logs"
             default y
             help
-                Installs the esp_log_set_vprintf() hook and relays captured lines over
-                MQTT (subject to the minimum severity below). Disabling excludes the
+                Collects ESP-IDF log messages. Disabling excludes the
                 log-capture/relay pipeline from the build entirely.
 
         choice HEAPWATCH_MIN_LOG_SEVERITY
-            prompt "Minimum log severity relayed over MQTT"
+            prompt "Minimum Log Severity"
             default HEAPWATCH_MIN_LOG_SEVERITY_INFO
             depends on HEAPWATCH_ENABLE_LOG_COLLECTION
             help
-                Logs below this level are still printed locally (serial) but are not
+                Logs at this level or higher are dispatched to Heapwatch. Logs below this level are still printed locally (serial) but are not
                 queued for remote delivery.
 
             config HEAPWATCH_MIN_LOG_SEVERITY_DEBUG
@@ -126,18 +115,16 @@ menu "Heapwatch Connector"
         endchoice
 
         config HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-            bool "Collect FreeRTOS task snapshots"
+            bool "Collect FreeRTOS Task Snapshots"
             default y
             help
-                Periodic per-task stack/CPU usage snapshot, dispatched as a TASKS
-                message. Shares its collection pass with CPU snapshots below.
+                Collects tasks CPU usage and stack used and total memory. A must for stack overflow prevention.
 
         config HEAPWATCH_ENABLE_CPU_SNAPSHOTS
-            bool "Collect per-core CPU usage"
+            bool "Collect Per-Core CPU Usage"
             default y
             help
-                Per-core CPU usage percentage, computed from the same FreeRTOS task
-                runtime-stats pass as task snapshots above.
+                Collects per-core CPU usage.
 
         config HEAPWATCH_NEEDS_FREERTOS_RUNTIME_STATS
             bool
@@ -148,12 +135,11 @@ menu "Heapwatch Connector"
             select FREERTOS_RUN_TIME_COUNTER_TYPE_U32
 
         config HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
-            bool "Collect heap/PSRAM usage snapshots"
+            bool "Collect RAM Usage"
             default y
             help
-                Heap/internal-heap/PSRAM used-bytes and largest-free-block metrics,
-                sent with every periodic telemetry round. Also covers minimum-ever-free
-                heap tracking once implemented.
+                Collects internal RAM and external PSRAM usages and largest free block intel
+                for fantastic memory and heap fragmentation intelligence.
 
         config HEAPWATCH_ENABLE_DEVICE_SPECS
             bool "Dispatch device specs on MQTT connect"
@@ -164,29 +150,27 @@ menu "Heapwatch Connector"
                 (re)connects to MQTT. Also covers the OTA partition slot label field.
 
         config HEAPWATCH_ENABLE_OTA
-            bool "Enable Heapwatch-owned OTA (MQTT ota/* + HTTPS flash)"
+            bool "Enable Heapwatch OTA"
             default y
             help
-                When enabled, the device accepts Heapwatch OTA commands (ota/start,
-                ota/abort, ota/confirm, ota/rollback) and runs the HTTPS flash
-                pipeline. When disabled, MQTT ota/* responds with feature_disabled
-                so customers can run their own OTA stack. Independent of
+                Enable to activate Heapwatch OTA and automatically flash new firmware right from
+                Heapwatch UI or by using your AI agent to start OTA via MCP.. Independent of
                 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (bootloader pending-verify).
 
         choice HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES
-            prompt "OTA HTTPS download chunk size"
+            prompt "OTA HTTPS Download Chunk Size"
             default HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
             depends on HEAPWATCH_ENABLE_OTA
             help
-                Staging buffer for HTTPS read → esp_ota_write / esp_partition_write.
-                Lives in BSS (not stack). Larger chunks mean fewer read/write loops
-                and faster OTA; TLS already uses a 4 KiB decrypt buffer either way.
+                Buffer size in BSS RAM space (not stack) used to download firmware over HTTPS
+                and write it right away into unused OTA partition. Keep 4K buffer unless you have a reason
+                to change this.
 
             config HEAPWATCH_OTA_DOWNLOAD_CHUNK_256
-                bool "256 bytes (conservative RAM, slower OTA)"
+                bool "256 bytes (tiny RAM, slow OTA, NOT recommended)"
 
             config HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
-                bool "4096 bytes (recommended)"
+                bool "4096 bytes (recommended, fast OTA)"
         endchoice
 
         config HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES
@@ -196,39 +180,35 @@ menu "Heapwatch Connector"
             default 4096 if HEAPWATCH_OTA_DOWNLOAD_CHUNK_4096
 
         config HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-            bool "Upload core dumps from flash on boot"
+            bool "Collect Core Dumps"
             default y
             select ESP_COREDUMP_ENABLE_TO_FLASH
             select ESP_COREDUMP_DATA_FORMAT_ELF
             select ESP_COREDUMP_CHECKSUM_CRC32
             select ESP_COREDUMP_CHECK_BOOT
             help
-                Checks for and uploads a pending core dump over HTTPS on boot,
-                retrying until it succeeds. Disabling skips the check entirely and
-                leaves any pending core dump in flash.
-
-                When enabled, also turns on ESP-IDF core dump to flash (required for
-                esp_core_dump_image_check). Add a coredump partition to partitions.csv.
+                Automatically checks for a core dump present in the flash on each boot
+                and uploads it to Heapwatch for fantastic crash analytics. A coredump
+                partition is REQUIRED in partitions.csv for this to work!
 
         config HEAPWATCH_ENABLE_STANDARD_EVENTS
-            bool "Dispatch built-in connector events"
+            bool "Collect Events"
             default y
             help
-                Built-in lifecycle events (startup, Wi-Fi/MQTT connect-disconnect,
-                sleep tracking, ...). Disabling makes queueEvent() a no-op.
+                Collects few dozen lifecycle events like starting up, started up, mqtt connected/disconnected,
+                internet up/down, etc.
 
         config HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
-            bool "Proactively check heap integrity"
+            bool "Proactive Heap Integrity Check (Heavy Load)"
             default n
             help
                 Periodically calls heap_caps_check_integrity() and dispatches a
-                HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED event if corruption is found —
+                HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED event if corruption is found. This
                 catches corruption before it causes a crash, instead of only finding out
-                post-hoc via a coredump. Default off: walking the full heap has a real,
-                non-trivial CPU cost.
+                post-hoc via coredump. Default off: walking the full heap has a heavy CPU load.
     endmenu
 
-    menu "Storage stats"
+    menu "Collect Storage Stats"
         config HEAPWATCH_ENABLE_STORAGE_STATS
             bool "Report internal-flash filesystem stats (STORAGE1)"
             default y
@@ -277,7 +257,7 @@ menu "Heapwatch Connector"
             depends on HEAPWATCH_ENABLE_SD_CARD_STATS
     endmenu
 
-    menu "Heapwatch Bluetooth"
+    menu "Collect Bluetooth Stats"
         config HEAPWATCH_ENABLE_BLE_REPORTING
             bool "Enable BLE radio reporting (NimBLE report-only)"
             default n
@@ -303,7 +283,7 @@ menu "Heapwatch Connector"
             depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
     endmenu
 
-    menu "Memory / queue sizing"
+    menu "Memory / Queue Sizing"
         config HEAPWATCH_MAX_LOG_LINE_LEN
             int "Maximum relayed log line length (bytes)"
             default 160
@@ -350,7 +330,7 @@ menu "Heapwatch Connector"
             range 1 64
     endmenu
 
-    menu "Debug (advanced)"
+    menu "Debug (Advanced)"
         config HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
             bool "Track per-message-type payload size histogram"
             default n
