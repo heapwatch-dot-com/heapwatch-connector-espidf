@@ -96,16 +96,6 @@ char g_scratch_escaped_task[64];
 char g_scratch_escaped_tag[64];
 char g_scratch_optional[192];
 
-#if CONFIG_HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
-constexpr size_t kHistogramBucketCount = 7;
-constexpr size_t kHistogramBucketCeilings[kHistogramBucketCount] = {64,  128,  256,        512,
-                                                                     1024, 2048, SIZE_MAX};
-constexpr size_t kHistogramTypeCount = 7;  // LOG, PARAMETER, EVENT, SPECS, TASKS, OTA, NETWORK
-constexpr const char* kHistogramTypeNames[kHistogramTypeCount] = {
-    "LOG", "PARAMETER", "EVENT", "SPECS", "TASKS", "OTA", "NETWORK"};
-uint32_t g_payload_histogram[kHistogramTypeCount][kHistogramBucketCount] = {};
-#endif
-
 void destroy_message_queues() {
     if (g_queue_set != nullptr) {
         if (g_tiny_queue != nullptr) {
@@ -480,7 +470,6 @@ bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const cha
         return false;
     }
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_LOG, strlen(g_scratch_small_msg.payload));
     return xQueueSend(g_small_queue, &g_scratch_small_msg, 0) == pdTRUE;
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 }
@@ -717,7 +706,6 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
              static_cast<long long>(value));
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_PARAMETER, strlen(g_scratch_tiny_msg.payload));
     xQueueSend(g_tiny_queue, &g_scratch_tiny_msg, 0);
 }
 
@@ -744,7 +732,6 @@ void HeapwatchConnector::queueParameter(const char* name, double value) {
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_PARAMETER, strlen(g_scratch_tiny_msg.payload));
     xQueueSend(g_tiny_queue, &g_scratch_tiny_msg, 0);
 }
 
@@ -792,7 +779,6 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     }
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_EVENT, strlen(g_scratch_tiny_msg.payload));
     const bool fw_ota_event =
         eventTypeId >= HEAPWATCH_EVENT_FW_UPDATE_STARTED &&
         eventTypeId <= HEAPWATCH_EVENT_FW_UPDATE_FAILED;
@@ -832,15 +818,10 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
              static_cast<long long>(total));
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_OTA_PROGRESS,
-                                        strlen(g_scratch_small_msg.payload));
     xQueueSend(g_small_queue, &g_scratch_small_msg, kOtaMqttQueueWait);
 }
 
 void HeapwatchConnector::queueSpecs() {
-#if !CONFIG_HEAPWATCH_ENABLE_DEVICE_SPECS
-    return;
-#else
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
@@ -871,9 +852,7 @@ void HeapwatchConnector::queueSpecs() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_SPECS, strlen(g_scratch_large_msg.payload));
     xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
-#endif  /* CONFIG_HEAPWATCH_ENABLE_DEVICE_SPECS */
 }
 
 void HeapwatchConnector::queueNetwork() {
@@ -907,8 +886,6 @@ void HeapwatchConnector::queueNetwork() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_NETWORK,
-                                        strlen(g_scratch_large_msg.payload));
     xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
@@ -943,8 +920,6 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_BLUETOOTH,
-                                        strlen(g_scratch_large_msg.payload));
     xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
@@ -998,8 +973,6 @@ void HeapwatchConnector::flushParameters() {
     }
 
     g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
-    heapwatch_debug_record_payload_size(MQTT_MESSAGE_TYPE_PARAMETER,
-                                         strlen(g_scratch_large_msg.payload));
     if (xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait) == pdTRUE) {
         heapwatch::parameter_store::acknowledgeBoundsSent();
     }
@@ -1055,37 +1028,3 @@ uint32_t heapwatch_get_boot_cycle() { return g_boot_cycle; }
 bool heapwatch_dispatcher_running() { return g_dispatcher_running; }
 bool heapwatch_collector_running() { return g_collector_running; }
 bool heapwatch_network_ready() { return g_network_ready; }
-
-void heapwatch_debug_record_payload_size(MqttMessageType type, size_t len) {
-#if CONFIG_HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
-    if (static_cast<size_t>(type) >= kHistogramTypeCount) {
-        return;
-    }
-    for (size_t i = 0; i < kHistogramBucketCount; ++i) {
-        if (len <= kHistogramBucketCeilings[i]) {
-            g_payload_histogram[type][i]++;
-            return;
-        }
-    }
-#else
-    (void)type;
-    (void)len;
-#endif
-}
-
-void heapwatch_debug_dump_payload_histogram() {
-#if CONFIG_HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
-    for (size_t t = 0; t < kHistogramTypeCount; ++t) {
-        ESP_LOGI(TAG,
-                 "payload_histogram[%s]: <=64:%u <=128:%u <=256:%u <=512:%u <=1024:%u <=2048:%u "
-                 ">2048:%u",
-                 kHistogramTypeNames[t], static_cast<unsigned>(g_payload_histogram[t][0]),
-                 static_cast<unsigned>(g_payload_histogram[t][1]),
-                 static_cast<unsigned>(g_payload_histogram[t][2]),
-                 static_cast<unsigned>(g_payload_histogram[t][3]),
-                 static_cast<unsigned>(g_payload_histogram[t][4]),
-                 static_cast<unsigned>(g_payload_histogram[t][5]),
-                 static_cast<unsigned>(g_payload_histogram[t][6]));
-    }
-#endif
-}

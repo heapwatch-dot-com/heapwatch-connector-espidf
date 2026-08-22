@@ -199,12 +199,4 @@ bool heapwatch_dispatcher_running();
 bool heapwatch_collector_running();
 bool heapwatch_network_ready();
 
-/**
- * M2 (Phase 2b): debug-only payload-size histogram, gated behind
- * CONFIG_HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM internally — always safe to
- * call, no-ops (near-zero cost) when the Kconfig flag is off.
- */
-void heapwatch_debug_record_payload_size(MqttMessageType type, size_t len);
-void heapwatch_debug_dump_payload_histogram();
-
 #endif

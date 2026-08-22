@@ -5,11 +5,32 @@ menu "Heapwatch Connector"
         bool
         default y
 
-    config HEAPWATCH_BUILD_ENV
-        string "Build Environment"
-        default "development"
+    choice HEAPWATCH_BUILD_ENV_CHOICE
+        prompt "Build Environment"
+        default HEAPWATCH_BUILD_ENV_DEVELOPMENT
         help
-            This is sent when the device tries to enroll: development, testing, staging, or production.
+            Reporting label sent when the device enrolls. Does not change which
+            servers the device connects to.
+
+        config HEAPWATCH_BUILD_ENV_DEVELOPMENT
+            bool "development"
+
+        config HEAPWATCH_BUILD_ENV_TESTING
+            bool "testing"
+
+        config HEAPWATCH_BUILD_ENV_STAGING
+            bool "staging"
+
+        config HEAPWATCH_BUILD_ENV_PRODUCTION
+            bool "production"
+    endchoice
+
+    config HEAPWATCH_BUILD_ENV
+        string
+        default "development" if HEAPWATCH_BUILD_ENV_DEVELOPMENT
+        default "testing" if HEAPWATCH_BUILD_ENV_TESTING
+        default "staging" if HEAPWATCH_BUILD_ENV_STAGING
+        default "production"
 
     menu "Wi-Fi"
         config HEAPWATCH_MANAGE_WIFI
@@ -141,14 +162,6 @@ menu "Heapwatch Connector"
                 Collects internal RAM and external PSRAM usages and largest free block intel
                 for fantastic memory and heap fragmentation intelligence.
 
-        config HEAPWATCH_ENABLE_DEVICE_SPECS
-            bool "Dispatch device specs on MQTT connect"
-            default y
-            help
-                One-time SPECS message (chip model/revision, flash/PSRAM/heap sizes,
-                versions, MACs, reset reason, ...) sent whenever the connector
-                (re)connects to MQTT. Also covers the OTA partition slot label field.
-
         config HEAPWATCH_ENABLE_OTA
             bool "Enable Heapwatch OTA"
             default y
@@ -256,36 +269,54 @@ menu "Heapwatch Connector"
                 depends on HEAPWATCH_ENABLE_SD_CARD_STATS
         endmenu
 
-        menu "Collect Bluetooth Stats"
-            config HEAPWATCH_ENABLE_BLE_REPORTING
-                bool "Enable BLE radio reporting (NimBLE report-only)"
-                default n
-                help
-                    When enabled, initializes the ESP-IDF NimBLE host in report-only mode
-                    (no advertising) and publishes /bluetooth MQTT snapshots. Requires
-                    CONFIG_BT_ENABLED in the IDF Bluetooth menu.
+        # Collect Bluetooth Stats — menu hidden until implementation is ready.
+        # menu "Collect Bluetooth Stats"
+        #     config HEAPWATCH_ENABLE_BLE_REPORTING
+        #         bool "Enable BLE radio reporting (NimBLE report-only)"
+        #         default n
+        #         help
+        #             When enabled, initializes the ESP-IDF NimBLE host in report-only mode
+        #             (no advertising) and publishes /bluetooth MQTT snapshots. Requires
+        #             CONFIG_BT_ENABLED in the IDF Bluetooth menu.
+        #
+        #     config HEAPWATCH_BLE_TELEMETRY_ENABLED
+        #         bool "Periodic BLE snapshot telemetry"
+        #         default y
+        #         depends on HEAPWATCH_ENABLE_BLE_REPORTING
+        #
+        #     config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
+        #         int "BLE telemetry interval (seconds)"
+        #         default 30
+        #         range 5 3600
+        #         depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+        #
+        #     config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
+        #         bool "Only publish BLE telemetry when snapshot changes"
+        #         default y
+        #         depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+        # endmenu
 
-            config HEAPWATCH_BLE_TELEMETRY_ENABLED
-                bool "Periodic BLE snapshot telemetry"
-                default y
-                depends on HEAPWATCH_ENABLE_BLE_REPORTING
+        # Stubs: keep CONFIG_* symbols defined for #if guards while menu is hidden.
+        config HEAPWATCH_ENABLE_BLE_REPORTING
+            bool
+            default n
 
-            config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
-                int "BLE telemetry interval (seconds)"
-                default 30
-                range 5 3600
-                depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+        config HEAPWATCH_BLE_TELEMETRY_ENABLED
+            bool
+            default n
 
-            config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
-                bool "Only publish BLE telemetry when snapshot changes"
-                default y
-                depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
-        endmenu
+        config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
+            int
+            default 30
+
+        config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
+            bool
+            default y
     endmenu
 
     menu "Memory / Queue Sizing"
         config HEAPWATCH_MAX_LOG_LINE_LEN
-            int "Maximum relayed log line length (bytes)"
+            int "Maximum Log Line Length (bytes)"
             default 160
             range 32 1024
             help
@@ -293,52 +324,49 @@ menu "Heapwatch Connector"
                 delivery. Lower values reduce worst-case RAM use of the log pipeline.
 
         config HEAPWATCH_TINY_QUEUE_LEN
-            int "Tiny MQTT queue depth (PARAMETER/EVENT)"
+            int "Tiny MQTT Queue Depth (PARAMETER/EVENT)"
             default 24
-            range 4 64
+            range 4 10000
             help
                 Depth of the tiny-tier queue used for single-value PARAMETER and
                 EVENT messages (~96 B per slot).
 
         config HEAPWATCH_SMALL_QUEUE_LEN
-            int "Small MQTT queue depth (LOG)"
+            int "Small MQTT Queue Depth (LOG)"
             default 12
-            range 4 64
+            range 4 10000
             help
                 Depth of the small-tier queue used for LOG messages (sized off
                 HEAPWATCH_MAX_LOG_LINE_LEN). Independent of the tiny queue so
                 log bursts don't starve parameter/event buffering and vice versa.
 
         config HEAPWATCH_LARGE_QUEUE_LEN
-            int "Large MQTT queue depth (SPECS/TASKS)"
+            int "Large MQTT Queue Depth (SPECS/TASKS)"
             default 3
-            range 1 16
+            range 1 10000
             help
                 Depth of the large-tier queue used for SPECS/TASKS messages and
-                the periodic metrics PARAMETER blob. Deliberately shallow — these
-                are periodic/rare relative to logs/params, so buffering many of
-                them wastes RAM (each slot is up to ~2KB).
+                the periodic metrics PARAMETER blob. Increase this buffer ideally if you have enough
+                spare PSRAM space and want to preserve stats during intermittent connection outages like
+                having an CatM modem and moving around with the device.
 
         config HEAPWATCH_METRICS_INTERVAL_MS
-            int "Metrics collection interval (ms)"
+            int "Initial Metrics Collection Interval (ms)"
             default 2000
             range 500 60000
+            help
+                This is the initial interval at which the connector collects and sends out telemetry data.
+                Can be changed remotely from Heapwatch UI.
 
         config HEAPWATCH_LOG_BATCH_MAX
-            int "Max log lines per MQTT /log publish"
+            int "Max Log Lines Per MQTT Publish"
             default 10
             range 1 64
-    endmenu
-
-    menu "Debug (Advanced)"
-        config HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
-            bool "Track per-message-type payload size histogram"
-            default n
             help
-                Debug-only instrumentation to gather real payload-size distribution
-                data ahead of a possible future bucketed-pool allocator (Option C,
-                not scheduled). Periodically logs a bucketed histogram per message
-                type (LOG/PARAMETER/EVENT/SPECS/TASKS) via ESP_LOGI.
+                The connector batches log lines into one bigger MQTT message to increase efficiency.
+                Recommended max batch is 10. Make sure that your system MQTT max payload size is big enough
+                to store this batch X max log line + some overhead. If you set these numbers bigger than MQTT max
+                payload size, log MQTT dispatches to Heapwatch will fail.
     endmenu
 
 endmenu

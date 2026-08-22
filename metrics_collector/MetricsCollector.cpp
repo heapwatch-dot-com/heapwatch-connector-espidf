@@ -95,7 +95,6 @@ uint64_t task_runtime_delta_by_name(const char* task_name, uint64_t current_runt
 void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     g_mqtt_enqueue_msg.type = type;
     snprintf(g_mqtt_enqueue_msg.payload, sizeof(g_mqtt_enqueue_msg.payload), "%s", payload);
-    heapwatch_debug_record_payload_size(type, strlen(g_mqtt_enqueue_msg.payload));
 
     QueueHandle_t queue = heapwatch_get_queue();
     if (queue != nullptr) {
@@ -509,16 +508,6 @@ void collectTask(void* arg) {
             HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
         }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
-
-#if CONFIG_HEAPWATCH_DEBUG_PAYLOAD_SIZE_HISTOGRAM
-        // M2 (Phase 2b): dump the histogram every ~15 collection cycles rather than
-        // every cycle, so it stays readable on serial even at short metrics intervals.
-        static uint32_t s_histogram_dump_counter = 0;
-        if (++s_histogram_dump_counter >= 15) {
-            s_histogram_dump_counter = 0;
-            heapwatch_debug_dump_payload_histogram();
-        }
-#endif
     }
 }
 
