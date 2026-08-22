@@ -1,5 +1,5 @@
 version: "0.4.0"
-description: Heapwatch Connector for ESP-IDF — crash analytics telemetry SDK
+description: Heapwatch Connector for ESP-IDF
 url: https://github.com/viktorjamrich/heapwatch-connector-espidf
 documentation: https://docs.heapwatch.com/integration/getting-started/overview
 repository: git@github.com:viktorjamrich/heapwatch-connector-espidf.git

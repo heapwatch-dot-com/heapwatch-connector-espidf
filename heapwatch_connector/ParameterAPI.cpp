@@ -10,7 +10,7 @@
 // damages, or other liability, whether in an action of contract, tort, or otherwise, arising from,
 // out of, or in connection with the software or the use or other dealings in the software.
 //
-// For licensing inquiries, please contact: admin@heapwatch.com
+// For licensing inquiries, please contact: info@heapwatch.com
 //
 
 #include "ParameterAPI.h"

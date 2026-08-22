@@ -43,7 +43,7 @@ menu "Heapwatch Connector"
 
     menu "Heapwatch Connection"
         comment "Your device connects to Heapwatch by requesting access credentials from Heapwatch via REST API. For this you need to enter a valid Enrollment Key."
-        comment "Get your Enrollment Key from Heapwatch UI."
+        comment "Get your Enrollment Key from Heapwatch UI / Enrollment page / Enrollment Keys page."
 
         config HEAPWATCH_ENROLLMENT_KEY
             string "Enrollment Key"
