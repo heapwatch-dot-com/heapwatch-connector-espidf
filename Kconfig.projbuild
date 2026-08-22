@@ -206,81 +206,81 @@ menu "Heapwatch Connector"
                 HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED event if corruption is found. This
                 catches corruption before it causes a crash, instead of only finding out
                 post-hoc via coredump. Default off: walking the full heap has a heavy CPU load.
-    endmenu
 
-    menu "Collect Storage Stats"
-        config HEAPWATCH_ENABLE_STORAGE_STATS
-            bool "Report internal-flash filesystem stats (STORAGE1)"
-            default y
-            help
-                Mounts the "storage" SPIFFS partition (see partitions.csv) at boot and
-                reports storage.free_bytes/storage.used_bytes via the generic parameter
-                mechanism (PARAM1) once per telemetry round. Separate from NVS stats.
+        menu "Collect Storage Stats"
+            config HEAPWATCH_ENABLE_STORAGE_STATS
+                bool "Report internal-flash filesystem stats (STORAGE1)"
+                default y
+                help
+                    Mounts the "storage" SPIFFS partition (see partitions.csv) at boot and
+                    reports storage.free_bytes/storage.used_bytes via the generic parameter
+                    mechanism (PARAM1) once per telemetry round. Separate from NVS stats.
 
-        config HEAPWATCH_ENABLE_SD_CARD_STATS
-            bool "Also mount and report an SD card over SPI"
-            default n
-            depends on HEAPWATCH_ENABLE_STORAGE_STATS
-            help
-                Attempts to mount a FAT-formatted SD card over SPI at boot using the pins
-                below. If no card is present or the mount fails, this is logged and
-                skipped -- never fatal, never retried. When mounted, its free/used bytes
-                are added to the same storage.free_bytes/storage.used_bytes totals as
-                the SPIFFS partition (aggregate "internal + removable storage" figure,
-                per PARAM2's fixed-slug design -- not a separate per-medium slug).
+            config HEAPWATCH_ENABLE_SD_CARD_STATS
+                bool "Also mount and report an SD card over SPI"
+                default n
+                depends on HEAPWATCH_ENABLE_STORAGE_STATS
+                help
+                    Attempts to mount a FAT-formatted SD card over SPI at boot using the pins
+                    below. If no card is present or the mount fails, this is logged and
+                    skipped -- never fatal, never retried. When mounted, its free/used bytes
+                    are added to the same storage.free_bytes/storage.used_bytes totals as
+                    the SPIFFS partition (aggregate "internal + removable storage" figure,
+                    per PARAM2's fixed-slug design -- not a separate per-medium slug).
 
-        config HEAPWATCH_SD_CARD_CS_GPIO
-            int "SD card CS (chip select) GPIO"
-            default -1
-            range -1 48
-            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
-            help
-                -1 disables the SD card mount attempt even if the toggle above is on --
-                set to a real GPIO once wired to actual SD card hardware.
+            config HEAPWATCH_SD_CARD_CS_GPIO
+                int "SD card CS (chip select) GPIO"
+                default -1
+                range -1 48
+                depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+                help
+                    -1 disables the SD card mount attempt even if the toggle above is on --
+                    set to a real GPIO once wired to actual SD card hardware.
 
-        config HEAPWATCH_SD_CARD_MOSI_GPIO
-            int "SD card MOSI GPIO"
-            default -1
-            range -1 48
-            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+            config HEAPWATCH_SD_CARD_MOSI_GPIO
+                int "SD card MOSI GPIO"
+                default -1
+                range -1 48
+                depends on HEAPWATCH_ENABLE_SD_CARD_STATS
 
-        config HEAPWATCH_SD_CARD_MISO_GPIO
-            int "SD card MISO GPIO"
-            default -1
-            range -1 48
-            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+            config HEAPWATCH_SD_CARD_MISO_GPIO
+                int "SD card MISO GPIO"
+                default -1
+                range -1 48
+                depends on HEAPWATCH_ENABLE_SD_CARD_STATS
 
-        config HEAPWATCH_SD_CARD_SCK_GPIO
-            int "SD card SCK GPIO"
-            default -1
-            range -1 48
-            depends on HEAPWATCH_ENABLE_SD_CARD_STATS
-    endmenu
+            config HEAPWATCH_SD_CARD_SCK_GPIO
+                int "SD card SCK GPIO"
+                default -1
+                range -1 48
+                depends on HEAPWATCH_ENABLE_SD_CARD_STATS
+        endmenu
 
-    menu "Collect Bluetooth Stats"
-        config HEAPWATCH_ENABLE_BLE_REPORTING
-            bool "Enable BLE radio reporting (NimBLE report-only)"
-            default n
-            help
-                When enabled, initializes the ESP-IDF NimBLE host in report-only mode
-                (no advertising) and publishes /bluetooth MQTT snapshots. Requires
-                CONFIG_BT_ENABLED in the IDF Bluetooth menu.
+        menu "Collect Bluetooth Stats"
+            config HEAPWATCH_ENABLE_BLE_REPORTING
+                bool "Enable BLE radio reporting (NimBLE report-only)"
+                default n
+                help
+                    When enabled, initializes the ESP-IDF NimBLE host in report-only mode
+                    (no advertising) and publishes /bluetooth MQTT snapshots. Requires
+                    CONFIG_BT_ENABLED in the IDF Bluetooth menu.
 
-        config HEAPWATCH_BLE_TELEMETRY_ENABLED
-            bool "Periodic BLE snapshot telemetry"
-            default y
-            depends on HEAPWATCH_ENABLE_BLE_REPORTING
+            config HEAPWATCH_BLE_TELEMETRY_ENABLED
+                bool "Periodic BLE snapshot telemetry"
+                default y
+                depends on HEAPWATCH_ENABLE_BLE_REPORTING
 
-        config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
-            int "BLE telemetry interval (seconds)"
-            default 30
-            range 5 3600
-            depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+            config HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC
+                int "BLE telemetry interval (seconds)"
+                default 30
+                range 5 3600
+                depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
 
-        config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
-            bool "Only publish BLE telemetry when snapshot changes"
-            default y
-            depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+            config HEAPWATCH_BLE_TELEMETRY_ON_CHANGE
+                bool "Only publish BLE telemetry when snapshot changes"
+                default y
+                depends on HEAPWATCH_BLE_TELEMETRY_ENABLED
+        endmenu
     endmenu
 
     menu "Memory / Queue Sizing"
