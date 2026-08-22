@@ -30,6 +30,7 @@
 #include "mqtt_client.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "device_enrollment/ClaimedIdentitiesBootSync.h"
+#include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../device_command/CommandWorker.h"
 #include "heapwatch_config.h"
 #include "heapwatch_endpoints.h"
@@ -68,6 +69,7 @@ static volatile int64_t g_last_publish_unix_ms = -1;
 // Queue sets only wake on new data / post-receive leftover notify — so sticky-retry
 // the blocked queue instead of SendToFront requeue (which crashed under pressure).
 static QueueHandle_t g_publish_blocked_queue = nullptr;
+static TickType_t g_last_publish_blocked_log_tick = 0;
 
 static void mark_publish_success() {
     struct timeval now = {};
@@ -115,26 +117,10 @@ static void try_publish_queue_head(QueueHandle_t queue) {
         return;
     }
 
-    (void)xQueueReceive(queue, &msg, 0);
+    if (xQueueReceive(queue, &msg, 0) == pdTRUE) {
+        heapwatch_outbound_consumed();
+    }
     g_publish_blocked_queue = nullptr;
-}
-
-/** Boot-critical outbound first: large (specs/bounds/network) → tiny (events) → small (telemetry). */
-static bool try_publish_priority_outbound(QueueHandle_t large_queue, QueueHandle_t tiny_queue,
-                                          QueueHandle_t small_queue) {
-    if (large_queue != nullptr && uxQueueMessagesWaiting(large_queue) > 0) {
-        try_publish_queue_head<LargeMqttMessage>(large_queue);
-        return true;
-    }
-    if (tiny_queue != nullptr && uxQueueMessagesWaiting(tiny_queue) > 0) {
-        try_publish_queue_head<TinyMqttMessage>(tiny_queue);
-        return true;
-    }
-    if (small_queue != nullptr && uxQueueMessagesWaiting(small_queue) > 0) {
-        try_publish_queue_head<SmallMqttMessage>(small_queue);
-        return true;
-    }
-    return false;
 }
 
 static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
@@ -352,9 +338,12 @@ void heapwatch_dispatch_task(void* arg) {
         }
         
         if (!g_mqtt_client) {
-            ESP_LOGI("HeapwatchDispatcher", "heap before mqtt start: free=%u largest=%u",
+            ESP_LOGI("HeapwatchDispatcher",
+                     "heap before mqtt start: free=%u largest=%u internal_free=%u internal_largest=%u",
                      static_cast<unsigned>(esp_get_free_heap_size()),
-                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
 
             // Create MQTT client
             esp_mqtt_client_config_t config = {};
@@ -395,6 +384,8 @@ void heapwatch_dispatch_task(void* arg) {
                 continue;
             }
 
+            HeapwatchConnector::getInstance().ensureMetricsCollectorThreadStarted();
+
             ESP_LOGI("HeapwatchDispatcher", "MQTT client started (awaiting broker connection)");
         }
 
@@ -412,6 +403,8 @@ void heapwatch_dispatch_task(void* arg) {
 
         if (!dispatcher_prev_mqtt_connected && !g_mqtt_shutting_down) {
             subscribe_command_topics();
+            heapwatch::connector_boot_sync::runBootStaticSync();
+            ESP_LOGI("HeapwatchDispatcher", "MQTT connected — draining outbound queues");
         }
         dispatcher_prev_mqtt_connected = true;
 
@@ -466,32 +459,40 @@ void heapwatch_dispatch_task(void* arg) {
         }
         #endif
 
-        // M1 (Phase 2b): three tiered queues (tiny/small/large) serviced via a
-        // FreeRTOS Queue Set — blocks efficiently on "any queue has data" instead
-        // of polling each queue in turn with short timeouts.
         QueueHandle_t tiny_queue = heapwatch_get_tiny_queue();
         QueueHandle_t small_queue = heapwatch_get_small_queue();
         QueueHandle_t large_queue = heapwatch_get_queue();
-        QueueSetHandle_t queue_set = heapwatch_get_queue_set();
 
-        // Prefer a queue whose head was already peeked but MQTT outbox rejected it.
-        QueueSetMemberHandle_t activated_queue = g_publish_blocked_queue;
-        if (activated_queue == nullptr &&
-            try_publish_priority_outbound(large_queue, tiny_queue, small_queue)) {
-            continue;
-        }
-        if (activated_queue == nullptr) {
-            activated_queue =
-                (queue_set != nullptr) ? xQueueSelectFromSet(queue_set, pdMS_TO_TICKS(250)) : nullptr;
+        if (g_publish_blocked_queue != nullptr && g_mqtt_client != nullptr) {
+            const TickType_t now = xTaskGetTickCount();
+            if (g_last_publish_blocked_log_tick == 0 ||
+                now - g_last_publish_blocked_log_tick >= pdMS_TO_TICKS(5000)) {
+                g_last_publish_blocked_log_tick = now;
+                ESP_LOGW("HeapwatchDispatcher",
+                         "publish backpressure: outbox=%d bytes tiny=%u small=%u large=%u",
+                         esp_mqtt_client_get_outbox_size(g_mqtt_client),
+                         tiny_queue != nullptr
+                             ? static_cast<unsigned>(uxQueueMessagesWaiting(tiny_queue))
+                             : 0U,
+                         small_queue != nullptr
+                             ? static_cast<unsigned>(uxQueueMessagesWaiting(small_queue))
+                             : 0U,
+                         large_queue != nullptr
+                             ? static_cast<unsigned>(uxQueueMessagesWaiting(large_queue))
+                             : 0U);
+            }
         }
 
-        if (activated_queue == tiny_queue) {
-            try_publish_queue_head<TinyMqttMessage>(tiny_queue);
-        } else if (activated_queue == small_queue) {
-            try_publish_queue_head<SmallMqttMessage>(small_queue);
-        } else if (activated_queue == large_queue) {
+        if (large_queue != nullptr) {
             try_publish_queue_head<LargeMqttMessage>(large_queue);
         }
+        if (tiny_queue != nullptr) {
+            try_publish_queue_head<TinyMqttMessage>(tiny_queue);
+        }
+        if (small_queue != nullptr) {
+            try_publish_queue_head<SmallMqttMessage>(small_queue);
+        }
+        heapwatch_outbound_wait_for_work();
     }
 }
 

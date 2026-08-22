@@ -43,6 +43,7 @@
 #include "../stream_ingress/StreamIngressClient.h"
 #include "ParameterStore.h"
 #include "heapwatch_connector_timing.h"
+#include "heapwatch_freertos_alloc.h"
 
 namespace {
 static constexpr char TAG[] = "HeapwatchConnector";
@@ -53,9 +54,9 @@ static constexpr TickType_t kBootCriticalQueueWait = pdMS_TO_TICKS(250);
 QueueHandle_t g_tiny_queue = nullptr;
 QueueHandle_t g_small_queue = nullptr;
 QueueHandle_t g_large_queue = nullptr;
-QueueSetHandle_t g_queue_set = nullptr;
 QueueHandle_t g_coredump_queue = nullptr;
 SemaphoreHandle_t g_publish_mutex = nullptr;
+SemaphoreHandle_t g_outbound_sem = nullptr;
 bool g_initialized = false;
 bool g_infrastructure_ready = false;
 volatile bool g_dispatcher_running = false;
@@ -97,29 +98,20 @@ char g_scratch_escaped_tag[64];
 char g_scratch_optional[192];
 
 void destroy_message_queues() {
-    if (g_queue_set != nullptr) {
-        if (g_tiny_queue != nullptr) {
-            xQueueRemoveFromSet(g_tiny_queue, g_queue_set);
-        }
-        if (g_small_queue != nullptr) {
-            xQueueRemoveFromSet(g_small_queue, g_queue_set);
-        }
-        if (g_large_queue != nullptr) {
-            xQueueRemoveFromSet(g_large_queue, g_queue_set);
-        }
-        vQueueDelete(g_queue_set);
-        g_queue_set = nullptr;
+    if (g_outbound_sem != nullptr) {
+        vSemaphoreDelete(g_outbound_sem);
+        g_outbound_sem = nullptr;
     }
     if (g_tiny_queue != nullptr) {
-        vQueueDelete(g_tiny_queue);
+        heapwatch_queue_delete(g_tiny_queue);
         g_tiny_queue = nullptr;
     }
     if (g_small_queue != nullptr) {
-        vQueueDelete(g_small_queue);
+        heapwatch_queue_delete(g_small_queue);
         g_small_queue = nullptr;
     }
     if (g_large_queue != nullptr) {
-        vQueueDelete(g_large_queue);
+        heapwatch_queue_delete(g_large_queue);
         g_large_queue = nullptr;
     }
 }
@@ -173,30 +165,29 @@ bool HeapwatchConnector::ensureInfrastructure() {
         return true;
     }
 
-    g_tiny_queue = xQueueCreate(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage));
-    g_small_queue = xQueueCreate(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
-    g_large_queue = xQueueCreate(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
+    g_tiny_queue = heapwatch_queue_create(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage));
+    g_small_queue = heapwatch_queue_create(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
+    g_large_queue = heapwatch_queue_create(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
     if (g_tiny_queue == nullptr || g_small_queue == nullptr || g_large_queue == nullptr) {
         ESP_LOGE("HeapwatchConnector",
-                 "Failed to create message queues (free_heap=%u, largest_block=%u)",
+                 "Failed to create message queues (psram=%d, free_heap=%u, largest_block=%u)",
+                 HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM,
                  static_cast<unsigned>(esp_get_free_heap_size()),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
         destroy_message_queues();
         return false;
     }
 
-    g_queue_set = xQueueCreateSet(HEAPWATCH_TINY_QUEUE_LEN + HEAPWATCH_SMALL_QUEUE_LEN +
-                                  HEAPWATCH_LARGE_QUEUE_LEN);
-    if (g_queue_set == nullptr || xQueueAddToSet(g_tiny_queue, g_queue_set) != pdPASS ||
-        xQueueAddToSet(g_small_queue, g_queue_set) != pdPASS ||
-        xQueueAddToSet(g_large_queue, g_queue_set) != pdPASS) {
-        ESP_LOGE("HeapwatchConnector", "Failed to create/populate message queue set");
+    g_outbound_sem = xSemaphoreCreateCounting(
+        HEAPWATCH_TINY_QUEUE_LEN + HEAPWATCH_SMALL_QUEUE_LEN + HEAPWATCH_LARGE_QUEUE_LEN, 0);
+    if (g_outbound_sem == nullptr) {
+        ESP_LOGE("HeapwatchConnector", "Failed to create outbound semaphore");
         destroy_message_queues();
         return false;
     }
 
     g_coredump_queue =
-        xQueueCreate(HEAPWATCH_COREDUMP_QUEUE_LEN, sizeof(CoreDumpPayload*));
+        heapwatch_queue_create(HEAPWATCH_COREDUMP_QUEUE_LEN, sizeof(CoreDumpPayload*));
     if (g_coredump_queue == nullptr) {
         ESP_LOGE("HeapwatchConnector", "Failed to create core dump queue");
         destroy_message_queues();
@@ -208,13 +199,18 @@ bool HeapwatchConnector::ensureInfrastructure() {
         if (g_publish_mutex == nullptr) {
             ESP_LOGE("HeapwatchConnector", "Failed to create publish mutex");
             destroy_message_queues();
-            vQueueDelete(g_coredump_queue);
+            heapwatch_queue_delete(g_coredump_queue);
             g_coredump_queue = nullptr;
             return false;
         }
     }
 
     g_infrastructure_ready = true;
+#if HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
+    ESP_LOGI(TAG, "MQTT queues in PSRAM (internal free=%u largest=%u)",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+#endif
     return true;
 }
 
@@ -239,7 +235,7 @@ bool HeapwatchConnector::activateWithBroker(const char* broker_url) {
     g_initialized = true;
     // network_ready is owned by IP_EVENT handlers — do not clear here or MQTT never starts.
     startDispatcherThread();
-    startCollectorThread();
+    // hw_metrics (8 KiB stack) starts after mqtt_task is created — see HeapwatchDispatcher.
     return true;
 }
 
@@ -272,7 +268,7 @@ void HeapwatchConnector::deinitialize() {
         while (xQueueReceive(g_coredump_queue, &pending_payload, 0) == pdTRUE) {
             free(pending_payload);
         }
-        vQueueDelete(g_coredump_queue);
+        heapwatch_queue_delete(g_coredump_queue);
         g_coredump_queue = nullptr;
     }
 
@@ -470,7 +466,7 @@ bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const cha
         return false;
     }
 
-    return xQueueSend(g_small_queue, &g_scratch_small_msg, 0) == pdTRUE;
+    return heapwatch_outbound_send(g_small_queue, &g_scratch_small_msg, 0);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 }
 
@@ -706,7 +702,7 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
              static_cast<long long>(value));
 #endif
 
-    xQueueSend(g_tiny_queue, &g_scratch_tiny_msg, 0);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, 0);
 }
 
 void HeapwatchConnector::queueParameter(const char* name, double value) {
@@ -732,7 +728,7 @@ void HeapwatchConnector::queueParameter(const char* name, double value) {
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
 #endif
 
-    xQueueSend(g_tiny_queue, &g_scratch_tiny_msg, 0);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, 0);
 }
 
 void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
@@ -783,7 +779,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
         eventTypeId >= HEAPWATCH_EVENT_FW_UPDATE_STARTED &&
         eventTypeId <= HEAPWATCH_EVENT_FW_UPDATE_FAILED;
     const TickType_t send_wait = fw_ota_event ? kOtaMqttQueueWait : 0;
-    xQueueSend(g_tiny_queue, &g_scratch_tiny_msg, send_wait);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, send_wait);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS */
 }
 
@@ -818,7 +814,7 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
              static_cast<long long>(total));
 #endif
 
-    xQueueSend(g_small_queue, &g_scratch_small_msg, kOtaMqttQueueWait);
+    heapwatch_outbound_send(g_small_queue, &g_scratch_small_msg, kOtaMqttQueueWait);
 }
 
 void HeapwatchConnector::queueSpecs() {
@@ -852,7 +848,7 @@ void HeapwatchConnector::queueSpecs() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::queueNetwork() {
@@ -886,7 +882,7 @@ void HeapwatchConnector::queueNetwork() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::queueBluetoothSnapshot() {
@@ -920,7 +916,7 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
              static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
 #endif
 
-    xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::updateParameterInt(const char* slug, int64_t value) {
@@ -973,7 +969,7 @@ void HeapwatchConnector::flushParameters() {
     }
 
     g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
-    if (xQueueSend(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait) == pdTRUE) {
+    if (heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait)) {
         heapwatch::parameter_store::acknowledgeBoundsSent();
     }
 }
@@ -1014,10 +1010,53 @@ void HeapwatchConnector::startCollectorThread() {
                 HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2, nullptr);
 }
 
+void HeapwatchConnector::ensureMetricsCollectorThreadStarted() {
+    if (g_collector_running) {
+        return;
+    }
+    startCollectorThread();
+}
+
 QueueHandle_t heapwatch_get_tiny_queue() { return g_tiny_queue; }
 QueueHandle_t heapwatch_get_small_queue() { return g_small_queue; }
 QueueHandle_t heapwatch_get_queue() { return g_large_queue; }
-QueueSetHandle_t heapwatch_get_queue_set() { return g_queue_set; }
+
+bool heapwatch_outbound_send(QueueHandle_t queue, const void* item, TickType_t wait) {
+    if (queue == nullptr || item == nullptr) {
+        return false;
+    }
+    if (xQueueSend(queue, item, wait) != pdTRUE) {
+        return false;
+    }
+    if (g_outbound_sem != nullptr) {
+        (void)xSemaphoreGive(g_outbound_sem);
+    }
+    return true;
+}
+
+void heapwatch_outbound_consumed() {
+    if (g_outbound_sem != nullptr) {
+        (void)xSemaphoreTake(g_outbound_sem, 0);
+    }
+}
+
+void heapwatch_outbound_wait_for_work() {
+    const UBaseType_t waiting =
+        (g_tiny_queue != nullptr ? uxQueueMessagesWaiting(g_tiny_queue) : 0) +
+        (g_small_queue != nullptr ? uxQueueMessagesWaiting(g_small_queue) : 0) +
+        (g_large_queue != nullptr ? uxQueueMessagesWaiting(g_large_queue) : 0);
+    if (waiting > 0) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        return;
+    }
+    if (g_outbound_sem == nullptr) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        return;
+    }
+    xSemaphoreTake(g_outbound_sem, portMAX_DELAY);
+    xSemaphoreGive(g_outbound_sem);
+}
+
 QueueHandle_t heapwatch_get_coredump_queue() { return g_coredump_queue; }
 const char* heapwatch_get_device_uid() { return g_device_uid; }
 const char* heapwatch_get_tenant_slug() { return g_tenant_slug; }

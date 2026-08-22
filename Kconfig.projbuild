@@ -165,10 +165,16 @@ menu "Heapwatch Connector"
         config HEAPWATCH_ENABLE_OTA
             bool "Enable Heapwatch OTA"
             default y
+            select BOOTLOADER_APP_ROLLBACK_ENABLE
             help
-                Enable to activate Heapwatch OTA and automatically flash new firmware right from
-                Heapwatch UI or by using your AI agent to start OTA via MCP.. Independent of
-                CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (bootloader pending-verify).
+                Enable Heapwatch OTA (MQTT ota/* + HTTPS flash) from the Heapwatch UI or MCP.
+
+                Automatically enables CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE so a newly
+                flashed app boots in ESP_OTA_IMG_PENDING_VERIFY until confirmed via the
+                ota/confirm device command (esp_ota_mark_app_valid_cancel_rollback).
+                Reboot without confirm rolls back to the previous slot.
+
+                Requires a dual-OTA partition table (two app slots + otadata).
 
         choice HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES
             prompt "OTA HTTPS Download Chunk Size"
@@ -346,9 +352,24 @@ menu "Heapwatch Connector"
             range 1 10000
             help
                 Depth of the large-tier queue used for SPECS/TASKS messages and
-                the periodic metrics PARAMETER blob. Increase this buffer ideally if you have enough
-                spare PSRAM space and want to preserve stats during intermittent connection outages like
-                having an CatM modem and moving around with the device.
+                the periodic metrics PARAMETER blob. Increase depth when you have spare
+                memory (internal DRAM or PSRAM — see "Allocate MQTT message queues in PSRAM")
+                and want to preserve stats during intermittent connection outages like
+                having a CatM modem and moving around with the device.
+
+        config HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
+            bool "Allocate MQTT message queues in PSRAM"
+            default n
+            depends on SPIRAM
+            help
+                Places tiny/small/large outbound queue slot storage in external
+                PSRAM (xQueueCreateWithCaps) instead of internal RAM (xQueueCreate).
+
+                Requires SPIRAM enabled and initialized in the project sdkconfig.
+
+                Queue slots in PSRAM must not be accessed while the CPU cache is
+                disabled (e.g. during some flash write sequences). OTA and coredump
+                flash paths do not touch MQTT queue slots during writes.
 
         config HEAPWATCH_METRICS_INTERVAL_MS
             int "Initial Metrics Collection Interval (ms)"

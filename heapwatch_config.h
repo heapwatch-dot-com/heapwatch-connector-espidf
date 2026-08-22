@@ -65,6 +65,17 @@
  */
 #define HEAPWATCH_COREDUMP_QUEUE_LEN     1
 
+/**
+ * When enabled (Kconfig + SPIRAM in project sdkconfig), MQTT outbound queue slot
+ * storage is allocated in PSRAM via xQueueCreateWithCaps(). Default off — ESP-IDF
+ * 5.x always places xQueueCreate() in internal DRAM.
+ */
+#ifdef CONFIG_HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
+#define HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM 1
+#else
+#define HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM 0
+#endif
+
 /** Max log objects per MQTT /log publish (backend accepts a JSON array). */
 #ifdef CONFIG_HEAPWATCH_LOG_BATCH_MAX
 #define HEAPWATCH_LOG_BATCH_MAX          CONFIG_HEAPWATCH_LOG_BATCH_MAX

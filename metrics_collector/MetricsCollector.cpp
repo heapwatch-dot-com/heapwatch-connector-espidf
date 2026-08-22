@@ -98,7 +98,10 @@ void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
 
     QueueHandle_t queue = heapwatch_get_queue();
     if (queue != nullptr) {
-        xQueueSend(queue, &g_mqtt_enqueue_msg, 0);
+        if (!heapwatch_outbound_send(queue, &g_mqtt_enqueue_msg, 0)) {
+            ESP_LOGW("MetricsCollector", "large MQTT queue full — dropped %s payload",
+                     type == MQTT_MESSAGE_TYPE_TASKS ? "TASKS" : "PARAMETER");
+        }
     }
 }
 

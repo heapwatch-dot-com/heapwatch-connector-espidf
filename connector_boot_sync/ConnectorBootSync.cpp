@@ -15,10 +15,16 @@ namespace heapwatch::connector_boot_sync {
 namespace {
 
 constexpr char TAG[] = "BootSync";
+bool g_boot_static_sync_done = false;
 
 }  // namespace
 
 void runBootStaticSync() {
+    if (g_boot_static_sync_done) {
+        return;
+    }
+    g_boot_static_sync_done = true;
+
     ESP_LOGI(TAG, "MQTT-up boot sync — enqueueing static payloads");
 
     heapwatch::metrics_collector::refreshConnectorGaugeLimits();

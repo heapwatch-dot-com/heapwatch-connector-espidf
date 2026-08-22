@@ -174,6 +174,9 @@ public:
     /** STAT1: see HeapwatchConnectorStatus. Always compiled in, cheap to call frequently. */
     HeapwatchConnectorStatus getStatus() const;
 
+    /** Starts hw_metrics once mqtt_task exists (frees internal DRAM at MQTT client start). */
+    void ensureMetricsCollectorThreadStarted();
+
 private:
     HeapwatchConnector() = default;
     ~HeapwatchConnector() = default;
@@ -187,7 +190,9 @@ private:
 QueueHandle_t heapwatch_get_tiny_queue();
 QueueHandle_t heapwatch_get_small_queue();
 QueueHandle_t heapwatch_get_queue();  // large tier — kept name for compat (SPECS/TASKS/metrics blob)
-QueueSetHandle_t heapwatch_get_queue_set();
+bool heapwatch_outbound_send(QueueHandle_t queue, const void* item, TickType_t wait);
+void heapwatch_outbound_consumed();
+void heapwatch_outbound_wait_for_work();
 QueueHandle_t heapwatch_get_coredump_queue();
 const char* heapwatch_get_device_uid();
 const char* heapwatch_get_tenant_slug();

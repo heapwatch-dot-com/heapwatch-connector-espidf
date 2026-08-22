@@ -32,7 +32,7 @@ constexpr size_t kDownloadChunk = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
 #else
 constexpr size_t kDownloadChunk = 256;
 #endif
-constexpr uint32_t kOtaTaskStackBytes = 12288;
+constexpr uint32_t kOtaTaskStackBytes = 8192;
 // BSS — keeps download chunk RAM off the hw_ota task stack.
 uint8_t g_ota_io_buf[kDownloadChunk] = {};
 constexpr size_t kMaxDataPartitions = 4;
