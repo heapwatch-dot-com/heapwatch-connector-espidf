@@ -362,14 +362,13 @@ menu "Heapwatch Connector"
             default n
             depends on SPIRAM
             help
-                Places tiny/small/large outbound queue slot storage in external
-                PSRAM (xQueueCreateWithCaps) instead of internal RAM (xQueueCreate).
+                Places all queue slots in the external
+                PSRAM instead of internal RAM.
 
                 Requires SPIRAM enabled and initialized in the project sdkconfig.
 
-                Queue slots in PSRAM must not be accessed while the CPU cache is
-                disabled (e.g. during some flash write sequences). OTA and coredump
-                flash paths do not touch MQTT queue slots during writes.
+                Great for storing lots of pending telemetry during intermittent modem connection disconnects.
+                Recommended for modem applications that face constant signal interruptions (moving vehicles etc).
 
         config HEAPWATCH_METRICS_INTERVAL_MS
             int "Initial Metrics Collection Interval (ms)"
