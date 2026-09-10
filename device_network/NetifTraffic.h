@@ -10,7 +10,7 @@ namespace heapwatch::netif_traffic {
 /** Register IP_EVENT_TX_RX (idempotent). No-op if traffic reporting is disabled. */
 void start();
 
-/** Bind current esp_netifs and enable per-netif TX/RX events. */
+/** Bind known if_keys and default netif; install lwIP input/linkoutput byte counters. */
 void ensureTracking();
 
 /**

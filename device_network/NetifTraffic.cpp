@@ -10,7 +10,9 @@
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
 #include "heapwatch_config.h"
+#include "lwip/err.h"
 #include "lwip/netif.h"
+#include "lwip/pbuf.h"
 #include "DynamicParameterSegment.h"
 
 namespace heapwatch::netif_traffic {
@@ -20,13 +22,16 @@ constexpr const char* kTag = "HwNetifTraffic";
 constexpr size_t kMaxTrackedKeys = 8;
 constexpr size_t kKeyLen = 32;
 
+const char* kKnownIfKeys[] = {"WIFI_STA_DEF", "WIFI_AP_DEF", "ETH_DEF", "PPP_DEF"};
+
 struct Slot {
     char key[kKeyLen];
-    uint32_t last_rx32;
-    uint32_t last_tx32;
+    struct netif* lwip;
+    netif_input_fn orig_input;
+    netif_linkoutput_fn orig_linkoutput;
     uint64_t rx_bytes;
     uint64_t tx_bytes;
-    bool primed;
+    bool hooked;
 };
 
 Slot g_slots[kMaxTrackedKeys] = {};
@@ -36,8 +41,6 @@ bool g_started = false;
 #if defined(CONFIG_HEAPWATCH_ENABLE_NETIF_TRAFFIC) && CONFIG_HEAPWATCH_ENABLE_NETIF_TRAFFIC
 #define HEAPWATCH_NETIF_TRAFFIC_ACTIVE 1
 #endif
-// Goal 1: sampling is off until the device is confirmed stable. Do not re-enable here.
-#undef HEAPWATCH_NETIF_TRAFFIC_ACTIVE
 
 #ifdef HEAPWATCH_NETIF_TRAFFIC_ACTIVE
 
@@ -50,85 +53,101 @@ Slot* find_slot_by_key(const char* key) {
     return nullptr;
 }
 
+Slot* find_slot_by_lwip(struct netif* lwip) {
+    if (lwip == nullptr) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < g_slot_count; ++i) {
+        if (g_slots[i].lwip == lwip) {
+            return &g_slots[i];
+        }
+    }
+    return nullptr;
+}
+
 void copy_key(char* dest, const char* src) {
     strncpy(dest, src, kKeyLen - 1);
     dest[kKeyLen - 1] = '\0';
 }
 
-uint64_t advance_counter(uint64_t accumulated, uint32_t previous, uint32_t now) {
-    if (now >= previous) {
-        return accumulated + static_cast<uint64_t>(now - previous);
+err_t hook_input(struct pbuf* p, struct netif* inp) {
+    Slot* slot = find_slot_by_lwip(inp);
+    if (slot != nullptr && p != nullptr) {
+        slot->rx_bytes += static_cast<uint64_t>(p->tot_len);
     }
-    return accumulated + (0x100000000ULL - static_cast<uint64_t>(previous)) + static_cast<uint64_t>(now);
+    if (slot != nullptr && slot->orig_input != nullptr) {
+        return slot->orig_input(p, inp);
+    }
+    return ERR_IF;
 }
 
-void sample_netif(esp_netif_t* netif) {
+err_t hook_linkoutput(struct netif* netif, struct pbuf* p) {
+    Slot* slot = find_slot_by_lwip(netif);
+    if (slot != nullptr && p != nullptr) {
+        slot->tx_bytes += static_cast<uint64_t>(p->tot_len);
+    }
+    if (slot != nullptr && slot->orig_linkoutput != nullptr) {
+        return slot->orig_linkoutput(netif, p);
+    }
+    return ERR_IF;
+}
+
+Slot* alloc_slot(const char* key, struct netif* lwip) {
+    Slot* slot = find_slot_by_key(key);
+    if (slot != nullptr) {
+        return slot;
+    }
+    if (g_slot_count >= kMaxTrackedKeys) {
+        return nullptr;
+    }
+    slot = &g_slots[g_slot_count++];
+    copy_key(slot->key, key);
+    slot->lwip = lwip;
+    slot->orig_input = nullptr;
+    slot->orig_linkoutput = nullptr;
+    slot->rx_bytes = 0;
+    slot->tx_bytes = 0;
+    slot->hooked = false;
+    return slot;
+}
+
+void hook_esp_netif(esp_netif_t* netif) {
+    if (netif == nullptr) {
+        return;
+    }
     const char* key = esp_netif_get_ifkey(netif);
     if (key == nullptr || key[0] == '\0') {
-        ESP_LOGI(kTag, "sample: netif with empty if_key");
+        return;
+    }
+    auto* lwip = static_cast<struct netif*>(esp_netif_get_netif_impl(netif));
+    if (lwip == nullptr) {
+        return;
+    }
+    if (lwip->input == &hook_input) {
         return;
     }
 
-#if !MIB2_STATS
-    ESP_LOGI(kTag, "sample: key=%s MIB2_STATS=0, skip", key);
-    (void)netif;
-    return;
-#else
-    auto* lwip_netif = static_cast<struct netif*>(esp_netif_get_netif_impl(netif));
-    if (lwip_netif == nullptr) {
-        ESP_LOGI(kTag, "sample: key=%s lwip_impl=null", key);
-        return;
-    }
-
-    Slot* slot = find_slot_by_key(key);
+    Slot* slot = alloc_slot(key, lwip);
     if (slot == nullptr) {
-        if (g_slot_count >= kMaxTrackedKeys) {
-            ESP_LOGI(kTag, "sample: key=%s slot table full (%u)", key,
-                     static_cast<unsigned>(g_slot_count));
-            return;
-        }
-        slot = &g_slots[g_slot_count++];
-        copy_key(slot->key, key);
-        slot->rx_bytes = 0;
-        slot->tx_bytes = 0;
-        slot->last_rx32 = 0;
-        slot->last_tx32 = 0;
-        slot->primed = false;
-    }
-
-    const uint32_t now_rx = lwip_netif->mib2_counters.ifinoctets;
-    const uint32_t now_tx = lwip_netif->mib2_counters.ifoutoctets;
-    if (!slot->primed) {
-        slot->last_rx32 = now_rx;
-        slot->last_tx32 = now_tx;
-        slot->rx_bytes = now_rx;
-        slot->tx_bytes = now_tx;
-        slot->primed = true;
-        ESP_LOGI(kTag, "sample PRIME key=%s mib2_rx=%" PRIu32 " mib2_tx=%" PRIu32
-                       " acc_rx=%" PRIu64 " acc_tx=%" PRIu64,
-                 key, now_rx, now_tx, slot->rx_bytes, slot->tx_bytes);
         return;
     }
-
-    slot->rx_bytes = advance_counter(slot->rx_bytes, slot->last_rx32, now_rx);
-    slot->tx_bytes = advance_counter(slot->tx_bytes, slot->last_tx32, now_tx);
-    slot->last_rx32 = now_rx;
-    slot->last_tx32 = now_tx;
-    ESP_LOGI(kTag, "sample key=%s mib2_rx=%" PRIu32 " mib2_tx=%" PRIu32
-                   " acc_rx=%" PRIu64 " acc_tx=%" PRIu64,
-             key, now_rx, now_tx, slot->rx_bytes, slot->tx_bytes);
-#endif
+    slot->lwip = lwip;
+    slot->orig_input = lwip->input;
+    slot->orig_linkoutput = lwip->linkoutput;
+    lwip->input = &hook_input;
+    if (lwip->linkoutput != nullptr) {
+        lwip->linkoutput = &hook_linkoutput;
+    }
+    slot->hooked = true;
+    ESP_LOGI(kTag, "hooked if_key=%s input=%d linkoutput=%d", key, slot->orig_input != nullptr,
+             slot->orig_linkoutput != nullptr);
 }
 
-void sample_all() {
-    size_t walked = 0;
-    for (esp_netif_t* netif = esp_netif_next(nullptr); netif != nullptr;
-         netif = esp_netif_next(netif)) {
-        ++walked;
-        sample_netif(netif);
+void hook_known_netifs() {
+    for (const char* key : kKnownIfKeys) {
+        hook_esp_netif(esp_netif_get_handle_from_ifkey(key));
     }
-    ESP_LOGI(kTag, "sample_all walked=%u slots=%u", static_cast<unsigned>(walked),
-             static_cast<unsigned>(g_slot_count));
+    hook_esp_netif(esp_netif_get_default_netif());
 }
 
 #endif  // HEAPWATCH_NETIF_TRAFFIC_ACTIVE
@@ -141,23 +160,17 @@ void start() {
         return;
     }
     g_started = true;
-    ESP_LOGI(kTag, "start: NETIF_TRAFFIC compiled in, MIB2_STATS=%d",
-#if MIB2_STATS
-             1
+    hook_known_netifs();
+    ESP_LOGI(kTag, "start: input/linkoutput hooks (slots=%u)", static_cast<unsigned>(g_slot_count));
 #else
-             0
-#endif
-    );
-    sample_all();
-#else
-    ESP_LOGI(kTag, "start: NETIF_TRAFFIC forced off (stability)");
+    ESP_LOGI(kTag, "start: NETIF_TRAFFIC compiled OUT");
     (void)g_started;
 #endif
 }
 
 void ensureTracking() {
 #ifdef HEAPWATCH_NETIF_TRAFFIC_ACTIVE
-    sample_all();
+    hook_known_netifs();
 #else
     (void)g_slot_count;
 #endif
@@ -169,49 +182,38 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
     }
 
 #ifdef HEAPWATCH_NETIF_TRAFFIC_ACTIVE
-    sample_all();
+    hook_known_netifs();
     size_t pos = 0;
     for (size_t i = 0; i < g_slot_count && pos < out_len; ++i) {
         const Slot& slot = g_slots[i];
+        if (!slot.hooked) {
+            continue;
+        }
+        char slug_seg[kKeyLen];
+        if (!heapwatch::normalizeDynamicSegment(slot.key, slug_seg, sizeof(slug_seg))) {
+            continue;
+        }
         int written = 0;
         if (json) {
-            char slug_seg[kKeyLen];
-            if (!heapwatch::normalizeDynamicSegment(slot.key, slug_seg, sizeof(slug_seg))) {
-                ESP_LOGI(kTag, "param skip key=%s (segment normalize failed)", slot.key);
-                continue;
-            }
             written = snprintf(out + pos, out_len - pos,
                                ",\"dynamic.net.%s.rx_bytes\":%" PRIu64 ",\"dynamic.net.%s.tx_bytes\":%" PRIu64,
                                slug_seg, slot.rx_bytes, slug_seg, slot.tx_bytes);
-            ESP_LOGI(kTag, "param json key=%s slug=%s rx=%" PRIu64 " tx=%" PRIu64 " written=%d",
-                     slot.key, slug_seg, slot.rx_bytes, slot.tx_bytes, written);
         } else {
-            char slug_seg[kKeyLen];
-            if (!heapwatch::normalizeDynamicSegment(slot.key, slug_seg, sizeof(slug_seg))) {
-                ESP_LOGI(kTag, "param skip key=%s (segment normalize failed)", slot.key);
-                continue;
-            }
             written = snprintf(out + pos, out_len - pos,
                                "%sdynamic.net.%s.rx_bytes=%" PRIu64 "%sdynamic.net.%s.tx_bytes=%" PRIu64,
                                HEAPWATCH_FLAT_DELIMITER, slug_seg, slot.rx_bytes,
                                HEAPWATCH_FLAT_DELIMITER, slug_seg, slot.tx_bytes);
-            ESP_LOGI(kTag, "param flat key=%s slug=%s rx=%" PRIu64 " tx=%" PRIu64 " written=%d",
-                     slot.key, slug_seg, slot.rx_bytes, slot.tx_bytes, written);
         }
         if (written < 0 || static_cast<size_t>(written) >= out_len - pos) {
-            ESP_LOGI(kTag, "param buffer full pos=%u out_len=%u", static_cast<unsigned>(pos),
-                     static_cast<unsigned>(out_len));
             out[pos] = '\0';
             break;
         }
         pos += static_cast<size_t>(written);
+        ESP_LOGI(kTag, "param %s rx=%" PRIu64 " tx=%" PRIu64, slug_seg, slot.rx_bytes, slot.tx_bytes);
     }
-    ESP_LOGI(kTag, "param append slots=%u bytes=%u", static_cast<unsigned>(g_slot_count),
-             static_cast<unsigned>(pos));
     return pos;
 #else
     (void)json;
-    ESP_LOGI(kTag, "param append: NETIF_TRAFFIC compiled OUT");
     if (out_len > 0) {
         out[0] = '\0';
     }
@@ -224,12 +226,10 @@ bool appendRxTxJsonFields(char* out, size_t out_len, size_t* offset, const char*
     if (out == nullptr || offset == nullptr || if_key == nullptr) {
         return false;
     }
-    sample_all();
+    hook_known_netifs();
     const Slot* slot = find_slot_by_key(if_key);
     const uint64_t rx = slot != nullptr ? slot->rx_bytes : 0;
     const uint64_t tx = slot != nullptr ? slot->tx_bytes : 0;
-    ESP_LOGI(kTag, "network json if_key=%s slot=%s rx=%" PRIu64 " tx=%" PRIu64,
-             if_key, slot != nullptr ? "yes" : "NO", rx, tx);
     if (*offset >= out_len) {
         return false;
     }
@@ -242,8 +242,6 @@ bool appendRxTxJsonFields(char* out, size_t out_len, size_t* offset, const char*
     *offset += static_cast<size_t>(written);
     return true;
 #else
-    ESP_LOGI(kTag, "network json: NETIF_TRAFFIC compiled OUT if_key=%s",
-             if_key != nullptr ? if_key : "(null)");
     (void)out;
     (void)out_len;
     (void)offset;

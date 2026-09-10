@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Per-netif monotonic RX/TX byte counters (`dynamic.net.{seg}.rx_bytes` / `.tx_bytes` on `/parameter`, `rx_bytes` / `tx_bytes` on `/network`), sampled from LWIP MIB2 octet counters.
+- Per-netif monotonic RX/TX byte counters (`dynamic.net.{seg}.rx_bytes` / `.tx_bytes` on `/parameter`, `rx_bytes` / `tx_bytes` on `/network`) via lwIP `input`/`linkoutput` hooks (not MIB2).
 
 ### Fixed
-- Disabled netif RX/TX sampling and removed the `MIB2_STATS=1` lwip compile override after a LoadProhibited crash in `esp_netif_next_unsafe` (~7s boot loop).
+- Disabled the `MIB2_STATS=1` lwip compile override after a LoadProhibited crash in `esp_netif_next_unsafe` (~7s boot loop). Traffic code does not walk `esp_netif_next`.
