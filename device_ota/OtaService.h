@@ -4,7 +4,7 @@
 
 namespace heapwatch::device_ota {
 
-constexpr const char* kLogTag = "hw_ota";
+constexpr const char* kLogTag = "HwOta";
 
 void init();
 

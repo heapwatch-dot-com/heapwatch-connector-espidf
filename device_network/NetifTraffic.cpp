@@ -18,7 +18,7 @@
 namespace heapwatch::netif_traffic {
 namespace {
 
-constexpr const char* kTag = "HwNetifTraffic";
+constexpr const char* kTag = "HwNet";
 constexpr size_t kMaxTrackedKeys = 8;
 constexpr size_t kKeyLen = 32;
 
@@ -209,7 +209,6 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
             break;
         }
         pos += static_cast<size_t>(written);
-        ESP_LOGI(kTag, "param %s rx=%" PRIu64 " tx=%" PRIu64, slug_seg, slot.rx_bytes, slot.tx_bytes);
     }
     return pos;
 #else

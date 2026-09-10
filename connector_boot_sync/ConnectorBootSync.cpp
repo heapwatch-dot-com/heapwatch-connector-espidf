@@ -14,7 +14,7 @@ namespace heapwatch::connector_boot_sync {
 
 namespace {
 
-constexpr char TAG[] = "BootSync";
+constexpr char TAG[] = "HwLife";
 bool g_boot_static_sync_done = false;
 
 }  // namespace

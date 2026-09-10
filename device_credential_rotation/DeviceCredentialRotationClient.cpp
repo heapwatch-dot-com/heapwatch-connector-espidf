@@ -11,7 +11,7 @@
 namespace heapwatch::device_credential_rotation {
 
 namespace {
-constexpr char TAG[] = "HeapwatchRotate";
+constexpr char TAG[] = "HwEnroll";
 constexpr size_t HTTP_RESPONSE_MAX = 2048;
 constexpr size_t HTTP_URL_MAX = 512;
 

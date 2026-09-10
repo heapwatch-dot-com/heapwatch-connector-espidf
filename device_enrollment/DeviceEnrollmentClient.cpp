@@ -17,7 +17,7 @@
 namespace heapwatch::device_enrollment {
 
 namespace {
-constexpr char TAG[] = "HeapwatchEnroll";
+constexpr char TAG[] = "HwEnroll";
 constexpr size_t HTTP_RESPONSE_MAX = 2048;
 constexpr size_t HTTP_URL_MAX = 512;
 constexpr size_t HTTP_BODY_MAX = 768;

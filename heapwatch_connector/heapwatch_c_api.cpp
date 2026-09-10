@@ -39,7 +39,7 @@
 
 namespace {
 
-constexpr char kTag[] = "heapwatch_c_api";
+constexpr char kTag[] = "HwLife";
 
 /** Host sticky flag — ORed with OTA-in-progress in heapwatch_keep_running(). */
 bool g_host_keep_running = false;

@@ -21,7 +21,7 @@ namespace heapwatch::connector_lifecycle {
 
 namespace {
 
-constexpr char kTag[] = "heapwatch_lifecycle";
+constexpr char kTag[] = "HwLife";
 
 volatile heapwatch_phase_t g_phase = HEAPWATCH_PHASE_STARTING;
 volatile bool g_initialize_called = false;

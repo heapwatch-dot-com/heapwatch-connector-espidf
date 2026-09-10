@@ -23,7 +23,7 @@
 namespace heapwatch::device_radio {
 namespace {
 
-constexpr const char* kTag = "HwBleNim";
+constexpr const char* kTag = "HwBle";
 
 NimBleProvider* g_provider = nullptr;
 bool g_host_synced = false;

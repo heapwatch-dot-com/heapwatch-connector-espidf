@@ -14,7 +14,7 @@ namespace heapwatch::device_command {
 
 namespace {
 
-constexpr char TAG[] = "CmdCatalog";
+constexpr char TAG[] = "HwCmd";
 constexpr char kChannelCommandCatalog[] = "command_catalog";
 constexpr uint32_t kStreamConnectTimeoutMs = 30000;
 

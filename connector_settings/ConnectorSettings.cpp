@@ -14,7 +14,7 @@ namespace heapwatch::connector_settings {
 
 namespace {
 
-constexpr char TAG[] = "ConnSettings";
+constexpr char TAG[] = "HwLife";
 constexpr char NVS_NAMESPACE[] = "heapwatch";
 constexpr char MASKED_SECRET[] = "••••••";
 

@@ -27,7 +27,7 @@ namespace heapwatch::device_command {
 
 namespace {
 
-const char* TAG = "DeviceCommand";
+const char* TAG = "HwCmd";
 
 constexpr size_t kSeenCommandIdsCapacity = 16;
 char g_seen_command_ids[kSeenCommandIdsCapacity][27];

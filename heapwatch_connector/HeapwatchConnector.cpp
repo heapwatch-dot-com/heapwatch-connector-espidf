@@ -46,7 +46,7 @@
 #include "heapwatch_freertos_alloc.h"
 
 namespace {
-static constexpr char TAG[] = "HeapwatchConnector";
+static constexpr char TAG[] = "HwMqtt";
 /** OTA progress + FW_UPDATE events: block on full queue instead of dropping. */
 static constexpr TickType_t kOtaMqttQueueWait = pdMS_TO_TICKS(1000);
 /** Boot-critical large/tiny publishes: short block instead of silent drop. */
@@ -169,7 +169,7 @@ bool HeapwatchConnector::ensureInfrastructure() {
     g_small_queue = heapwatch_queue_create(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
     g_large_queue = heapwatch_queue_create(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
     if (g_tiny_queue == nullptr || g_small_queue == nullptr || g_large_queue == nullptr) {
-        ESP_LOGE("HeapwatchConnector",
+        ESP_LOGE(TAG,
                  "Failed to create message queues (psram=%d, free_heap=%u, largest_block=%u)",
                  HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM,
                  static_cast<unsigned>(esp_get_free_heap_size()),
@@ -181,7 +181,7 @@ bool HeapwatchConnector::ensureInfrastructure() {
     g_outbound_sem = xSemaphoreCreateCounting(
         HEAPWATCH_TINY_QUEUE_LEN + HEAPWATCH_SMALL_QUEUE_LEN + HEAPWATCH_LARGE_QUEUE_LEN, 0);
     if (g_outbound_sem == nullptr) {
-        ESP_LOGE("HeapwatchConnector", "Failed to create outbound semaphore");
+        ESP_LOGE(TAG, "Failed to create outbound semaphore");
         destroy_message_queues();
         return false;
     }
@@ -189,7 +189,7 @@ bool HeapwatchConnector::ensureInfrastructure() {
     g_coredump_queue =
         heapwatch_queue_create(HEAPWATCH_COREDUMP_QUEUE_LEN, sizeof(CoreDumpPayload*));
     if (g_coredump_queue == nullptr) {
-        ESP_LOGE("HeapwatchConnector", "Failed to create core dump queue");
+        ESP_LOGE(TAG, "Failed to create core dump queue");
         destroy_message_queues();
         return false;
     }
@@ -197,7 +197,7 @@ bool HeapwatchConnector::ensureInfrastructure() {
     if (g_publish_mutex == nullptr) {
         g_publish_mutex = xSemaphoreCreateMutex();
         if (g_publish_mutex == nullptr) {
-            ESP_LOGE("HeapwatchConnector", "Failed to create publish mutex");
+            ESP_LOGE(TAG, "Failed to create publish mutex");
             destroy_message_queues();
             heapwatch_queue_delete(g_coredump_queue);
             g_coredump_queue = nullptr;

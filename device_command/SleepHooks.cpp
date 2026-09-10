@@ -9,7 +9,7 @@ namespace heapwatch::sleep_hooks {
 
 namespace {
 
-constexpr char TAG[] = "SleepHooks";
+constexpr char TAG[] = "HwCmd";
 constexpr size_t kMaxHooks = 4;
 
 struct HookSlot {

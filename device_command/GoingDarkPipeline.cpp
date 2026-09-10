@@ -27,7 +27,7 @@ namespace {
 using heapwatch::device_command::publishCommandAck;
 using heapwatch::device_command::publishCommandResponse;
 
-constexpr char TAG[] = "GoingDark";
+constexpr char TAG[] = "HwCmd";
 constexpr uint32_t kEventPublishGraceMs = 1500;
 constexpr size_t kCommandIdMax = 64;
 constexpr size_t kSuffixMax = 64;

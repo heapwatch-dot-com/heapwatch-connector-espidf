@@ -30,7 +30,7 @@ char g_runtime_stream_api_key[HEAPWATCH_MAX_STREAM_API_KEY_LEN] = {};
 
 namespace {
 
-constexpr char TAG[] = "StreamIngress";
+constexpr char TAG[] = "HwStream";
 constexpr char kChannelLogs[] = "logs";
 constexpr char kChannelFileBrowser[] = "file_browser";
 constexpr char kChannelBleScan[] = "ble_scan";

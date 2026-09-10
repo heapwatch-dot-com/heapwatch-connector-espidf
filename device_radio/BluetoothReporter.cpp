@@ -23,7 +23,7 @@ void emitBleEvent(int event_id, const char* detail, const char* peer_addr);
 
 namespace {
 
-constexpr const char* kTag = "HwBleReport";
+constexpr const char* kTag = "HwBle";
 constexpr size_t kJsonLineMax = 512;
 constexpr size_t kCommandIdMax = 64;
 

@@ -19,7 +19,7 @@ namespace heapwatch::device_command {
 
 namespace {
 
-constexpr char TAG[] = "CommandWorker";
+constexpr char TAG[] = "HwCmd";
 constexpr size_t kInboundQueueDepth = 8;
 constexpr size_t kTopicMax = 160;
 /** Matches CONFIG_MQTT_BUFFER_SIZE on client firmware projects. */

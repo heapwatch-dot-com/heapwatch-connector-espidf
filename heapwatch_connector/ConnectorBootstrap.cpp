@@ -23,6 +23,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <strings.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -47,7 +48,7 @@
 
 namespace heapwatch::connector_bootstrap {
 
-constexpr char kTag[] = "connector_bootstrap";
+constexpr char kTag[] = "HwLife";
 
 constexpr EventBits_t kWifiConnectedBit = BIT0;
 constexpr EventBits_t kWifiFailBit = BIT1;
@@ -143,6 +144,53 @@ void stripAnsiSequences(const char* input, char* output, size_t output_len) {
         output[out_idx++] = input[i];
     }
     output[out_idx] = '\0';
+}
+
+void redactAuthorizationBearer(char* line, size_t cap) {
+    if (line == nullptr || cap == 0) {
+        return;
+    }
+
+    static constexpr char kRedacted[] = "(REDACTED)";
+    const size_t rlen = sizeof(kRedacted) - 1;
+    char* p = line;
+    while (*p != '\0') {
+        if (strncasecmp(p, "authorization:", 14) != 0) {
+            ++p;
+            continue;
+        }
+        p += 14;
+        while (*p == ' ' || *p == '\t') {
+            ++p;
+        }
+        if (strncasecmp(p, "bearer", 6) != 0) {
+            continue;
+        }
+        const char after = p[6];
+        if (after != ' ' && after != '\t' && after != '\0') {
+            continue;
+        }
+        p += 6;
+        while (*p == ' ' || *p == '\t') {
+            ++p;
+        }
+        if (*p == '\0') {
+            return;
+        }
+        char* token_start = p;
+        while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+            ++p;
+        }
+        const size_t used = static_cast<size_t>(token_start - line);
+        const size_t tail_len = std::strlen(p);
+        if (used + rlen + tail_len + 1 > cap) {
+            token_start[0] = '\0';
+            return;
+        }
+        std::memmove(token_start + rlen, p, tail_len + 1);
+        std::memcpy(token_start, kRedacted, rlen);
+        p = token_start + rlen;
+    }
 }
 
 const char* skipAnsiPrefix(const char* text) {
@@ -338,6 +386,7 @@ void logForwardTask(void* arg) {
         while (popLogRingLine(&log_line)) {
             char sanitized_line[kLogLineMaxLen] = {};
             stripAnsiSequences(log_line.text, sanitized_line, sizeof(sanitized_line));
+            redactAuthorizationBearer(sanitized_line, sizeof(sanitized_line));
 
             const HeapwatchConnectorSeverity severity = parseEspLogSeverity(sanitized_line);
             if (!shouldRelayLogSeverity(severity)) {

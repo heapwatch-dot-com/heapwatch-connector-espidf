@@ -9,7 +9,7 @@
 namespace heapwatch::device_credentials {
 
 namespace {
-constexpr char TAG[] = "HeapwatchCreds";
+constexpr char TAG[] = "HwEnroll";
 constexpr char NVS_NAMESPACE[] = "heapwatch";
 constexpr char KEY_PROVISIONED[] = "provisioned";
 constexpr char KEY_TENANT_SLUG[] = "tenant_slug";

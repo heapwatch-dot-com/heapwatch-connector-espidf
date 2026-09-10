@@ -38,6 +38,10 @@
 
 #include "freertos/task.h"
 
+namespace {
+constexpr char TAG[] = "HwMqtt";
+}
+
 /* ============================================================================
    Static Member Definitions
    =========================================================================== */
@@ -163,22 +167,22 @@ static esp_mqtt_client_handle_t create_mqtt_client(esp_mqtt_client_config_t& con
     config.session.protocol_ver = MQTT_PROTOCOL_V_5;
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&config);
     if (client != nullptr) {
-        ESP_LOGI("HeapwatchDispatcher", "MQTT client created (protocol v5)");
+        ESP_LOGI(TAG, "MQTT client created (protocol v5)");
         return client;
     }
-    ESP_LOGW("HeapwatchDispatcher", "MQTT v5 init failed, trying v3.1.1");
+    ESP_LOGW(TAG, "MQTT v5 init failed, trying v3.1.1");
 #endif
 
 #if CONFIG_MQTT_PROTOCOL_311
     config.session.protocol_ver = MQTT_PROTOCOL_V_3_1_1;
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&config);
     if (client != nullptr) {
-        ESP_LOGI("HeapwatchDispatcher", "MQTT client created (protocol v3.1.1)");
+        ESP_LOGI(TAG, "MQTT client created (protocol v3.1.1)");
         return client;
     }
-    ESP_LOGE("HeapwatchDispatcher", "MQTT v3.1.1 client init failed");
+    ESP_LOGE(TAG, "MQTT v3.1.1 client init failed");
 #else
-    ESP_LOGE("HeapwatchDispatcher",
+    ESP_LOGE(TAG,
              "No MQTT protocol enabled in sdkconfig (enable CONFIG_MQTT_PROTOCOL_5 and/or "
              "CONFIG_MQTT_PROTOCOL_311)");
 #endif
@@ -246,7 +250,7 @@ static void subscribe_command_topics() {
     const char* tenant = heapwatch_get_tenant_slug();
     std::snprintf(g_command_topic, sizeof(g_command_topic), "%s/command/device/%s/#", tenant, uid);
     esp_mqtt_client_subscribe(g_mqtt_client, g_command_topic, 1);
-    ESP_LOGI("HeapwatchDispatcher", "Subscribed to %s", g_command_topic);
+    ESP_LOGI(TAG, "Subscribed to %s", g_command_topic);
 }
 
 static void mqtt_event_handler(void*, esp_event_base_t, int32_t event_id, void* event_data) {
@@ -262,7 +266,7 @@ static void mqtt_event_handler(void*, esp_event_base_t, int32_t event_id, void* 
 
         const std::string topic(event->topic, static_cast<size_t>(event->topic_len));
         if (topic.find("credential_rotation_due") != std::string::npos) {
-            ESP_LOGI("HeapwatchDispatcher", "Credential rotation due — queueing for hw_command");
+            ESP_LOGI(TAG, "Credential rotation due — queueing for hw_command");
             (void)heapwatch::device_command::enqueueCredentialRotation();
         } else if (topic.find("/command/device/") != std::string::npos) {
             (void)heapwatch::device_command::enqueueMqttCommand(
@@ -309,7 +313,7 @@ static void service_claimed_identities_post_if_due() {
 void heapwatch_dispatch_task(void* arg) {
     (void)arg;  // Unused parameter
     
-    ESP_LOGI("HeapwatchDispatcher", "MQTT dispatcher thread started");
+    ESP_LOGI(TAG, "MQTT dispatcher thread started");
     bool dispatcher_prev_mqtt_connected = false;
 
     while (true) {
@@ -338,7 +342,7 @@ void heapwatch_dispatch_task(void* arg) {
         }
         
         if (!g_mqtt_client) {
-            ESP_LOGI("HeapwatchDispatcher",
+            ESP_LOGI(TAG,
                      "heap before mqtt start: free=%u largest=%u internal_free=%u internal_largest=%u",
                      static_cast<unsigned>(esp_get_free_heap_size()),
                      static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)),
@@ -370,7 +374,7 @@ void heapwatch_dispatch_task(void* arg) {
 
             g_mqtt_client = create_mqtt_client(config);
             if (!g_mqtt_client) {
-                ESP_LOGE("HeapwatchDispatcher", "Failed to create MQTT client");
+                ESP_LOGE(TAG, "Failed to create MQTT client");
                 vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));
                 continue;
             }
@@ -379,14 +383,14 @@ void heapwatch_dispatch_task(void* arg) {
             esp_mqtt_client_register_event(g_mqtt_client, MQTT_EVENT_ANY, mqtt_event_handler,
                                            nullptr);
             if (esp_mqtt_client_start(g_mqtt_client) != ESP_OK) {
-                ESP_LOGE("HeapwatchDispatcher", "Failed to start MQTT client");
+                ESP_LOGE(TAG, "Failed to start MQTT client");
                 vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));
                 continue;
             }
 
             HeapwatchConnector::getInstance().ensureMetricsCollectorThreadStarted();
 
-            ESP_LOGI("HeapwatchDispatcher", "MQTT client started (awaiting broker connection)");
+            ESP_LOGI(TAG, "MQTT client started (awaiting broker connection)");
         }
 
         // -----------------------------------------------------------------------
@@ -404,7 +408,7 @@ void heapwatch_dispatch_task(void* arg) {
         if (!dispatcher_prev_mqtt_connected && !g_mqtt_shutting_down) {
             subscribe_command_topics();
             heapwatch::connector_boot_sync::runBootStaticSync();
-            ESP_LOGI("HeapwatchDispatcher", "MQTT connected — draining outbound queues");
+            ESP_LOGI(TAG, "MQTT connected — draining outbound queues");
         }
         dispatcher_prev_mqtt_connected = true;
 
@@ -412,7 +416,7 @@ void heapwatch_dispatch_task(void* arg) {
             const int outbox_bytes = esp_mqtt_client_get_outbox_size(g_mqtt_client);
             if (outbox_bytes <= 0) {
                 if (g_shutdown_action == HeapwatchShutdownAction::Restart) {
-                    ESP_LOGI("HeapwatchDispatcher", "MQTT outbox drained — restarting");
+                    ESP_LOGI(TAG, "MQTT outbox drained — restarting");
                     esp_restart();
                 }
             }
@@ -440,17 +444,17 @@ void heapwatch_dispatch_task(void* arg) {
                                                        core_dump_payload->payload,
                                                        core_dump_payload->payload_len, 0, 0);
             if (result < 0) {
-                ESP_LOGE("HeapwatchDispatcher", "Failed to publish core dump payload: %d", result);
+                ESP_LOGE(TAG, "Failed to publish core dump payload: %d", result);
                 if (xQueueSendToFront(coredump_queue, &core_dump_payload, 0) != pdTRUE) {
                     free(core_dump_payload);
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
             } else {
-                ESP_LOGI("HeapwatchDispatcher", "Published core dump payload (%u bytes)",
+                ESP_LOGI(TAG, "Published core dump payload (%u bytes)",
                          static_cast<unsigned>(core_dump_payload->payload_len));
                 const esp_err_t erase_result = esp_core_dump_image_erase();
                 if (erase_result != ESP_OK) {
-                    ESP_LOGW("HeapwatchDispatcher", "Failed to erase coredump after publish: %s",
+                    ESP_LOGW(TAG, "Failed to erase coredump after publish: %s",
                              esp_err_to_name(erase_result));
                 }
                 free(core_dump_payload);
@@ -468,7 +472,7 @@ void heapwatch_dispatch_task(void* arg) {
             if (g_last_publish_blocked_log_tick == 0 ||
                 now - g_last_publish_blocked_log_tick >= pdMS_TO_TICKS(5000)) {
                 g_last_publish_blocked_log_tick = now;
-                ESP_LOGW("HeapwatchDispatcher",
+                ESP_LOGW(TAG,
                          "publish backpressure: outbox=%d bytes tiny=%u small=%u large=%u",
                          esp_mqtt_client_get_outbox_size(g_mqtt_client),
                          tiny_queue != nullptr
@@ -541,7 +545,7 @@ void heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction action) {
 
     g_shutdown_action = action;
     g_mqtt_shutting_down = true;
-    ESP_LOGI("HeapwatchDispatcher", "Shutdown armed (action=%u) — blocking new MQTT publishes",
+    ESP_LOGI(TAG, "Shutdown armed (action=%u) — blocking new MQTT publishes",
              static_cast<unsigned>(action));
 }
 
@@ -552,7 +556,7 @@ void heapwatch_dispatcher_begin_shutdown(void) {
 void heapwatch_dispatcher_disarm_shutdown(void) {
     g_mqtt_shutting_down = false;
     g_shutdown_action = HeapwatchShutdownAction::Restart;
-    ESP_LOGI("HeapwatchDispatcher", "Shutdown disarmed");
+    ESP_LOGI(TAG, "Shutdown disarmed");
 }
 
 int heapwatch_dispatcher_get_outbox_size(void) {

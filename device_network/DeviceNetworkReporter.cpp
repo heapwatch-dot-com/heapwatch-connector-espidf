@@ -19,7 +19,7 @@
 namespace heapwatch::device_network {
 namespace {
 
-constexpr const char* kTag = "HwNetif";
+constexpr const char* kTag = "HwNet";
 constexpr size_t kMaxTrackedKeys = 8;
 constexpr size_t kKeyLen = 32;
 

@@ -40,6 +40,7 @@
 namespace heapwatch::metrics_collector {
 
 namespace {
+constexpr char kTag[] = "HwMetrics";
 uint64_t g_start_time_us = 0;
 char g_payload_buf[HEAPWATCH_MAX_PAYLOAD_SIZE];
 MqttMessage g_mqtt_enqueue_msg;
@@ -101,7 +102,7 @@ void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     QueueHandle_t queue = heapwatch_get_queue();
     if (queue != nullptr) {
         if (!heapwatch_outbound_send(queue, &g_mqtt_enqueue_msg, 0)) {
-            ESP_LOGW("MetricsCollector", "large MQTT queue full — dropped %s payload",
+            ESP_LOGW(kTag, "large MQTT queue full — dropped %s payload",
                      type == MQTT_MESSAGE_TYPE_TASKS ? "TASKS" : "PARAMETER");
         }
     }
@@ -534,7 +535,7 @@ void collectTask(void* arg) {
         // HEAP1: default-off proactive corruption check — heap_caps_check_integrity() walks
         // the full heap, so this has a real CPU cost and stays opt-in.
         if (!heap_caps_check_integrity(MALLOC_CAP_DEFAULT, true)) {
-            ESP_LOGE("MetricsCollector", "Heap corruption detected by heap_caps_check_integrity()");
+            ESP_LOGE(kTag, "Heap corruption detected by heap_caps_check_integrity()");
             HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
         }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */

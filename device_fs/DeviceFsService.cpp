@@ -27,7 +27,7 @@ namespace heapwatch::device_fs {
 
 namespace {
 
-constexpr char TAG[] = "DeviceFs";
+constexpr char TAG[] = "HwFs";
 
 constexpr char kSpiffsMount[] = "/storage";
 constexpr char kSpiffsLabel[] = "storage";

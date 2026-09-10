@@ -31,7 +31,7 @@
 namespace heapwatch::storage_stats {
 
 namespace {
-constexpr char kTag[] = "StorageStats";
+constexpr char kTag[] = "HwStorage";
 constexpr char kSpiffsPartitionLabel[] = "storage";
 constexpr char kSpiffsMountPoint[] = "/storage";
 

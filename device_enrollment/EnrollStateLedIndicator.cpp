@@ -13,7 +13,7 @@ namespace heapwatch::device_enrollment {
 
 namespace {
 
-constexpr char kTag[] = "EnrollStateLed";
+constexpr char kTag[] = "HwEnroll";
 
 volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::kWifiConnecting;
 

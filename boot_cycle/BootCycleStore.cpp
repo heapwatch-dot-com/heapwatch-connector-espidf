@@ -9,7 +9,7 @@
 namespace heapwatch::boot_cycle {
 
 namespace {
-constexpr char TAG[] = "BootCycleStore";
+constexpr char TAG[] = "HwLife";
 constexpr char NVS_NAMESPACE[] = "heapwatch";
 constexpr char KEY_BOOT_CYCLE[] = "boot_cycle";
 // NVS keys are max 15 chars (NVS_KEY_NAME_MAX_SIZE-1). "last_crash_boot_cycle"

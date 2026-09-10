@@ -16,7 +16,7 @@ namespace heapwatch::device_fs {
 
 namespace {
 
-constexpr char TAG[] = "DeviceFsCmd";
+constexpr char TAG[] = "HwFs";
 
 constexpr size_t kWorkQueueDepth = 4;
 constexpr TickType_t kUploadArmTimeoutTicks = pdMS_TO_TICKS(5000);
