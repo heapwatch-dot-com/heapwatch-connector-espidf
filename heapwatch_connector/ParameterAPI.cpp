@@ -19,74 +19,58 @@
 #include <cstring>
 
 #include "HeapwatchConnector.h"
+#include "DynamicParameterSegment.h"
 
 namespace heapwatch::parameter_api {
 
 namespace {
 
-// Backend auto-provisioning (mirroring TaskParameterProvisioningService) keys
-// off the normalized source name embedded in the slug -- lowercase, safe
-// characters only. Client-supplied names are sanitized defensively here so a
-// stray '.'/space in e.g. "Backup Battery" can't corrupt the slug's own
-// `power.{name}.mv` dot-delimited structure.
-void normalize_source_name(const char* source_name, char* out, size_t out_size) {
-    if (source_name == nullptr || out == nullptr || out_size == 0) {
-        if (out != nullptr && out_size > 0) {
+void build_power_slug(const char* source_name, const char* field, char* out, size_t out_size) {
+    char normalized[32];
+    if (!heapwatch::normalizeDynamicSegment(source_name, normalized, sizeof(normalized))) {
+        if (out_size > 0) {
             out[0] = '\0';
         }
         return;
     }
-    size_t out_idx = 0;
-    for (size_t i = 0; source_name[i] != '\0' && out_idx + 1 < out_size; ++i) {
-        const char c = source_name[i];
-        const bool is_lower = c >= 'a' && c <= 'z';
-        const bool is_upper = c >= 'A' && c <= 'Z';
-        const bool is_digit = c >= '0' && c <= '9';
-        if (is_lower || is_digit) {
-            out[out_idx++] = c;
-        } else if (is_upper) {
-            out[out_idx++] = static_cast<char>(c - 'A' + 'a');
-        } else if (c == '_' || c == '-') {
-            out[out_idx++] = '_';
-        }
-        // Any other character (space, '.', etc.) is dropped rather than
-        // mapped to '_' -- avoids "Backup Battery"/"backup.battery" colliding
-        // on the same normalized slug in a confusing way.
-    }
-    out[out_idx] = '\0';
-}
-
-void build_power_slug(const char* source_name, const char* field, char* out, size_t out_size) {
-    char normalized[32];
-    normalize_source_name(source_name, normalized, sizeof(normalized));
-    snprintf(out, out_size, "power.%s.%s", normalized, field);
+    snprintf(out, out_size, "dynamic.power.%s.%s", normalized, field);
 }
 
 }  // namespace
 
 void updatePowerMv(const char* source_name, int64_t mv) {
-    char slug[48];
+    char slug[80];
     build_power_slug(source_name, "mv", slug, sizeof(slug));
+    if (slug[0] == '\0') {
+        return;
+    }
     HeapwatchConnector::getInstance().updateParameterInt(slug, mv);
 }
 
 void updatePowerMvRanged(const char* source_name, int64_t mv, int64_t min_mv, int64_t max_mv) {
-    char slug[48];
+    char slug[80];
     build_power_slug(source_name, "mv", slug, sizeof(slug));
+    if (slug[0] == '\0') {
+        return;
+    }
     HeapwatchConnector::getInstance().updateParameterIntRanged(slug, mv, min_mv, max_mv);
 }
 
 void updatePowerPercent(const char* source_name, double percent) {
-    char slug[48];
+    char slug[80];
     build_power_slug(source_name, "percent", slug, sizeof(slug));
+    if (slug[0] == '\0') {
+        return;
+    }
     HeapwatchConnector::getInstance().updateParameterDouble(slug, percent);
 }
 
 void updatePowerState(const char* source_name, heapwatch_power_state_t state) {
-    char slug[48];
+    char slug[80];
     build_power_slug(source_name, "state", slug, sizeof(slug));
-    // PORT1: heapwatch_power_state_t is already Heapwatch-owned (no framework
-    // equivalent to leak), so the raw enum value is fine to forward as-is.
+    if (slug[0] == '\0') {
+        return;
+    }
     HeapwatchConnector::getInstance().updateParameterInt(slug, static_cast<int64_t>(state));
 }
 

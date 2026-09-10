@@ -27,12 +27,14 @@
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/DynamicParameterSegment.h"
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_config.h"
 #include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../connector_settings/ConnectorSettings.h"
 #include "../device_network/DeviceNetworkReporter.h"
+#include "../device_network/NetifTraffic.h"
 #include "../storage_stats/StorageStats.h"
 
 namespace heapwatch::metrics_collector {
@@ -173,8 +175,12 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
                     "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64, tsms, utms);
     for (size_t i = 0; i < g_dirty_task_stack_max_count && pos < HEAPWATCH_MAX_PAYLOAD_SIZE; ++i) {
         const PrevTaskRuntime& row = g_prev_task_runtime[g_dirty_task_stack_idx[i]];
+        char slug_seg[32];
+        if (!heapwatch::normalizeDynamicSegment(row.name, slug_seg, sizeof(slug_seg))) {
+            continue;
+        }
         pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
-                        ",\"task.%s.stack_used_bytes_max\":%" PRIu32, row.name,
+                        ",\"dynamic.task.%s.stack_used_bytes_max\":%" PRIu32, slug_seg,
                         row.stack_total_bytes);
     }
     if (pos < HEAPWATCH_MAX_PAYLOAD_SIZE) {
@@ -488,6 +494,27 @@ void collectTask(void* arg) {
                  HEAPWATCH_FLAT_DELIMITER, static_cast<int>(wifi_rssi_dbm),
                  HEAPWATCH_FLAT_DELIMITER, freertos_ready_tasks_count);
 #endif
+
+        {
+            const size_t len = strnlen(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE);
+            if (len > 0 && len < HEAPWATCH_MAX_PAYLOAD_SIZE) {
+#ifdef HEAPWATCH_USE_JSON_FORMAT
+                if (g_payload_buf[len - 1] == '}') {
+                    g_payload_buf[len - 1] = '\0';
+                    const size_t added = heapwatch::netif_traffic::appendParameterFields(
+                        g_payload_buf + len - 1, HEAPWATCH_MAX_PAYLOAD_SIZE - (len - 1), true);
+                    size_t end = (len - 1) + added;
+                    if (end + 1 < HEAPWATCH_MAX_PAYLOAD_SIZE) {
+                        g_payload_buf[end++] = '}';
+                        g_payload_buf[end] = '\0';
+                    }
+                }
+#else
+                (void)heapwatch::netif_traffic::appendParameterFields(
+                    g_payload_buf + len, HEAPWATCH_MAX_PAYLOAD_SIZE - len, false);
+#endif
+            }
+        }
 
         enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
         enqueue_dirty_task_stack_maxes(tsms, utms);

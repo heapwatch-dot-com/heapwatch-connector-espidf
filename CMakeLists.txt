@@ -32,7 +32,7 @@ set(HEAPWATCH_PRIV_REQUIRES
     driver bootloader_support mqtt esp_wifi esp_event esp_netif nvs_flash lwip esp-tls
     mbedtls efuse app_update fatfs sdmmc espcoredump esp_http_client bt spi_flash)
 
-idf_component_register(
+        idf_component_register(
     SRCS ${HEAPWATCH_CONNECTOR_SRCS}
     INCLUDE_DIRS "." "heapwatch_connector"
     PRIV_REQUIRES ${HEAPWATCH_PRIV_REQUIRES}

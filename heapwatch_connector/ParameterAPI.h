@@ -36,7 +36,7 @@ namespace heapwatch::parameter_api {
  * per-FreeRTOS-task auto-provisioning pattern backend-side (see task_plan.md
  * POW1). `source_name` is conventionally "battery"/"usb"/... but any name is
  * valid (e.g. "solar", "backup_battery") -- it becomes part of the emitted
- * slug (`power.{source_name}.mv` / `.percent` / `.state`).
+ * slug (`dynamic.power.{source_name}.mv` / `.percent` / `.state`).
  */
 void updatePowerMv(const char* source_name, int64_t mv);
 void updatePowerMvRanged(const char* source_name, int64_t mv, int64_t min_mv, int64_t max_mv);

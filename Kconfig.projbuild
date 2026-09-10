@@ -162,6 +162,14 @@ menu "Heapwatch Connector"
                 Collects internal RAM and external PSRAM usages and largest free block intel
                 for fantastic memory and heap fragmentation intelligence.
 
+        config HEAPWATCH_ENABLE_NETIF_TRAFFIC
+            bool "Collect Network Interface Bytes Transmitted/Received"
+            default y
+            select LWIP_STATS
+            help
+                Collects number of bytes received and transmitted for each available
+                network interface like WiFi, modem, ethernet etc.
+
         config HEAPWATCH_ENABLE_OTA
             bool "Enable Heapwatch OTA"
             default y

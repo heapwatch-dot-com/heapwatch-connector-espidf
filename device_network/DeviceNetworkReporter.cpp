@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Heapwatch. All rights reserved.
 
 #include "device_network/DeviceNetworkReporter.h"
+#include "device_network/NetifTraffic.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -199,6 +200,10 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
         }
     }
 
+    if (!heapwatch::netif_traffic::appendRxTxJsonFields(out, out_len, offset, key)) {
+        return false;
+    }
+
     return append(out, out_len, offset, "}");
 }
 
@@ -253,6 +258,11 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
 
 void on_ip_or_wifi_event(void* /*arg*/, esp_event_base_t event_base, int32_t event_id,
                          void* /*event_data*/) {
+#ifdef IP_EVENT_TX_RX
+    if (event_base == IP_EVENT && event_id == IP_EVENT_TX_RX) {
+        return;
+    }
+#endif
     if (event_base == IP_EVENT) {
         switch (event_id) {
             case IP_EVENT_STA_GOT_IP:
@@ -301,6 +311,8 @@ bool buildPayload(char* out, size_t out_len) {
     if (out == nullptr || out_len < 16) {
         return false;
     }
+
+    heapwatch::netif_traffic::ensureTracking();
 
     size_t offset = 0;
     if (!append(out, out_len, &offset, "{\"netifs\":[")) {
@@ -354,6 +366,7 @@ void start() {
                                                              &on_ip_or_wifi_event, nullptr));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_register(
         WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_ip_or_wifi_event, nullptr));
+    heapwatch::netif_traffic::start();
     ESP_LOGI(kTag, "Network reporter started");
 }
 
