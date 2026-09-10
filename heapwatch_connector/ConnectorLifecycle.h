@@ -12,6 +12,9 @@ heapwatch_phase_t getPhase();
 /** Idempotent. Returns immediately; bootstrap runs on a background task. */
 esp_err_t initialize();
 
+/** Stop all connector tasks and hooks so initialize() can be called again. */
+void deinitialize();
+
 bool activateConnectorFromCredentials(const connector_bootstrap::BootCredentials& creds);
 
 }  // namespace heapwatch::connector_lifecycle

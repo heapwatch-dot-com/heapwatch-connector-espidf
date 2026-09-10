@@ -15,11 +15,15 @@ void setStreamApiKey(const char* stream_api_key);
 /** Initialize stream ingress (mutex/queue only; worker starts on first TCP need). */
 void init();
 
+void shutdown();
+
 /** Request opening a mux TCP stream to backend-stream-ingress (async). Enables log capture. */
 void requestOpen();
 
 /** Request closing the active stream connection and log capture. */
 void requestClose();
+
+bool isShuttingDown();
 
 /**
  * Lazily request a shared ingress TCP session (Console + file browser).

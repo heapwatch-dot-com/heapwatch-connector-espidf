@@ -370,4 +370,14 @@ void start() {
     ESP_LOGI(kTag, "Network reporter started");
 }
 
+void stop() {
+    if (!g_started) {
+        return;
+    }
+    (void)esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &on_ip_or_wifi_event);
+    (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &on_ip_or_wifi_event);
+    (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_ip_or_wifi_event);
+    g_started = false;
+}
+
 }  // namespace heapwatch::device_network

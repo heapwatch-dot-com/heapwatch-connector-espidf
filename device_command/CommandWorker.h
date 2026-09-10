@@ -8,6 +8,8 @@ namespace heapwatch::device_command {
 /** Create hw_command task + inbound queue (idempotent). */
 void initCommandWorker();
 
+void shutdownCommandWorker();
+
 /**
  * Enqueue an MQTT command for hw_command (non-blocking).
  * Returns false when oversize or queue full.

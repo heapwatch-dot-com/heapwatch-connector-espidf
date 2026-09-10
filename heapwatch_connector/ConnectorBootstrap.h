@@ -82,6 +82,12 @@ void installLogRelayHookIfEnabled();
  */
 void startLogRelayTaskIfEnabled();
 
+void stopLogRelay();
+
+void stopManagedWifi();
+
+void stopTimeSyncIfManaged();
+
 /** Fill-null-only backfill of claimed MAC / UID128 for provisioned devices (once per boot). */
 void syncClaimedIdentitiesIfProvisioned();
 

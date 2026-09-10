@@ -16,4 +16,6 @@ namespace heapwatch::connector_boot_sync {
 /** Run deterministic boot one-offs (specs, bounds, network, command catalog request, …). */
 void runBootStaticSync();
 
+void resetBootStaticSync();
+
 }  // namespace heapwatch::connector_boot_sync

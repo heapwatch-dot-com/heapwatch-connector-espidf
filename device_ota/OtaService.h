@@ -8,6 +8,8 @@ constexpr const char* kLogTag = "HwOta";
 
 void init();
 
+void shutdown();
+
 /**
  * Handle MQTT command suffixes: ota/start, ota/abort, ota/rollback, ota/confirm.
  * Returns true when suffix starts with "ota/".

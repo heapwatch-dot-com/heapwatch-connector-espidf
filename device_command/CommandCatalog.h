@@ -20,4 +20,6 @@ bool commandCatalogUploadedThisBoot();
 /** Pop a pending upload request (called from hw_streaming). Returns false when none pending. */
 bool consumeCommandCatalogUploadRequest(bool* force_out);
 
+void resetCommandCatalogBootFlags();
+
 }  // namespace heapwatch::device_command

@@ -67,6 +67,8 @@ enum class Phase : uint8_t {
 SemaphoreHandle_t g_mutex = nullptr;
 TaskHandle_t g_ota_task = nullptr;
 volatile bool g_abort_requested = false;
+volatile bool g_stop_requested = false;
+volatile bool g_task_exited = true;
 volatile Phase g_phase = Phase::Idle;
 OtaJob g_job = {};
 
@@ -543,14 +545,24 @@ void runOtaJob(const OtaJob& job) {
 }
 
 void otaWorkerTask(void* /*arg*/) {
-    while (true) {
+    while (!g_stop_requested) {
         // Block until hw_command arms a job (task notification — lighter than a binary
-        // semaphore and cannot accumulate stray wake counts).
+        // semaphore and cannot accumulate stray wake counts). shutdown() notifies too,
+        // so this stays a zero-wakeup idle rather than a poll.
         (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (g_stop_requested) {
+            break;
+        }
+        if (g_phase != Phase::Running) {
+            continue;
+        }
 
         OtaJob job = g_job;
         runOtaJob(job);
     }
+    g_task_exited = true;
+    g_ota_task = nullptr;
+    vTaskDelete(nullptr);
 }
 
 bool parse_start_payload(const char* payload, size_t payload_len, OtaJob* job) {
@@ -749,10 +761,13 @@ void init() {
     }
 
     if (g_ota_task == nullptr) {
+        g_stop_requested = false;
+        g_task_exited = false;
         if (xTaskCreate(otaWorkerTask, "hw_ota", kOtaTaskStackBytes, nullptr, tskIDLE_PRIORITY + 3,
                         &g_ota_task) != pdPASS) {
             ESP_LOGE(kLogTag, "FATAL: failed to create persistent hw_ota task");
             g_ota_task = nullptr;
+            g_task_exited = true;
         }
     }
 
@@ -763,6 +778,30 @@ void init() {
     } else {
         ESP_LOGW(kLogTag, "OTA service ready but no next OTA partition (factory-only layout?)");
     }
+}
+
+void shutdown() {
+#if !CONFIG_HEAPWATCH_ENABLE_OTA
+    return;
+#else
+    g_stop_requested = true;
+    g_abort_requested = true;
+    if (g_ota_task != nullptr) {
+        xTaskNotifyGive(g_ota_task);
+    }
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+    while (!g_task_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (!g_task_exited) {
+        ESP_LOGE(kLogTag, "hw_ota did not stop in time — leaving it running");
+        return;
+    }
+
+    g_ota_task = nullptr;
+    g_phase = Phase::Idle;
+    g_abort_requested = false;
+#endif
 }
 
 bool isInProgress() {

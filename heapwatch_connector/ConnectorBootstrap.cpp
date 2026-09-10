@@ -59,6 +59,9 @@ int g_wifi_retry = 0;
 uint32_t g_wifi_reconnects_total = 0;
 volatile bool g_wifi_permanently_failed = false;
 volatile bool g_command_wifi_reconnect_active = false;
+bool g_wifi_driver_inited = false;
+bool g_wifi_handler_registered = false;
+esp_event_handler_instance_t g_wifi_handler_instance = nullptr;
 
 namespace {
 
@@ -91,6 +94,9 @@ char g_log_line_task_name[configMAX_TASK_NAME_LEN] = {};
 int g_log_line_core = -1;
 portMUX_TYPE g_log_assembly_lock = portMUX_INITIALIZER_UNLOCKED;
 TickType_t g_log_line_assembly_last_update = 0;
+volatile bool g_log_stop_requested = false;
+volatile bool g_log_task_exited = true;
+TaskHandle_t g_log_forward_task = nullptr;
 
 bool pushLogRingLine(const RawLogLine* line) {
     if (line == nullptr) {
@@ -382,7 +388,7 @@ void logForwardTask(void* arg) {
 
     RawLogLine log_line = {};
     TickType_t last_wake = xTaskGetTickCount();
-    while (true) {
+    while (!g_log_stop_requested) {
         while (popLogRingLine(&log_line)) {
             char sanitized_line[kLogLineMaxLen] = {};
             stripAnsiSequences(log_line.text, sanitized_line, sizeof(sanitized_line));
@@ -423,6 +429,9 @@ void logForwardTask(void* arg) {
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kLogForwardIntervalMs));
     }
+    g_log_task_exited = true;
+    g_log_forward_task = nullptr;
+    vTaskDelete(nullptr);
 }
 #endif /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 
@@ -579,15 +588,23 @@ void startWifiIfManaged() {
 #endif
     g_wifi_permanently_failed = false;
     g_wifi_retry = 0;
-    g_wifi_event_group = xEventGroupCreate();
+    if (g_wifi_event_group == nullptr) {
+        g_wifi_event_group = xEventGroupCreate();
+    }
     ESP_ERROR_CHECK(esp_netif_init());
-    esp_netif_create_default_wifi_sta();
+    if (!g_wifi_driver_inited) {
+        esp_netif_create_default_wifi_sta();
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        g_wifi_driver_inited = true;
+    }
 
-    ESP_ERROR_CHECK(
-        esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr));
+    if (!g_wifi_handler_registered) {
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(
+            WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr, &g_wifi_handler_instance));
+        g_wifi_handler_registered = true;
+    }
 
     wifi_config_t wifi_config = {};
     std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), CONFIG_HEAPWATCH_WIFI_SSID,
@@ -611,6 +628,7 @@ void syncTimeIfManaged() {
 #if !CONFIG_HEAPWATCH_MANAGE_TIME_SYNC
     ESP_LOGI(kTag, "HEAPWATCH_MANAGE_TIME_SYNC disabled; client is responsible for system time");
 #else
+    esp_sntp_stop();
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
@@ -642,7 +660,53 @@ void installLogRelayHookIfEnabled() {
 
 void startLogRelayTaskIfEnabled() {
 #if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
-    xTaskCreate(logForwardTask, "hw_log_forward", 6144, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+    if (g_log_forward_task != nullptr) {
+        return;
+    }
+    g_log_stop_requested = false;
+    g_log_task_exited = false;
+    if (xTaskCreate(logForwardTask, "hw_log_forward", 6144, nullptr, tskIDLE_PRIORITY + 1,
+                    &g_log_forward_task) != pdPASS) {
+        g_log_forward_task = nullptr;
+        g_log_task_exited = true;
+    }
+#endif
+}
+
+void stopLogRelay() {
+#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
+    g_log_stop_requested = true;
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    while (!g_log_task_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    g_log_forward_task = nullptr;
+    if (g_default_log_vprintf != nullptr) {
+        (void)esp_log_set_vprintf(g_default_log_vprintf);
+        g_default_log_vprintf = nullptr;
+    }
+#endif
+}
+
+void stopManagedWifi() {
+#if CONFIG_HEAPWATCH_MANAGE_WIFI
+    if (g_wifi_handler_registered) {
+        (void)esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                 g_wifi_handler_instance);
+        g_wifi_handler_instance = nullptr;
+        g_wifi_handler_registered = false;
+    }
+    if (g_wifi_driver_inited) {
+        (void)esp_wifi_stop();
+    }
+    g_wifi_retry = 0;
+    g_wifi_permanently_failed = false;
+#endif
+}
+
+void stopTimeSyncIfManaged() {
+#if CONFIG_HEAPWATCH_MANAGE_TIME_SYNC
+    esp_sntp_stop();
 #endif
 }
 

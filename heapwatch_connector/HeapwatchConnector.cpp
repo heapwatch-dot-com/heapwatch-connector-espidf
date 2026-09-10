@@ -37,6 +37,11 @@
 #include "../connector_settings/ConnectorSettings.h"
 #include "../device_command/CommandWorker.h"
 #include "../device_command/GoingDarkPipeline.h"
+#include "../device_command/CommandCatalog.h"
+#include "../device_command/ConfigCatalog.h"
+#include "../device_command/ConfigSnapshot.h"
+#include "../connector_boot_sync/ConnectorBootSync.h"
+#include "../device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
 #include "../device_ota/OtaService.h"
 #include "../storage_stats/StorageStats.h"
@@ -62,6 +67,11 @@ bool g_infrastructure_ready = false;
 volatile bool g_dispatcher_running = false;
 volatile bool g_collector_running = false;
 volatile bool g_network_ready = false;
+TaskHandle_t g_dispatcher_task = nullptr;
+TaskHandle_t g_collector_task = nullptr;
+volatile bool g_dispatcher_exited = true;
+volatile bool g_collector_exited = true;
+bool g_subsystems_initialized = false;
 
 char g_device_uid[64] = {0};
 char g_tenant_slug[64] = {0};
@@ -139,11 +149,10 @@ struct PublishLockGuard {
 };
 
 void initConnectorSubsystemsOnce() {
-    static bool initialized = false;
-    if (initialized) {
+    if (g_subsystems_initialized) {
         return;
     }
-    initialized = true;
+    g_subsystems_initialized = true;
 
     heapwatch::storage_stats::init();
     heapwatch::connector_settings::init();
@@ -153,7 +162,23 @@ void initConnectorSubsystemsOnce() {
     heapwatch::stream_ingress::init();
     heapwatch::device_fs::init();
 }
+
+bool waitExited(volatile bool* exited, uint32_t timeout_ms) {
+    if (exited == nullptr) {
+        return true;
+    }
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    while (!*exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return *exited;
 }
+
+}  // namespace
+
+void heapwatch_mark_dispatcher_task_exited() { g_dispatcher_exited = true; }
+
+void heapwatch_mark_collector_task_exited() { g_collector_exited = true; }
 
 HeapwatchConnector& HeapwatchConnector::getInstance() {
     static HeapwatchConnector instance;
@@ -252,28 +277,48 @@ bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_u
 }
 
 void HeapwatchConnector::deinitialize() {
-    if (!g_initialized) {
-        return;
-    }
-
     g_collector_running = false;
     g_dispatcher_running = false;
-    vTaskDelay(pdMS_TO_TICKS(200));
+    if (g_outbound_sem != nullptr) {
+        (void)xSemaphoreGive(g_outbound_sem);
+    }
+    const bool dispatcher_gone = waitExited(&g_dispatcher_exited, 5000);
+    const bool collector_gone = waitExited(&g_collector_exited, 5000);
+    g_dispatcher_task = nullptr;
+    g_collector_task = nullptr;
 
     heapwatch_dispatcher_shutdown();
+    heapwatch::going_dark::shutdown();
+    heapwatch::device_command::shutdownCommandWorker();
+    heapwatch::device_ota::shutdown();
+    heapwatch::stream_ingress::shutdown();
+    heapwatch::device_radio::stop();
+    heapwatch::device_command::resetCommandCatalogBootFlags();
+    heapwatch::device_command::resetConfigCatalogBootFlags();
+    heapwatch::device_command::resetConfigSnapshotBootFlags();
+    heapwatch::connector_boot_sync::resetBootStaticSync();
+    heapwatch::device_enrollment::resetClaimedIdentitiesBootSync();
+    g_subsystems_initialized = false;
 
-    destroy_message_queues();
-    if (g_coredump_queue != nullptr) {
-        CoreDumpPayload* pending_payload = nullptr;
-        while (xQueueReceive(g_coredump_queue, &pending_payload, 0) == pdTRUE) {
-            free(pending_payload);
+    // Freeing the queues while a producer/consumer is still alive would be a
+    // use-after-free, so keep them (and the ready flag, so a re-init reuses them
+    // instead of leaking a second set) when a task overran its stop deadline.
+    if (dispatcher_gone && collector_gone) {
+        destroy_message_queues();
+        if (g_coredump_queue != nullptr) {
+            CoreDumpPayload* pending_payload = nullptr;
+            while (xQueueReceive(g_coredump_queue, &pending_payload, 0) == pdTRUE) {
+                free(pending_payload);
+            }
+            heapwatch_queue_delete(g_coredump_queue);
+            g_coredump_queue = nullptr;
         }
-        heapwatch_queue_delete(g_coredump_queue);
-        g_coredump_queue = nullptr;
+        g_infrastructure_ready = false;
+    } else {
+        ESP_LOGE(TAG, "hw_dispatcher/hw_metrics did not stop in time — keeping queues allocated");
     }
 
     g_initialized = false;
-    g_infrastructure_ready = false;
     g_network_ready = false;
 }
 
@@ -1000,14 +1045,17 @@ HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {
 
 void HeapwatchConnector::startDispatcherThread() {
     g_dispatcher_running = true;
+    g_dispatcher_exited = false;
     xTaskCreate(heapwatch_dispatch_task, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
-                nullptr, tskIDLE_PRIORITY + 3, nullptr);
+                nullptr, tskIDLE_PRIORITY + 3, &g_dispatcher_task);
 }
 
 void HeapwatchConnector::startCollectorThread() {
     g_collector_running = true;
+    g_collector_exited = false;
     xTaskCreate(heapwatch::metrics_collector::collectTask, "hw_metrics",
-                HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2, nullptr);
+                HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
+                &g_collector_task);
 }
 
 void HeapwatchConnector::ensureMetricsCollectorThreadStarted() {

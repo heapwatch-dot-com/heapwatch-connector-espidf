@@ -16,4 +16,6 @@ bool serviceClaimedIdentitiesBootPostIfDue();
 /** Optional host trigger; does not block. Dispatcher also calls serviceClaimedIdentitiesBootPostIfDue(). */
 void requestClaimedIdentitiesBootPostNow();
 
+void resetClaimedIdentitiesBootSync();
+
 }  // namespace heapwatch::device_enrollment

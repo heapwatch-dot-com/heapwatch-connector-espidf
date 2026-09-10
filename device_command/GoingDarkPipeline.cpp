@@ -37,6 +37,7 @@ enum class RequestKind : uint8_t {
     Shutdown,
     Sleep,
     WifiReconnect,
+    Stop,
 };
 
 struct GoingDarkRequest {
@@ -49,6 +50,7 @@ struct GoingDarkRequest {
 
 QueueHandle_t g_request_queue = nullptr;
 volatile bool g_active = false;
+volatile bool g_task_exited = true;
 
 void rejectRequest(const GoingDarkRequest& request, const char* code, const char* message) {
     publishCommandResponse(request.suffix, request.command_id, false, code, message);
@@ -204,6 +206,10 @@ void goingDarkTask(void* /*arg*/) {
             continue;
         }
 
+        if (request.kind == RequestKind::Stop) {
+            break;
+        }
+
         switch (request.kind) {
             case RequestKind::Restart:
                 runRestartPipeline(request);
@@ -217,8 +223,12 @@ void goingDarkTask(void* /*arg*/) {
             case RequestKind::Sleep:
                 runSleepPipeline(request);
                 break;
+            case RequestKind::Stop:
+                break;
         }
     }
+    g_task_exited = true;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -234,7 +244,31 @@ void init() {
         return;
     }
 
+    g_task_exited = false;
     xTaskCreate(goingDarkTask, "hw_going_dark", 6144, nullptr, tskIDLE_PRIORITY + 2, nullptr);
+}
+
+void shutdown() {
+    if (g_request_queue == nullptr) {
+        return;
+    }
+
+    GoingDarkRequest request = {};
+    request.kind = RequestKind::Stop;
+    (void)xQueueSend(g_request_queue, &request, pdMS_TO_TICKS(200));
+
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+    while (!g_task_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (!g_task_exited) {
+        ESP_LOGE(TAG, "hw_going_dark did not stop in time — leaving it running");
+        return;
+    }
+
+    g_active = false;
+    vQueueDelete(g_request_queue);
+    g_request_queue = nullptr;
 }
 
 bool isActive() { return g_active; }

@@ -498,6 +498,8 @@ void heapwatch_dispatch_task(void* arg) {
         }
         heapwatch_outbound_wait_for_work();
     }
+    heapwatch_mark_dispatcher_task_exited();
+    vTaskDelete(nullptr);
 }
 
 /* ============================================================================
@@ -505,6 +507,8 @@ void heapwatch_dispatch_task(void* arg) {
    =========================================================================== */
 
 bool heapwatch_dispatcher_init() {
+    g_coredump_upload_done = false;
+    g_coredump_next_attempt_tick = 0;
     g_mqtt_client = nullptr;
     g_mqtt_connected = false;
     g_mqtt_shutting_down = false;

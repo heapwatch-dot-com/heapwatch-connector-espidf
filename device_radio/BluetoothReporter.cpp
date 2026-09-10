@@ -28,6 +28,8 @@ constexpr size_t kJsonLineMax = 512;
 constexpr size_t kCommandIdMax = 64;
 
 bool g_started = false;
+volatile bool g_stop_requested = false;
+volatile bool g_task_exited = true;
 bool g_prev_stack_ready = false;
 bool g_prev_advertising = false;
 bool g_prev_scanning = false;
@@ -155,7 +157,7 @@ void telemetryTask(void* /*arg*/) {
     const TickType_t interval =
         pdMS_TO_TICKS(CONFIG_HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC * 1000);
 
-    while (true) {
+    while (!g_stop_requested) {
         RadioBleSnapshot snap = {};
         getBleProvider().fillSnapshot(snap);
 
@@ -169,10 +171,12 @@ void telemetryTask(void* /*arg*/) {
         vTaskDelay(interval);
     }
 #else
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(60000));
+    while (!g_stop_requested) {
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 #endif
+    g_task_exited = true;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -318,11 +322,27 @@ void start() {
         ESP_LOGW(kTag, "BLE provider init failed");
     }
 
+    g_stop_requested = false;
 #if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
+    g_task_exited = false;
     xTaskCreate(telemetryTask, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#else
+    g_task_exited = true;
 #endif
 
     ESP_LOGI(kTag, "Bluetooth reporter started");
+}
+
+void stop() {
+    if (!g_started) {
+        return;
+    }
+    g_stop_requested = true;
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
+    while (!g_task_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    g_started = false;
 }
 
 }  // namespace heapwatch::device_radio

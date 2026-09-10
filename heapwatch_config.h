@@ -119,6 +119,14 @@
 #define HEAPWATCH_MQTT_RETRY_INTERVAL_MS 1000
 
 /**
+ * Slice length for tasks that sleep longer than this and must still notice
+ * heapwatch_deinit()'s stop flag. Teardown tolerates a task reacting this late,
+ * so keep it coarse — a shorter slice only buys deinit latency nobody waits on,
+ * at the cost of extra wakeups for the entire uptime of the device.
+ */
+#define HEAPWATCH_STOP_CHECK_SLICE_MS 2000
+
+/**
  * MQTT CONNECT keepalive (seconds). esp-mqtt pings at ~half this interval.
  * IDF default is 120 when unset; we set explicitly so broker session timing is predictable.
  */

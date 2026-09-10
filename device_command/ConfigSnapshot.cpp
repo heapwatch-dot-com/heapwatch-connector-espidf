@@ -122,4 +122,10 @@ bool consumeConfigSnapshotUploadRequest(char* namespace_out, size_t namespace_ou
     return true;
 }
 
+void resetConfigSnapshotBootFlags() {
+    g_full_partition_uploaded_this_boot = false;
+    g_upload_requested = false;
+    g_force_upload = false;
+}
+
 }  // namespace heapwatch::device_command

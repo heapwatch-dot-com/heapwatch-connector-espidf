@@ -204,4 +204,7 @@ bool heapwatch_dispatcher_running();
 bool heapwatch_collector_running();
 bool heapwatch_network_ready();
 
+void heapwatch_mark_dispatcher_task_exited();
+void heapwatch_mark_collector_task_exited();
+
 #endif

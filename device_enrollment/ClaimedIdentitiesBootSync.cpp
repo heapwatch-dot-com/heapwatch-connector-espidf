@@ -69,4 +69,9 @@ void requestClaimedIdentitiesBootPostNow() {
     (void)serviceClaimedIdentitiesBootPostIfDue();
 }
 
+void resetClaimedIdentitiesBootSync() {
+    g_claimed_identities_post_done = false;
+    g_claimed_identities_next_attempt_tick = 0;
+}
+
 }  // namespace heapwatch::device_enrollment

@@ -63,11 +63,8 @@ esp_err_t heapwatch_initialize(void) {
 }
 
 void heapwatch_deinit(void) {
-    HeapwatchConnector::getInstance().deinitialize();
-}
-
-void heapwatch_sync_claimed_identities(void) {
-    heapwatch::connector_bootstrap::syncClaimedIdentitiesIfProvisioned();
+    g_host_keep_running = false;
+    heapwatch::connector_lifecycle::deinitialize();
 }
 
 void heapwatch_set_boot_cycle_context(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
@@ -309,24 +306,6 @@ esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_
     return ESP_OK;
 }
 
-esp_err_t heapwatch_update_cellular_signal(int rssi_dbm, int ber) {
-    const esp_err_t ready = require_queue_ready();
-    if (ready != ESP_OK) {
-        return ready;
-    }
-    heapwatch::parameter_api::updateCellularSignal(rssi_dbm, ber);
-    return ESP_OK;
-}
-
-esp_err_t heapwatch_queue_specs(void) {
-    const esp_err_t ready = require_queue_ready();
-    if (ready != ESP_OK) {
-        return ready;
-    }
-    HeapwatchConnector::getInstance().queueSpecs();
-    return ESP_OK;
-}
-
 esp_err_t heapwatch_register_command(const char* name, heapwatch_command_handler_t handler,
                                      void* user_ctx) {
     if (name == nullptr || name[0] == '\0' || handler == nullptr) {
@@ -412,7 +391,5 @@ const char* heapwatch_get_app_source_version(void) { return HEAPWATCH_APP_SOURCE
 const char* heapwatch_get_connector_source_version(void) {
     return HEAPWATCH_CONNECTOR_SOURCE_VERSION;
 }
-
-const char* heapwatch_get_firmware_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }
 
 }  // extern "C"

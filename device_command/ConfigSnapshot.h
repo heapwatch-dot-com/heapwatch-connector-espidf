@@ -16,4 +16,6 @@ bool configSnapshotUploadedThisBoot();
 /** Pop a pending upload request (called from hw_streaming). Returns false when none pending. */
 bool consumeConfigSnapshotUploadRequest(char* namespace_out, size_t namespace_out_len, bool* force_out);
 
+void resetConfigSnapshotBootFlags();
+
 }  // namespace heapwatch::device_command

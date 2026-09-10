@@ -38,4 +38,6 @@ void runBootStaticSync() {
     heapwatch::stream_ingress::requestBootStreamUploads();
 }
 
+void resetBootStaticSync() { g_boot_static_sync_done = false; }
+
 }  // namespace heapwatch::connector_boot_sync

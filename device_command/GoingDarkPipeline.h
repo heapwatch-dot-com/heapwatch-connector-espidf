@@ -27,4 +27,6 @@ bool isActive();
 
 void init();
 
+void shutdown();
+
 }  // namespace heapwatch::going_dark

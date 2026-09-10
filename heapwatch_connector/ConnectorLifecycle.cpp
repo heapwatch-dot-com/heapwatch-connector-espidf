@@ -6,6 +6,8 @@
 #include "heapwatch_connector/HeapwatchConnector.h"
 #include "heapwatch_endpoints.h"
 #include "../stream_ingress/StreamIngressClient.h"
+#include "device_enrollment/EnrollStateLedIndicator.h"
+#include "device_network/DeviceNetworkReporter.h"
 
 #include <cstring>
 
@@ -29,6 +31,14 @@ volatile bool g_misconfigured = false;
 volatile bool g_bootstrap_started = false;
 volatile bool g_time_sync_attempted = false;
 volatile bool g_enrollment_cycle_active = false;
+volatile bool g_bootstrap_stop = false;
+volatile bool g_bootstrap_exited = true;
+TaskHandle_t g_bootstrap_task = nullptr;
+bool g_ip_handlers_registered = false;
+esp_event_handler_instance_t g_ip_sta_got = nullptr;
+esp_event_handler_instance_t g_ip_eth_got = nullptr;
+esp_event_handler_instance_t g_ip_sta_lost = nullptr;
+esp_event_handler_instance_t g_ip_eth_lost = nullptr;
 
 bool is_placeholder_build_identifier(const char* value) {
     if (value == nullptr || std::strncmp(value, "sha256:", 7) != 0) {
@@ -90,14 +100,33 @@ void onNetIpEvent(void*, esp_event_base_t event_base, int32_t event_id, void*) {
 }
 
 void registerNetIpEventHandlers() {
+    if (g_ip_handlers_registered) {
+        return;
+    }
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        onNetIpEvent, nullptr, nullptr));
+                                                        onNetIpEvent, nullptr, &g_ip_sta_got));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_ETH_GOT_IP,
-                                                        onNetIpEvent, nullptr, nullptr));
+                                                        onNetIpEvent, nullptr, &g_ip_eth_got));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_LOST_IP,
-                                                        onNetIpEvent, nullptr, nullptr));
+                                                        onNetIpEvent, nullptr, &g_ip_sta_lost));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_ETH_LOST_IP,
-                                                        onNetIpEvent, nullptr, nullptr));
+                                                        onNetIpEvent, nullptr, &g_ip_eth_lost));
+    g_ip_handlers_registered = true;
+}
+
+void unregisterNetIpEventHandlers() {
+    if (!g_ip_handlers_registered) {
+        return;
+    }
+    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, g_ip_sta_got);
+    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, g_ip_eth_got);
+    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, g_ip_sta_lost);
+    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_ETH_LOST_IP, g_ip_eth_lost);
+    g_ip_sta_got = nullptr;
+    g_ip_eth_got = nullptr;
+    g_ip_sta_lost = nullptr;
+    g_ip_eth_lost = nullptr;
+    g_ip_handlers_registered = false;
 }
 
 void updateMqttPhaseFromStatus() {
@@ -121,7 +150,7 @@ void bootstrapTask(void*) {
     connector_bootstrap::startWifiIfManaged();
     connector_bootstrap::startNetworkReporters();
 
-    while (true) {
+    while (!g_bootstrap_stop) {
         updateMqttPhaseFromStatus();
 
         if (!heapwatch_network_ready()) {
@@ -177,6 +206,9 @@ void bootstrapTask(void*) {
             vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
         }
     }
+    g_bootstrap_exited = true;
+    g_bootstrap_task = nullptr;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -261,10 +293,14 @@ esp_err_t initialize() {
 
     if (!g_bootstrap_started) {
         g_bootstrap_started = true;
+        g_bootstrap_stop = false;
+        g_bootstrap_exited = false;
         constexpr uint32_t kBootstrapStackBytes = 16384;
         if (xTaskCreate(bootstrapTask, "hw_bootstrap", kBootstrapStackBytes, nullptr,
-                        tskIDLE_PRIORITY + 2, nullptr) != pdPASS) {
+                        tskIDLE_PRIORITY + 2, &g_bootstrap_task) != pdPASS) {
             ESP_LOGE(kTag, "FATAL: failed to start hw_bootstrap task");
+            g_bootstrap_started = false;
+            g_bootstrap_exited = true;
             g_misconfigured = true;
             setPhase(HEAPWATCH_PHASE_MISCONFIGURED);
             return ESP_ERR_HEAPWATCH_INIT_FAILED;
@@ -273,6 +309,31 @@ esp_err_t initialize() {
 
     setPhase(HEAPWATCH_PHASE_STARTING);
     return ESP_OK;
+}
+
+void deinitialize() {
+    g_bootstrap_stop = true;
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(15000);
+    while (!g_bootstrap_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    HeapwatchConnector::getInstance().deinitialize();
+    connector_bootstrap::stopLogRelay();
+    connector_bootstrap::stopTimeSyncIfManaged();
+    connector_bootstrap::stopManagedWifi();
+    unregisterNetIpEventHandlers();
+    heapwatch::device_enrollment::stopIndicator();
+    heapwatch::device_network::stop();
+
+    g_initialize_called = false;
+    g_misconfigured = false;
+    g_bootstrap_started = false;
+    g_time_sync_attempted = false;
+    g_enrollment_cycle_active = false;
+    g_bootstrap_task = nullptr;
+    g_bootstrap_exited = true;
+    setPhase(HEAPWATCH_PHASE_STARTING);
 }
 
 }  // namespace heapwatch::connector_lifecycle

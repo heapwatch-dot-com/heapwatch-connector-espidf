@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-10
+
+### Changed
+- **BREAKING:** `heapwatch_deinit()` is now a real teardown instead of a partial stop. It stops `hw_bootstrap`, `hw_log_forward`, `hw_dispatcher`, `hw_metrics`, `hw_command`, `hw_going_dark`, `hw_ota`, `hw_streaming`, `hw_ble_report` and `hw_enroll_led`, restores the ESP log `vprintf` hook, unregisters the IP/Wi-Fi event handlers, stops managed Wi-Fi and SNTP, and clears every once-per-boot flag (catalogs, config snapshot, boot static sync, claimed identities, coredump upload). `initialize() → deinit() → initialize() → deinit()` now cycles cleanly. NVS, the default event loop, and host-owned netifs are deliberately left intact.
+
+### Removed
+- **BREAKING:** Removed unused public API `heapwatch_config_t` / `heapwatch_config_default` / `HEAPWATCH_CONFIG_DEFAULT`, deprecated alias `heapwatch_get_firmware_version`, and `heapwatch_update_cellular_signal` (use `heapwatch_update_parameter_int` for custom cellular slugs if needed). Use `heapwatch_get_app_source_version()` for app git-describe.
+- **BREAKING:** Removed public `heapwatch_queue_specs()` — device specs are queued internally on every MQTT connect, on `specs_refresh`, and after OTA.
+- **BREAKING:** Removed public `heapwatch_sync_claimed_identities()` — the claimed MAC/UID backfill already runs once per boot from the dispatcher as soon as the network is up.
+
 ## [0.6.1] - 2026-09-10
 
 ### Changed

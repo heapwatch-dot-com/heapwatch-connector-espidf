@@ -27,6 +27,8 @@ enum class EnrollStateLedPhase : std::uint8_t {
 
 void startIndicator();
 
+void stopIndicator();
+
 void setIndicatorPhase(EnrollStateLedPhase phase);
 
 EnrollStateLedPhase indicatorPhaseFromEnrollmentStatus(Status status);
@@ -34,6 +36,8 @@ EnrollStateLedPhase indicatorPhaseFromEnrollmentStatus(Status status);
 #else
 
 inline void startIndicator() {}
+
+inline void stopIndicator() {}
 
 inline void setIndicatorPhase(EnrollStateLedPhase /*phase*/) {}
 

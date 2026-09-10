@@ -74,9 +74,4 @@ void updatePowerState(const char* source_name, heapwatch_power_state_t state) {
     HeapwatchConnector::getInstance().updateParameterInt(slug, static_cast<int64_t>(state));
 }
 
-void updateCellularSignal(int rssi_dbm, int ber) {
-    HeapwatchConnector::getInstance().updateParameterInt("cellular_rssi_dbm", rssi_dbm);
-    HeapwatchConnector::getInstance().updateParameterInt("cellular_ber", ber);
-}
-
 }  // namespace heapwatch::parameter_api

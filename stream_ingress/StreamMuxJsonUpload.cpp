@@ -16,7 +16,7 @@ constexpr uint32_t kMuxSendRetryMs = 30000;
 
 bool sendCtrlEnd(const char* channel_id) {
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
-    while (xTaskGetTickCount() < deadline) {
+    while (xTaskGetTickCount() < deadline && !isShuttingDown()) {
         if (sendMuxCtrlFrame(channel_id)) {
             flushOutbound();
             return true;
@@ -29,7 +29,7 @@ bool sendCtrlEnd(const char* channel_id) {
 
 bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
-    while (xTaskGetTickCount() < deadline) {
+    while (xTaskGetTickCount() < deadline && !isShuttingDown()) {
         if (sendMuxDataFrame(channel_id, data, len)) {
             flushOutbound();
             return true;
@@ -43,12 +43,18 @@ bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
 }  // namespace
 
 bool waitForStreamTcp(uint32_t timeout_ms) {
+    if (isShuttingDown()) {
+        return false;
+    }
     if (!ensureTcpSession()) {
         return false;
     }
 
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     while (xTaskGetTickCount() < deadline) {
+        if (isShuttingDown()) {
+            return false;
+        }
         if (isActive()) {
             return true;
         }

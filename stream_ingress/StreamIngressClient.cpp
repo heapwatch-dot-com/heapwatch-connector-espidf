@@ -71,6 +71,8 @@ struct OutboundQueued {
 SemaphoreHandle_t g_mutex = nullptr;
 QueueHandle_t g_outbound_queue = nullptr;
 TaskHandle_t g_worker_task = nullptr;
+volatile bool g_stop_requested = false;
+volatile bool g_worker_exited = true;
 
 bool g_tcp_requested = false;
 bool g_log_capture_requested = false;
@@ -443,7 +445,7 @@ void workerTask(void* arg) {
     (void)arg;
     TickType_t last_flush = xTaskGetTickCount();
 
-    while (true) {
+    while (!g_stop_requested) {
         lock();
         const bool close_requested = g_close_requested;
         const bool tcp_requested = g_tcp_requested;
@@ -547,6 +549,14 @@ void workerTask(void* arg) {
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+
+    lock();
+    flushCoalesceLocked();
+    closeSocket();
+    unlock();
+    g_worker_exited = true;
+    g_worker_task = nullptr;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -572,11 +582,14 @@ static void ensureWorkerStarted() {
         g_outbound_queue = xQueueCreate(kOutboundQueueDepth, sizeof(OutboundQueued));
     }
     if (g_worker_task == nullptr) {
+        g_stop_requested = false;
+        g_worker_exited = false;
         // Create only when TCP is actually needed — saves ~8KiB stack at boot for MQTT.
         if (xTaskCreate(workerTask, "hw_streaming", kWorkerStackBytes, nullptr,
                         tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create hw_streaming task");
             g_worker_task = nullptr;
+            g_worker_exited = true;
         }
     }
 }
@@ -622,6 +635,29 @@ void requestClose() {
 
     ESP_LOGI(TAG, "Stream ingress close requested");
 }
+
+void shutdown() {
+    g_stop_requested = true;
+    requestClose();
+    // Generous: the worker also runs filesystem jobs, which can be mid-hash.
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+    while (!g_worker_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (!g_worker_exited) {
+        ESP_LOGE(TAG, "hw_streaming did not stop in time — leaving it running");
+        return;
+    }
+
+    g_worker_task = nullptr;
+    g_tcp_requested = false;
+    g_log_capture_requested = false;
+    g_close_requested = false;
+    g_boot_stream_upload_requested = false;
+    g_stop_requested = false;
+}
+
+bool isShuttingDown() { return g_stop_requested; }
 
 bool ensureTcpSession() {
     if (!streamIngressEnabled()) {

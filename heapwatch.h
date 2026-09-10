@@ -68,24 +68,8 @@ typedef enum {
 #define ESP_ERR_HEAPWATCH_INIT_FAILED          (ESP_ERR_HEAPWATCH_BASE + 0x08)
 
 /* ---------------------------------------------------------------------------
-   Config / status (CFG1 — flat POD, no version field)
+   Status
    --------------------------------------------------------------------------- */
-
-/**
- * Init config placeholder — reserved for future options. Credentials are always
- * resolved via bootstrap (NVS from a prior enrollment, else CONFIG_HEAPWATCH_ENROLLMENT_KEY).
- */
-typedef struct {
-    uint8_t reserved;
-} heapwatch_config_t;
-
-/** Zero-init helper — credentials are never passed via this struct. */
-static inline heapwatch_config_t heapwatch_config_default(void) {
-    heapwatch_config_t config = {};
-    config.reserved = 0;
-    return config;
-}
-#define HEAPWATCH_CONFIG_DEFAULT() heapwatch_config_default()
 
 typedef struct {
     heapwatch_phase_t phase;
@@ -129,23 +113,19 @@ typedef bool (*heapwatch_before_sleep_hook_t)(void* user_ctx);
 
 /**
  * One-call sidecar bootstrap: NVS, log relay, Wi-Fi/SNTP (when Kconfig-managed),
- * background enrollment, and MQTT — returns immediately. Idempotent (second call is a no-op).
+ * background enrollment, and MQTT — returns immediately. Idempotent while running
+ * (second call is a no-op). After heapwatch_deinit(), this may be called again.
  * Fails fast on fatal misconfiguration (empty enrollment key + no NVS creds, placeholder
  * build fingerprint, NVS init failure).
  */
 esp_err_t heapwatch_initialize(void);
 
+/** Full connector teardown. After this, heapwatch_initialize() may be called again. */
 void heapwatch_deinit(void);
 
 /**
- * Backfill claimed MAC / UID128 on the server for already-provisioned devices.
- * Runs automatically once MQTT is up; call explicitly for an immediate attempt.
- */
-void heapwatch_sync_claimed_identities(void);
-
-/**
  * Optional: attribute STARTING_UP / coredump headers to a boot-cycle counter.
- * Call after heapwatch_init(), before queuing the STARTING_UP event.
+ * Call after heapwatch_initialize(), before queuing the STARTING_UP event.
  */
 void heapwatch_set_boot_cycle_context(uint32_t boot_cycle, uint32_t crash_boot_cycle);
 
@@ -197,15 +177,12 @@ esp_err_t heapwatch_set_parameter_min(const char* slug, int64_t min_value);
 esp_err_t heapwatch_set_parameter_double_max(const char* slug, double max_value);
 esp_err_t heapwatch_set_parameter_double_min(const char* slug, double min_value);
 
-/** POW1 / CELL1 typed wrappers. */
+/** Typed power helpers (`dynamic.power.{source}.{mv|percent|state}`). */
 esp_err_t heapwatch_update_power_mv(const char* source_name, int64_t mv);
 esp_err_t heapwatch_update_power_mv_ranged(const char* source_name, int64_t mv, int64_t min_mv,
                                            int64_t max_mv);
 esp_err_t heapwatch_update_power_percent(const char* source_name, double percent);
 esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_state_t state);
-esp_err_t heapwatch_update_cellular_signal(int rssi_dbm, int ber);
-
-esp_err_t heapwatch_queue_specs(void);
 
 /* ---------------------------------------------------------------------------
    Remote commands (CMD1)
@@ -266,8 +243,6 @@ const char* heapwatch_get_build_identifier(void);
 const char* heapwatch_get_app_source_version(void);
 /** Connector component git-describe string (HEAPWATCH_CONNECTOR_SOURCE_VERSION). */
 const char* heapwatch_get_connector_source_version(void);
-/** @deprecated Use heapwatch_get_app_source_version(). */
-const char* heapwatch_get_firmware_version(void);
 
 #ifdef __cplusplus
 }

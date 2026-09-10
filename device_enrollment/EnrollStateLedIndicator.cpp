@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "heapwatch_config.h"
 
 namespace heapwatch::device_enrollment {
 
@@ -18,6 +19,8 @@ constexpr char kTag[] = "HwEnroll";
 volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::kWifiConnecting;
 
 bool g_started = false;
+volatile bool g_stop_requested = false;
+volatile bool g_task_exited = true;
 
 void driveLed(bool logical_on) {
 #if defined(CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW) && CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
@@ -29,7 +32,18 @@ void driveLed(bool logical_on) {
     gpio_set_level(static_cast<gpio_num_t>(CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO), level);
 }
 
-void sleepMs(uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
+// Blink patterns need their waits to be exact, so only ones longer than the stop
+// slice get sliced — slicing a 50 ms pulse would visibly skew it.
+void sleepMs(uint32_t ms) {
+    if (ms <= HEAPWATCH_STOP_CHECK_SLICE_MS) {
+        vTaskDelay(pdMS_TO_TICKS(ms));
+        return;
+    }
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
+    while (!g_stop_requested && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS));
+    }
+}
 
 bool samplePhaseMatches(EnrollStateLedPhase expected) {
     return g_phase == expected;
@@ -134,7 +148,7 @@ void runKeyExpiredPattern(EnrollStateLedPhase phase) {
 }
 
 void indicatorTaskEntry(void* /*param*/) {
-    while (true) {
+    while (!g_stop_requested) {
         const EnrollStateLedPhase phase = g_phase;
 
         switch (phase) {
@@ -176,6 +190,9 @@ void indicatorTaskEntry(void* /*param*/) {
                 break;
         }
     }
+    driveLed(false);
+    g_task_exited = true;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -195,9 +212,12 @@ void startIndicator() {
                        GPIO_MODE_OUTPUT);
     driveLed(false);
 
+    g_stop_requested = false;
+    g_task_exited = false;
     if (xTaskCreate(indicatorTaskEntry, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
                     nullptr) != pdPASS) {
         ESP_LOGE(kTag, "Failed to start enroll state LED task");
+        g_task_exited = true;
         return;
     }
 
@@ -209,6 +229,19 @@ void startIndicator() {
 #else
              0);
 #endif
+}
+
+void stopIndicator() {
+    if (!g_started) {
+        return;
+    }
+    g_stop_requested = true;
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
+    while (!g_task_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    driveLed(false);
+    g_started = false;
 }
 
 void setIndicatorPhase(EnrollStateLedPhase phase) { g_phase = phase; }

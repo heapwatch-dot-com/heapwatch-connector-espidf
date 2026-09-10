@@ -18,35 +18,20 @@
 #include "heapwatch_config.h"
 
 /**
- * POW1 / CELL1 (Phase 5c): typed, "nice" wrappers over the generic
- * HeapwatchConnector::updateParameter*() escape hatch (PARAM1). These are
- * client-facing app-code helpers -- the client owns its own board-specific
- * ADC/GPIO/fuel-gauge/modem wiring and pushes readings in; the connector
- * never reads a peripheral itself here.
- *
- * Client-facing helpers — also exposed via the public C ABI in heapwatch.h
- * (`heapwatch_update_power_*` / `heapwatch_update_cellular_signal`, Phase 5b).
- * The client owns its own board-specific ADC/GPIO/fuel-gauge/modem wiring and
- * pushes readings in; the connector never reads a peripheral itself here.
+ * Typed power helpers over HeapwatchConnector::updateParameter*().
+ * Also exposed as heapwatch_update_power_* in heapwatch.h.
+ * The client owns ADC/GPIO/fuel-gauge wiring; the connector never reads peripherals here.
  */
 namespace heapwatch::parameter_api {
 
 /**
- * POW1: named, multi-source power API -- mirrors the already-proven
- * per-FreeRTOS-task auto-provisioning pattern backend-side (see task_plan.md
- * POW1). `source_name` is conventionally "battery"/"usb"/... but any name is
- * valid (e.g. "solar", "backup_battery") -- it becomes part of the emitted
- * slug (`dynamic.power.{source_name}.mv` / `.percent` / `.state`).
+ * Named, multi-source power API. `source_name` is conventionally "battery"/"usb"
+ * but any name is valid (e.g. "solar") — it becomes part of
+ * `dynamic.power.{source_name}.mv` / `.percent` / `.state`.
  */
 void updatePowerMv(const char* source_name, int64_t mv);
 void updatePowerMvRanged(const char* source_name, int64_t mv, int64_t min_mv, int64_t max_mv);
 void updatePowerPercent(const char* source_name, double percent);
 void updatePowerState(const char* source_name, heapwatch_power_state_t state);
-
-/**
- * CELL1: cellular signal quality, client-push only, fixed slugs (not
- * multi-source like power -- single-modem assumed, see task_plan.md CELL1).
- */
-void updateCellularSignal(int rssi_dbm, int ber);
 
 }  // namespace heapwatch::parameter_api

@@ -77,4 +77,10 @@ bool consumeCommandCatalogUploadRequest(bool* force_out) {
     return true;
 }
 
+void resetCommandCatalogBootFlags() {
+    g_uploaded_this_boot = false;
+    g_upload_requested = false;
+    g_force_upload = false;
+}
+
 }  // namespace heapwatch::device_command

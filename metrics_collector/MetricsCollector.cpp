@@ -237,7 +237,17 @@ void collectTask(void* arg) {
         }
         prev_mqtt_connected = mqtt_now;
 
-        vTaskDelay(pdMS_TO_TICKS(heapwatch::connector_settings::telemetryIntervalMs()));
+        // Sliced so deinit does not have to wait out a long telemetry interval before
+        // the queues this task publishes into can be destroyed.
+        const uint32_t interval_ms = heapwatch::connector_settings::telemetryIntervalMs();
+        if (interval_ms <= HEAPWATCH_STOP_CHECK_SLICE_MS) {
+            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+        } else {
+            const TickType_t wake_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval_ms);
+            while (heapwatch_collector_running() && xTaskGetTickCount() < wake_at) {
+                vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS));
+            }
+        }
         if (!heapwatch_collector_running()) {
             break;
         }
@@ -540,6 +550,8 @@ void collectTask(void* arg) {
         }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
     }
+    heapwatch_mark_collector_task_exited();
+    vTaskDelete(nullptr);
 }
 
 }  // namespace heapwatch::metrics_collector

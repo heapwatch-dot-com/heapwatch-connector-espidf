@@ -29,6 +29,7 @@ constexpr uint32_t kWorkerStackBytes = 10240;
 enum class InboundKind : uint8_t {
     MqttCommand = 0,
     CredentialRotation = 1,
+    Stop = 2,
 };
 
 struct CommandInboundMessage {
@@ -41,6 +42,7 @@ struct CommandInboundMessage {
 };
 
 QueueHandle_t g_inbound_queue = nullptr;
+volatile bool g_worker_exited = true;
 
 void executeCredentialRotation() {
     heapwatch::device_credentials::Credentials current = {};
@@ -83,6 +85,10 @@ void commandWorkerTask(void* /*arg*/) {
             continue;
         }
 
+        if (msg.kind == InboundKind::Stop) {
+            break;
+        }
+
         if (msg.kind == InboundKind::CredentialRotation) {
             executeCredentialRotation();
             continue;
@@ -90,6 +96,8 @@ void commandWorkerTask(void* /*arg*/) {
 
         handleMqttMessage(msg.topic, msg.topic_len, msg.payload, msg.payload_len, msg.mqtt_retain);
     }
+    g_worker_exited = true;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace
@@ -105,12 +113,37 @@ void initCommandWorker() {
         return;
     }
 
+    g_worker_exited = false;
     if (xTaskCreate(commandWorkerTask, "hw_command", kWorkerStackBytes, nullptr, tskIDLE_PRIORITY + 2,
                     nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hw_command task");
         vQueueDelete(g_inbound_queue);
         g_inbound_queue = nullptr;
+        g_worker_exited = true;
     }
+}
+
+void shutdownCommandWorker() {
+    if (g_inbound_queue == nullptr) {
+        return;
+    }
+
+    CommandInboundMessage msg = {};
+    msg.kind = InboundKind::Stop;
+    (void)xQueueSend(g_inbound_queue, &msg, pdMS_TO_TICKS(200));
+
+    // Generous: a queued command may still be doing HTTP (credential rotation).
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+    while (!g_worker_exited && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (!g_worker_exited) {
+        ESP_LOGE(TAG, "hw_command did not stop in time — leaving it running");
+        return;
+    }
+
+    vQueueDelete(g_inbound_queue);
+    g_inbound_queue = nullptr;
 }
 
 bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload, size_t payload_len,

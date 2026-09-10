@@ -11,6 +11,8 @@ namespace heapwatch::device_radio {
 /** Start BLE provider + optional telemetry task (idempotent). */
 void start();
 
+void stop();
+
 /** Emit delta events and enqueue a full `/bluetooth` MQTT publish. */
 void publishFullSync();
 
