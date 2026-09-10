@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-10
+
 ### Added
-- Per-netif monotonic RX/TX byte counters (`dynamic.net.{seg}.rx_bytes` / `.tx_bytes` on `/parameter`, `rx_bytes` / `tx_bytes` on `/network`) via lwIP `input`/`linkoutput` hooks (not MIB2).
+- Per-netif monotonic RX/TX byte counters since boot: `dynamic.net.{seg}.rx_bytes` / `.tx_bytes` on `/parameter`, and `rx_bytes` / `tx_bytes` on each `/network` netif. Counted from lwIP `input` / `linkoutput` `pbuf` lengths (ESP-IDF 5.3 has no `IP_EVENT_TX_RX`).
+- Kconfig Features option **Collect Network Interface Bytes Transmitted/Received**.
+- Dynamic `/parameter` keys use `dynamic.{family}.{segment}.{metric}` for task, cpu, net, and power, with a shared segment sanitizer.
 
 ### Fixed
-- Disabled the `MIB2_STATS=1` lwip compile override after a LoadProhibited crash in `esp_netif_next_unsafe` (~7s boot loop). Traffic code does not walk `esp_netif_next`.
+- Traffic reporting no longer forces `MIB2_STATS` on lwIP (that crashed in `esp_netif_next_unsafe` about 7s after boot). WiFi STA MIB2 octet counters were also stuck at a bogus ~1 GiB TX value.

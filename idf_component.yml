@@ -1,4 +1,4 @@
-version: "0.5.2"
+version: "0.6.0"
 description: Heapwatch Connector for ESP-IDF
 url: https://github.com/viktorjamrich/heapwatch-connector-espidf
 documentation: https://docs.heapwatch.com/integration/getting-started/overview
