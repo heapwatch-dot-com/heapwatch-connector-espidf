@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `ota/rollback` while a firmware is awaiting confirmation now invalidates the running image and lets the bootloader return to the app that is already valid, so the restored firmware boots **confirmed**. It previously only moved the boot pointer, which brought the restored app up unverified: the dashboard kept showing *Firmware confirmation required*, and the next reboot could bounce the device back into the image you just rejected.
+
 ## [0.10.0] - 2026-09-11
 
 ### Added

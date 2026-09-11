@@ -717,6 +717,35 @@ bool handle_rollback(const char* command_id) {
         return true;
     }
 
+    esp_ota_img_states_t running_state = ESP_OTA_IMG_UNDEFINED;
+    if (esp_ota_get_state_partition(running, &running_state) == ESP_OK
+        && running_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        if (!esp_ota_check_rollback_is_possible()) {
+            heapwatch::device_command::publishCommandResponse(
+                "ota/rollback", command_id, false, "no_previous",
+                "No bootable app to roll back to");
+            return true;
+        }
+
+        log_phase(0, "rolled_back", "invalidate_running");
+        heapwatch::device_command::publishCommandResponse(
+            "ota/rollback", command_id, true, "", "Rolling back to the last valid app; rebooting");
+        vTaskDelay(pdMS_TO_TICKS(300));
+
+        // Marks the running image INVALID so the bootloader returns to the app that is
+        // already VALID, which therefore boots confirmed. Switching the boot pointer
+        // instead would bring that app up PENDING_VERIFY — asking for a second
+        // confirmation, and bouncing back into the rejected image on the next reboot.
+        const esp_err_t rollback_err = esp_ota_mark_app_invalid_rollback_and_reboot();
+        ESP_LOGE(kLogTag, "Rollback did not reboot: %s", esp_err_to_name(rollback_err));
+        heapwatch::device_command::publishCommandResponse("ota/rollback", command_id, false,
+                                                          "rollback_failed",
+                                                          esp_err_to_name(rollback_err));
+        return true;
+    }
+
+    // Nothing is pending verification, so there is no image to invalidate: point the boot
+    // slot at the other app. It boots unverified, like a fresh flash.
     const esp_partition_t* previous = esp_ota_get_last_invalid_partition();
     if (previous == nullptr) {
         if (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0) {
