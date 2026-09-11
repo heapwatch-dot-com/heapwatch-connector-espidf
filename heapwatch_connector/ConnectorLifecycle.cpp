@@ -6,15 +6,20 @@
 #include "heapwatch_connector/HeapwatchConnector.h"
 #include "heapwatch_endpoints.h"
 #include "../stream_ingress/StreamIngressClient.h"
+#include "boot_cycle/BootCycleStore.h"
+#include "device_credentials/DeviceCredentialsStore.h"
+#include "device_enrollment/DeviceSelfIntelClient.h"
 #include "device_enrollment/EnrollStateLedIndicator.h"
 #include "device_network/DeviceNetworkReporter.h"
 #include "device_fs/FsVolumeManager.h"
+#include "sleep_tracking/SleepTracking.h"
 
 #include <cstring>
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -34,6 +39,10 @@ volatile bool g_time_sync_attempted = false;
 volatile bool g_enrollment_cycle_active = false;
 volatile bool g_bootstrap_stop = false;
 volatile bool g_bootstrap_exited = true;
+volatile bool g_boot_cycle_resumed = false;
+/** Per-boot, not per-init: deliberately NOT cleared by deinitialize(). */
+volatile bool g_wake_telemetry_queued = false;
+heapwatch::boot_cycle::State g_boot_state = {};
 TaskHandle_t g_bootstrap_task = nullptr;
 bool g_ip_handlers_registered = false;
 esp_event_handler_instance_t g_ip_sta_got = nullptr;
@@ -68,6 +77,66 @@ esp_err_t initNvsFlash() {
 bool hasProvisionedCredentialsInNvs() {
     connector_bootstrap::BootCredentials creds = {};
     return connector_bootstrap::loadBootCredentials(&creds);
+}
+
+/**
+ * Advance the NVS boot counter and apply PANIC attribution. Not fatal for the host app: a
+ * failing store degrades telemetry to boot_cycle 0 rather than blocking the client's boot.
+ */
+void initBootIdentity() {
+    g_boot_state = {};
+    if (!heapwatch::boot_cycle::onBoot(&g_boot_state)) {
+        ESP_LOGE(kTag, "Boot cycle store unavailable — telemetry will report boot_cycle 0");
+        return;
+    }
+    HeapwatchConnector::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
+                                                          g_boot_state.last_crash_boot_cycle);
+}
+
+/**
+ * NVS boot counter was reset while the device still holds fleet credentials: realign it with
+ * the server's last known boot_cycle. Runs on hw_bootstrap after MQTT activation so it never
+ * delays the client's boot or the first publish.
+ */
+void resumeBootCycleFromServer() {
+    heapwatch::device_credentials::Credentials creds = {};
+    if (!heapwatch::device_credentials::load(&creds) || creds.device_api_key[0] == '\0') {
+        return;
+    }
+
+    uint32_t server_last_boot_cycle = UINT32_MAX;
+    if (!heapwatch::device_enrollment::fetchLastBootCycle(
+            HEAPWATCH_API_BASE_URL, creds.device_api_key, &server_last_boot_cycle)) {
+        return;
+    }
+    if (!heapwatch::boot_cycle::resumeFromServerLast(server_last_boot_cycle, &g_boot_state)) {
+        return;
+    }
+
+    HeapwatchConnector::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
+                                                          g_boot_state.last_crash_boot_cycle);
+}
+
+/**
+ * Deep-sleep wake attribution plus STARTING_UP. Requires the connector queues; the payloads
+ * sit in them until MQTT is up. STARTING_UP re-fires on a re-initialize() after deinit(); the
+ * wake attribution does not, because it describes the boot rather than the connector start.
+ */
+void queueBootLifecycleTelemetry() {
+    auto& connector = HeapwatchConnector::getInstance();
+
+    if (!g_wake_telemetry_queued && esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        g_wake_telemetry_queued = true;
+        connector.queueEvent(HEAPWATCH_EVENT_WOKE_UP_FROM_DEEP_SLEEP);
+        connector.queueParameter("wake_cause_code",
+                                 static_cast<int64_t>(heapwatch_translate_current_wake_cause()));
+        const int32_t slept_ms = heapwatch_sleep_tracking_consume_deep_sleep_duration_ms();
+        if (slept_ms >= 0) {
+            connector.queueParameter("sleep_duration_ms", static_cast<int64_t>(slept_ms));
+        }
+    }
+
+    connector.queueEvent(HEAPWATCH_EVENT_STARTING_UP);
 }
 
 void applyBuildMetadataToConnector() {
@@ -174,6 +243,10 @@ void bootstrapTask(void*) {
         }
 
         if (HeapwatchConnector::getInstance().getStatus().initialized) {
+            if (!g_boot_cycle_resumed) {
+                g_boot_cycle_resumed = true;
+                resumeBootCycleFromServer();
+            }
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -268,6 +341,8 @@ esp_err_t initialize() {
         return ESP_ERR_HEAPWATCH_INIT_FAILED;
     }
 
+    initBootIdentity();
+
     if (hasProvisionedCredentialsInNvs()) {
         ESP_LOGI(kTag, "Provisioned credentials in NVS — empty enrollment key is OK");
     } else if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
@@ -291,6 +366,8 @@ esp_err_t initialize() {
 
     connector_bootstrap::installLogRelayHookIfEnabled();
     connector_bootstrap::startLogRelayTaskIfEnabled();
+
+    queueBootLifecycleTelemetry();
 
     if (!g_bootstrap_started) {
         g_bootstrap_started = true;
@@ -335,6 +412,8 @@ void deinitialize() {
     g_enrollment_cycle_active = false;
     g_bootstrap_task = nullptr;
     g_bootstrap_exited = true;
+    g_boot_cycle_resumed = false;
+    g_boot_state = {};
     setPhase(HEAPWATCH_PHASE_STARTING);
 }
 

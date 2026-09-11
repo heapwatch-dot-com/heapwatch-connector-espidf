@@ -374,12 +374,13 @@ void HeapwatchConnector::setCoreDumpBuildIdentifier(const char* build_identifier
 }
 
 void HeapwatchConnector::setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
+    const bool changed = boot_cycle != g_boot_cycle || crash_boot_cycle != g_crash_boot_cycle;
     g_boot_cycle = boot_cycle;
     g_crash_boot_cycle = crash_boot_cycle;
-    // MQTT-up boot sync often runs while app_main is still waiting on network /
-    // server last-boot-cycle, so the first specs publish used boot_cycle=0.
-    // Re-queue once the host sets the real counter.
-    if (heapwatch_dispatcher_is_mqtt_connected()) {
+    // The server boot-cycle resume runs on hw_bootstrap and can land after the MQTT-up boot sync
+    // already published specs. Re-queue only when the counter actually moved — the initialize()
+    // path sets it before MQTT starts, so the common case publishes specs once.
+    if (changed && heapwatch_dispatcher_is_mqtt_connected()) {
         queueSpecs();
     }
 }

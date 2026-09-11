@@ -21,15 +21,11 @@
 #include "device_credentials/DeviceCredentialsStore.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
 
-// Phase 5 (main.cpp extraction): host-app boilerplate that every client integration
-// otherwise has to write by hand today — Wi-Fi bring-up, SNTP time sync, boot-credential
-// resolution (NVS provisioned credentials → device enrollment), and the ESP log-vprintf
-// relay pipeline. Each piece stays independently Kconfig-gated (HEAPWATCH_MANAGE_WIFI,
-// HEAPWATCH_MANAGE_TIME_SYNC, HEAPWATCH_ENABLE_LOG_COLLECTION), same behavior as before the
-// extraction — this only moves the code out of main.cpp so a client app_main can stay short.
-// Deliberately kept as free functions in `main/` (not yet folded into HeapwatchConnector
-// itself, nor extracted to the standalone component repo) per this project's documented
-// approach: "develop in place inside heapwatch-firmware-crasher; extract at the end."
+// Boilerplate a client integration would otherwise write by hand: Wi-Fi bring-up, SNTP time
+// sync, boot-credential resolution (NVS provisioned credentials → device enrollment), and the
+// ESP log-vprintf relay pipeline. Each piece is independently Kconfig-gated
+// (HEAPWATCH_MANAGE_WIFI, HEAPWATCH_MANAGE_TIME_SYNC, HEAPWATCH_ENABLE_LOG_COLLECTION).
+// Driven by connector_lifecycle; not part of the public heapwatch.h surface.
 namespace heapwatch::connector_bootstrap {
 
 struct BootCredentials {

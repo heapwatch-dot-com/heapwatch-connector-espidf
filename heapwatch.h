@@ -20,6 +20,10 @@
  *
  *   ESP_ERROR_CHECK(heapwatch_initialize());
  *   // ... your application (LVGL, sensors, etc.) — never blocks on enrollment ...
+ *   heapwatch_notify_app_started();
+ *
+ * Boot identity (boot counter, crash attribution, STARTING_UP and deep-sleep wake telemetry)
+ * is owned by the connector — the host app never wires it up.
  */
 
 #ifndef HEAPWATCH_H
@@ -124,10 +128,12 @@ esp_err_t heapwatch_initialize(void);
 void heapwatch_deinit(void);
 
 /**
- * Optional: attribute STARTING_UP / coredump headers to a boot-cycle counter.
- * Call after heapwatch_initialize(), before queuing the STARTING_UP event.
+ * Report that the host application finished its own start-up (queues STARTED_UP).
+ * Call once at the end of your init. heapwatch_initialize() already queued STARTING_UP,
+ * so this pair brackets your boot on the timeline.
+ * Returns ESP_ERR_HEAPWATCH_NOT_INITIALIZED when called before heapwatch_initialize().
  */
-void heapwatch_set_boot_cycle_context(uint32_t boot_cycle, uint32_t crash_boot_cycle);
+esp_err_t heapwatch_notify_app_started(void);
 
 esp_err_t heapwatch_get_status(heapwatch_status_t* out);
 

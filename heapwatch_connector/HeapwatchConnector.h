@@ -113,6 +113,7 @@ public:
     void setCoreDumpUploadUrl(const char* url);
     void setRestApiAuthToken(const char* token);
     void setCoreDumpBuildIdentifier(const char* build_identifier);
+    /** Internal — driven by connector_lifecycle, which owns the NVS boot counter. */
     void setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle);
 
     bool queueLog(HeapwatchConnectorSeverity severity, const char* message,

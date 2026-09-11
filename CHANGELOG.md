@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-11
+
+### Added
+- **Boot identity is connector-owned.** `heapwatch_initialize()` now advances the NVS boot counter, applies `ESP_RST_PANIC` crash attribution, and queues `STARTING_UP` plus deep-sleep wake telemetry (`wake_cause_code`, `sleep_duration_ms`). The server boot-cycle resume — for devices whose NVS was erased but which still hold fleet credentials — runs on `hw_bootstrap` after MQTT activation. Host apps no longer write any of this; a client `app_main` is `heapwatch_initialize()` plus `heapwatch_notify_app_started()`.
+- `heapwatch_notify_app_started()` queues `STARTED_UP`, so the event marks the end of the *host app's* own start-up instead of being emitted back-to-back with `STARTING_UP`.
+
+### Removed
+- **BREAKING:** Removed public `heapwatch_set_boot_cycle_context()`. The connector reads and advances the boot counter itself, so there is nothing for the host to feed in. Clients that called it should delete the call along with their own boot-counter, `STARTING_UP` and deep-sleep-wake wiring.
+
+### Fixed
+- Telemetry no longer reports `boot_cycle=0` for the first payloads of a boot. The counter was previously set by the host app *after* `heapwatch_initialize()` returned, so the MQTT-up boot sync could publish specs and events before it landed. This also removes the compensating duplicate `specs` publish that ran on every boot — specs are now re-queued only if the counter actually changes (server resume).
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

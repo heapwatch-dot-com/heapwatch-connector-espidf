@@ -69,8 +69,13 @@ void heapwatch_deinit(void) {
     heapwatch::connector_lifecycle::deinitialize();
 }
 
-void heapwatch_set_boot_cycle_context(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
-    HeapwatchConnector::getInstance().setBootCycleContext(boot_cycle, crash_boot_cycle);
+esp_err_t heapwatch_notify_app_started(void) {
+    const esp_err_t ready = require_queue_ready();
+    if (ready != ESP_OK) {
+        return ready;
+    }
+    HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_STARTED_UP);
+    return ESP_OK;
 }
 
 esp_err_t heapwatch_get_status(heapwatch_status_t* out) {
