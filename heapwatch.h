@@ -237,6 +237,21 @@ typedef struct {
  */
 esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t* catalog);
 
+/* ---------------------------------------------------------------------------
+   Filesystem volumes
+   --------------------------------------------------------------------------- */
+
+/**
+ * Map a flash partition label to a VFS mount path. Call before
+ * heapwatch_initialize() (and after heapwatch_deinit() before the next init).
+ *
+ * Auto-mount on: connector mounts this label at mount_path instead of /<label>.
+ * Auto-mount off: required so the file browser can use a host-mounted volume.
+ *
+ * Table size is 8. Duplicate labels replace the previous mapping.
+ */
+esp_err_t heapwatch_register_fs_volume(const char* partition_label, const char* mount_path);
+
 /** Build metadata from generated heapwatch_build_metadata.h (compile-time). */
 const char* heapwatch_get_build_identifier(void);
 /** Client app git-describe string (HEAPWATCH_APP_SOURCE_VERSION). */

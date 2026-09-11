@@ -12,6 +12,9 @@ heapwatch_phase_t getPhase();
 /** Idempotent. Returns immediately; bootstrap runs on a background task. */
 esp_err_t initialize();
 
+/** True after initialize() until deinitialize() completes. */
+bool initializeCalled();
+
 /** Stop all connector tasks and hooks so initialize() can be called again. */
 void deinitialize();
 

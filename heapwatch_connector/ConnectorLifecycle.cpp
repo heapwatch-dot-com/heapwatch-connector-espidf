@@ -8,6 +8,7 @@
 #include "../stream_ingress/StreamIngressClient.h"
 #include "device_enrollment/EnrollStateLedIndicator.h"
 #include "device_network/DeviceNetworkReporter.h"
+#include "device_fs/FsVolumeManager.h"
 
 #include <cstring>
 
@@ -325,6 +326,7 @@ void deinitialize() {
     unregisterNetIpEventHandlers();
     heapwatch::device_enrollment::stopIndicator();
     heapwatch::device_network::stop();
+    heapwatch::fs_volumes::unmountConnectorOwned();
 
     g_initialize_called = false;
     g_misconfigured = false;
@@ -334,6 +336,10 @@ void deinitialize() {
     g_bootstrap_task = nullptr;
     g_bootstrap_exited = true;
     setPhase(HEAPWATCH_PHASE_STARTING);
+}
+
+bool initializeCalled() {
+    return g_initialize_called;
 }
 
 }  // namespace heapwatch::connector_lifecycle

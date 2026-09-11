@@ -12,6 +12,7 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "sdkconfig.h"
+#include "device_fs/HeapwatchFsPartition.h"
 #include "heapwatch.h"
 
 namespace heapwatch::device_specs {
@@ -139,10 +140,11 @@ const char* partition_subtype_name(esp_partition_type_t type, esp_partition_subt
             case ESP_PARTITION_SUBTYPE_DATA_FAT: return "fat";
             case ESP_PARTITION_SUBTYPE_DATA_SPIFFS: return "spiffs";
             case ESP_PARTITION_SUBTYPE_DATA_COREDUMP: return "coredump";
-#ifdef ESP_PARTITION_SUBTYPE_DATA_LITTLEFS
-            case ESP_PARTITION_SUBTYPE_DATA_LITTLEFS: return "littlefs";
-#endif
-            default: return "data";
+            default:
+                if (heapwatchIsLittlefsSubtype(subtype)) {
+                    return "littlefs";
+                }
+                return "data";
         }
     }
 

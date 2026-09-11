@@ -20,7 +20,7 @@ file(GLOB_RECURSE HEAPWATCH_CONNECTOR_SRCS
     "${CMAKE_CURRENT_SOURCE_DIR}/stream_ingress/*.cpp"
 )
 
-set(HEAPWATCH_REQUIRES spiffs)
+set(HEAPWATCH_REQUIRES spiffs fatfs wear_levelling joltwallet__littlefs)
 
 # ESP-IDF 5.x ships cJSON as the built-in `json` component. IDF 6+ uses
 # espressif/cjson from the Component Manager (see idf_component.yml).

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Auto-mounts every flash `data/spiffs`, `data/littlefs`, and `data/fat` partition at `/<label>` (Kconfig **Auto-mount all storage partitions**, default on). Already-mounted volumes are treated as success and stay host-owned.
+- Kconfig **Auto-format blank storage partitions** (default on) formats only when the connector itself performs the mount.
+- Public `heapwatch_register_fs_volume(label, mount_path)` before `heapwatch_initialize()`: custom mount path when auto-mount is on, or required mapping when auto-mount is off.
+- File browser and `storage.free_bytes` / `storage.used_bytes` cover every mounted SPIFFS, LittleFS, and FatFS volume.
+
+### Fixed
+- Partition table `total_bytes` is the flash partition size again (not SPIFFS/FAT usable capacity, which was drawing fake unused-flash gaps).
+- LittleFS (`0x83`) is recognized as a filesystem: named in the partition dump, auto-mounted, and listed as a file-browser volume.
+- File-browser `modified_at` is JSON `null` when the filesystem has no mtime (`stat` epoch 0), instead of `1970-01-01`.
+
 ## [0.7.0] - 2026-09-10
 
 ### Changed

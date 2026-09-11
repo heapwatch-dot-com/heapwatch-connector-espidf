@@ -234,14 +234,40 @@ menu "Heapwatch Connector"
                 catches corruption before it causes a crash, instead of only finding out
                 post-hoc via coredump. Default off: walking the full heap has a heavy CPU load.
 
+        menu "Filesystem volumes"
+            config HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
+                bool "Auto-mount all storage partitions"
+                default y
+                help
+                    At heapwatch_initialize(), scan data/spiffs, data/littlefs, and data/fat
+                    flash partitions and mount each at /<label> (or a path from
+                    heapwatch_register_fs_volume). Already-mounted partitions are treated as
+                    success and remain host-owned (not unmounted on deinit).
+                    When disabled, the host must call heapwatch_register_fs_volume(label,
+                    mount_path) before init; the connector never mounts and only browses
+                    registered VFS roots that are already up.
+                    Raise CONFIG_SPIFFS_MAX_PARTITIONS / CONFIG_LITTLEFS_MAX_PARTITIONS if
+                    the table has more filesystem partitions than those IDF defaults.
+
+            config HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
+                bool "Auto-format blank storage partitions"
+                default y
+                depends on HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
+                help
+                    When the connector performs a mount, pass format_if_mount_failed to
+                    SPIFFS, LittleFS, and FatFS. Only applies to connector-owned mounts, not
+                    to partitions the host already mounted.
+
+        endmenu
+
         menu "Collect Storage Stats"
             config HEAPWATCH_ENABLE_STORAGE_STATS
                 bool "Report internal-flash filesystem stats (STORAGE1)"
                 default y
                 help
-                    Mounts the "storage" SPIFFS partition (see partitions.csv) at boot and
-                    reports storage.free_bytes/storage.used_bytes via the generic parameter
-                    mechanism (PARAM1) once per telemetry round. Separate from NVS stats.
+                    Reports storage.free_bytes/storage.used_bytes (PARAM1) once per telemetry
+                    round, summing every mounted flash filesystem volume plus an optional SD
+                    card. Separate from NVS stats.
 
             config HEAPWATCH_ENABLE_SD_CARD_STATS
                 bool "Also mount and report an SD card over SPI"

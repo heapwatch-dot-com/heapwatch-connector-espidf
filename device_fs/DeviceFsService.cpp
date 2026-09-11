@@ -14,7 +14,6 @@
 #include "esp_flash_partitions.h"
 #include "esp_log.h"
 #include "esp_partition.h"
-#include "esp_spiffs.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "mbedtls/sha256.h"
@@ -22,6 +21,8 @@
 
 #include "../stream_ingress/StreamIngressClient.h"
 #include "../stream_ingress/StreamIngressMux.h"
+#include "FsVolumeManager.h"
+#include "HeapwatchFsPartition.h"
 
 namespace heapwatch::device_fs {
 
@@ -29,8 +30,6 @@ namespace {
 
 constexpr char TAG[] = "HwFs";
 
-constexpr char kSpiffsMount[] = "/storage";
-constexpr char kSpiffsLabel[] = "storage";
 constexpr char kSdMount[] = "/sd";
 
 /** ESP-IDF: partition table always occupies one 4 KiB flash sector. */
@@ -99,12 +98,6 @@ bool containsDotDot(const char* path) {
            strcmp(path, "..") == 0;
 }
 
-bool spiffsMounted() {
-    size_t total = 0;
-    size_t used = 0;
-    return esp_spiffs_info(kSpiffsLabel, &total, &used) == ESP_OK;
-}
-
 bool sdMounted() {
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
     uint64_t total = 0;
@@ -130,12 +123,14 @@ void cleanupOrphanUploadTemps(const char* mount) {
         if (entry->d_name[0] == '\0') {
             continue;
         }
-        // Matcher: .hw-<id>.tmp (SPIFFS-safe temp names from DeviceFsBrowserService).
+        // Matcher: .hw-<id>.tmp (legacy) or hwXXXXXX.tmp (FatFS 8.3-safe).
         const size_t name_len = strlen(entry->d_name);
-        if (name_len < 9 || strncmp(entry->d_name, ".hw-", 4) != 0) {
-            continue;
-        }
-        if (strcmp(entry->d_name + name_len - 4, ".tmp") != 0) {
+        const bool legacy_spiffs_temp =
+            name_len >= 9 && strncmp(entry->d_name, ".hw-", 4) == 0 &&
+            strcmp(entry->d_name + name_len - 4, ".tmp") == 0;
+        const bool fat_safe_temp = name_len >= 8 && strncmp(entry->d_name, "hw", 2) == 0 &&
+                                   strcmp(entry->d_name + name_len - 4, ".tmp") == 0;
+        if (!legacy_spiffs_temp && !fat_safe_temp) {
             continue;
         }
 
@@ -167,13 +162,14 @@ bool volumeHasSpaceForUpload(const char* path, int64_t needed, FsError* error) {
 
     int64_t free_bytes = -1;
 
-    if (pathStartsWith(path, kSpiffsMount) && spiffsMounted()) {
+    const fs_volumes::Volume* flash_vol = fs_volumes::findByPath(path);
+    if (flash_vol != nullptr) {
         size_t total = 0;
         size_t used = 0;
-        if (esp_spiffs_info(kSpiffsLabel, &total, &used) != ESP_OK) {
+        if (!fs_volumes::queryUsage(*flash_vol, &total, &used)) {
             if (error != nullptr) {
                 error->code = "io_error";
-                error->message = "Failed to query SPIFFS free space.";
+                error->message = "Failed to query filesystem free space.";
             }
             return false;
         }
@@ -416,7 +412,7 @@ bool isAllowedPath(const char* path) {
     if (containsDotDot(path)) {
         return false;
     }
-    if (pathStartsWith(path, kSpiffsMount) && spiffsMounted()) {
+    if (fs_volumes::pathIsAllowed(path)) {
         return true;
     }
     if (pathStartsWith(path, kSdMount) && sdMounted()) {
@@ -458,24 +454,6 @@ void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON*
     }
 
     cJSON_free(json);
-}
-
-cJSON* buildSpiffsVolumeObject() {
-    size_t total = 0;
-    size_t used = 0;
-    if (esp_spiffs_info(kSpiffsLabel, &total, &used) != ESP_OK) {
-        return nullptr;
-    }
-
-    cJSON* vol = cJSON_CreateObject();
-    cJSON_AddStringToObject(vol, "id", "storage");
-    cJSON_AddStringToObject(vol, "label", "SPIFFS Storage");
-    cJSON_AddStringToObject(vol, "path", kSpiffsMount);
-    cJSON_AddStringToObject(vol, "filesystem", "spiffs");
-    cJSON_AddStringToObject(vol, "partition_id", kSpiffsLabel);
-    cJSON_AddNumberToObject(vol, "total_bytes", static_cast<double>(total));
-    cJSON_AddNumberToObject(vol, "used_bytes", static_cast<double>(used));
-    return vol;
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
@@ -549,11 +527,10 @@ const char* espSubtypeName(esp_partition_type_t type, esp_partition_subtype_t su
                 return "fat";
             case ESP_PARTITION_SUBTYPE_DATA_SPIFFS:
                 return "spiffs";
-#ifdef ESP_PARTITION_SUBTYPE_DATA_LITTLEFS
-            case ESP_PARTITION_SUBTYPE_DATA_LITTLEFS:
-                return "littlefs";
-#endif
             default:
+                if (heapwatchIsLittlefsSubtype(subtype)) {
+                    return "littlefs";
+                }
                 return nullptr;
         }
     }
@@ -576,13 +553,25 @@ bool formatOtaSubtypeName(esp_partition_type_t type, esp_partition_subtype_t sub
     return true;
 }
 
-bool trySpiffsUsedBytes(const char* label, int64_t* used_out, int64_t* total_out) {
+bool tryFsUsedBytes(const char* label, fs_volumes::Kind kind, int64_t* used_out, int64_t* total_out) {
     if (label == nullptr || used_out == nullptr || total_out == nullptr) {
         return false;
     }
     size_t total = 0;
     size_t used = 0;
-    if (esp_spiffs_info(label, &total, &used) != ESP_OK) {
+    if (kind == fs_volumes::Kind::Fat) {
+        const fs_volumes::Volume* vol = nullptr;
+        for (size_t i = 0; i < fs_volumes::mountedCount(); ++i) {
+            const fs_volumes::Volume* candidate = fs_volumes::volumeAt(i);
+            if (candidate != nullptr && strcmp(candidate->label, label) == 0) {
+                vol = candidate;
+                break;
+            }
+        }
+        if (vol == nullptr || !fs_volumes::queryUsage(*vol, &total, &used)) {
+            return false;
+        }
+    } else if (!fs_volumes::queryUsageByLabel(label, kind, &total, &used)) {
         return false;
     }
     *total_out = static_cast<int64_t>(total);
@@ -668,16 +657,35 @@ cJSON* buildPartitionObject(const esp_partition_t* part) {
     int64_t used = -1;
     int64_t total_bytes = static_cast<int64_t>(part->size);
 
+    fs_volumes::Kind kind = fs_volumes::Kind::Spiffs;
+    bool is_fs = false;
     if (part->type == ESP_PARTITION_TYPE_DATA &&
         part->subtype == ESP_PARTITION_SUBTYPE_DATA_SPIFFS) {
-        int64_t spiffs_used = 0;
-        int64_t spiffs_total = 0;
-        if (trySpiffsUsedBytes(label, &spiffs_used, &spiffs_total)) {
-            used = spiffs_used;
-            total_bytes = spiffs_total;
-            if (strcmp(label, kSpiffsLabel) == 0 && spiffsMounted()) {
+        kind = fs_volumes::Kind::Spiffs;
+        is_fs = true;
+    } else if (part->type == ESP_PARTITION_TYPE_DATA &&
+               heapwatchIsLittlefsSubtype(part->subtype)) {
+        kind = fs_volumes::Kind::Littlefs;
+        is_fs = true;
+    } else if (part->type == ESP_PARTITION_TYPE_DATA &&
+               part->subtype == ESP_PARTITION_SUBTYPE_DATA_FAT) {
+        kind = fs_volumes::Kind::Fat;
+        is_fs = true;
+    }
+
+    if (is_fs) {
+        int64_t fs_used = 0;
+        int64_t fs_total = 0;
+        if (tryFsUsedBytes(label, kind, &fs_used, &fs_total)) {
+            used = fs_used;
+            (void)fs_total;
+        }
+        for (size_t i = 0; i < fs_volumes::mountedCount(); ++i) {
+            const fs_volumes::Volume* vol = fs_volumes::volumeAt(i);
+            if (vol != nullptr && vol->browsable && strcmp(vol->label, label) == 0) {
                 browsable = true;
-                volume_id = "storage";
+                volume_id = vol->label;
+                break;
             }
         }
     }
@@ -739,8 +747,9 @@ cJSON* buildPartitionsArray() {
 }
 
 cJSON* buildVolumeSnapshotForPath(const char* path) {
-    if (pathStartsWith(path, kSpiffsMount) && spiffsMounted()) {
-        return buildSpiffsVolumeObject();
+    const fs_volumes::Volume* flash_vol = fs_volumes::findByPath(path);
+    if (flash_vol != nullptr) {
+        return fs_volumes::buildVolumeObject(*flash_vol);
     }
 
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
@@ -755,10 +764,14 @@ cJSON* buildVolumeSnapshotForPath(const char* path) {
 cJSON* buildVolumesResult() {
     cJSON* volumes = cJSON_CreateArray();
 
-    if (spiffsMounted()) {
-        cJSON* vol = buildSpiffsVolumeObject();
-        if (vol != nullptr) {
-            cJSON_AddItemToArray(volumes, vol);
+    for (size_t i = 0; i < fs_volumes::mountedCount(); ++i) {
+        const fs_volumes::Volume* vol = fs_volumes::volumeAt(i);
+        if (vol == nullptr || !vol->browsable) {
+            continue;
+        }
+        cJSON* obj = fs_volumes::buildVolumeObject(*vol);
+        if (vol != nullptr && obj != nullptr) {
+            cJSON_AddItemToArray(volumes, obj);
         }
     }
 
@@ -853,7 +866,8 @@ cJSON* buildListResult(const char* path, int page, int per_page, FsError* error)
         row.size = S_ISDIR(st.st_mode) ? 0 : static_cast<int64_t>(st.st_size);
 
         char iso[32] = {};
-        if (formatIso8601(st.st_mtime, iso, sizeof(iso))) {
+        // LittleFS dirs (and SPIFFS) often report Unix epoch 0; treat as unknown.
+        if (st.st_mtime > 0 && formatIso8601(st.st_mtime, iso, sizeof(iso))) {
             row.modified_at = iso;
         }
 
@@ -1188,8 +1202,9 @@ bool beginUploadJob(const char* command_id, const char* path, const char* temp_p
         }
     }
 
-    if (pathStartsWith(path, kSpiffsMount)) {
-        cleanupOrphanUploadTemps(kSpiffsMount);
+    const fs_volumes::Volume* flash_vol = fs_volumes::findByPath(path);
+    if (flash_vol != nullptr) {
+        cleanupOrphanUploadTemps(flash_vol->mount_path);
     }
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
     else if (pathStartsWith(path, kSdMount)) {

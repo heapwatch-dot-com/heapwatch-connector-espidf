@@ -34,6 +34,8 @@
 #include "device_command/DeviceCommandHandler.h"
 #include "device_command/SleepHooks.h"
 #include "connector_settings/ConnectorSettings.h"
+#include "device_fs/FsVolumeManager.h"
+#include "device_ota/OtaService.h"
 #include "device_ota/OtaService.h"
 #include "../stream_ingress/StreamIngressClient.h"
 
@@ -382,6 +384,10 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
     }
 
     return ESP_OK;
+}
+
+esp_err_t heapwatch_register_fs_volume(const char* partition_label, const char* mount_path) {
+    return heapwatch::fs_volumes::registerVolume(partition_label, mount_path);
 }
 
 const char* heapwatch_get_build_identifier(void) { return k_embedded_build_identifier; }
