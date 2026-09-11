@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-11
+
+### Added
+- MQTT `specs` payloads include `boot_cycle` (same counter as events). Standard events always include `boot_cycle` (defaults to the connector’s current boot).
+
+### Fixed
+- `config/set` accepts JSON types from the field catalog (int/enum numbers, bools, strings) instead of rejecting every non-number/bool before `setValue`.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added
