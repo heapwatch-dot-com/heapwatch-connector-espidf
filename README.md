@@ -15,7 +15,7 @@ dependencies:
   idf:
     version: ">=5.1.0"
   heapwatch_connector_espidf:
-    git: git@github.com:viktorjamrich/heapwatch-connector-espidf.git
+    git: git@github.com:heapwatch-dot-com/heapwatch-connector-espidf.git
     version: main
 ```
 
@@ -28,8 +28,14 @@ dependencies:
 
 void app_main(void) {
     ESP_ERROR_CHECK(heapwatch_initialize());
+    // ... your application ...
+    heapwatch_notify_app_started();
 }
 ```
+
+That is the whole integration. NVS, the event loop, Wi-Fi, SNTP, enrollment, MQTT, the log
+relay, the boot counter and crash attribution are all owned by the connector and run on its
+own `hw_*` tasks — `heapwatch_initialize()` returns immediately and never blocks your boot.
 
 Configure once:
 
