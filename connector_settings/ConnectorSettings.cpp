@@ -97,6 +97,70 @@ size_t g_catalog_count = 0;
 CachedSettings g_cache = {};
 CachedSettings g_persisted = {};
 
+struct OverlayEntry {
+    char nvs_namespace[16];
+    char nvs_key[16];
+    cJSON* value;
+};
+
+constexpr size_t kMaxOverlayEntries = 16;
+OverlayEntry g_overlay[kMaxOverlayEntries] = {};
+
+bool overlayKeyEquals(const OverlayEntry& entry, const char* nvs_namespace, const char* nvs_key) {
+    return entry.value != nullptr && strcmp(entry.nvs_namespace, nvs_namespace) == 0 &&
+           strcmp(entry.nvs_key, nvs_key) == 0;
+}
+
+cJSON* findOverlayValue(const char* nvs_namespace, const char* nvs_key) {
+    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+        if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
+            return g_overlay[i].value;
+        }
+    }
+    return nullptr;
+}
+
+void clearOverlay(const char* nvs_namespace, const char* nvs_key) {
+    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+        if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
+            cJSON_Delete(g_overlay[i].value);
+            g_overlay[i].value = nullptr;
+            g_overlay[i].nvs_namespace[0] = '\0';
+            g_overlay[i].nvs_key[0] = '\0';
+            return;
+        }
+    }
+}
+
+bool setOverlay(const char* nvs_namespace, const char* nvs_key, const cJSON* value) {
+    OverlayEntry* slot = nullptr;
+    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+        if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
+            slot = &g_overlay[i];
+            break;
+        }
+        if (slot == nullptr && g_overlay[i].value == nullptr) {
+            slot = &g_overlay[i];
+        }
+    }
+    if (slot == nullptr) {
+        return false;
+    }
+
+    cJSON* copy = cJSON_Duplicate(value, true);
+    if (copy == nullptr) {
+        return false;
+    }
+
+    if (slot->value != nullptr) {
+        cJSON_Delete(slot->value);
+    }
+    snprintf(slot->nvs_namespace, sizeof(slot->nvs_namespace), "%s", nvs_namespace);
+    snprintf(slot->nvs_key, sizeof(slot->nvs_key), "%s", nvs_key);
+    slot->value = copy;
+    return true;
+}
+
 const ManagedCatalog* findCatalog(const char* nvs_namespace) {
     if (nvs_namespace == nullptr) {
         return nullptr;
@@ -216,10 +280,6 @@ bool writeU8(nvs_handle_t handle, const char* key, uint8_t value) {
 }
 
 bool validateIntField(const FieldSchema& field, const cJSON* value, int* parsed) {
-    if (cJSON_IsBool(value)) {
-        *parsed = cJSON_IsTrue(value) ? 1 : 0;
-        return *parsed >= field.min_value && *parsed <= field.max_value;
-    }
     if (!cJSON_IsNumber(value)) {
         return false;
     }
@@ -229,6 +289,19 @@ bool validateIntField(const FieldSchema& field, const cJSON* value, int* parsed)
     }
     *parsed = as_int;
     return true;
+}
+
+bool jsonMatchesFieldType(const FieldSchema& field, const cJSON* value) {
+    if (strcmp(field.type, "bool") == 0) {
+        return cJSON_IsBool(value);
+    }
+    if (strcmp(field.type, "string") == 0) {
+        return cJSON_IsString(value) && value->valuestring != nullptr;
+    }
+    if (strcmp(field.type, "int") == 0 || strcmp(field.type, "enum") == 0) {
+        return cJSON_IsNumber(value);
+    }
+    return false;
 }
 
 cJSON* readNvsValueAsJson(nvs_handle_t handle, const char* key, nvs_type_t type) {
@@ -330,9 +403,15 @@ cJSON* readCatalogFieldFromNvs(nvs_handle_t handle, const FieldSchema& field) {
 }
 
 void addCatalogFieldToJson(cJSON* values, nvs_handle_t handle, const FieldSchema& field,
-                           const CachedSettings& settings) {
+                           const CachedSettings& settings, const char* nvs_namespace) {
     if (field.secret) {
         cJSON_AddStringToObject(values, field.nvs_key, MASKED_SECRET);
+        return;
+    }
+
+    cJSON* overlay = findOverlayValue(nvs_namespace, field.nvs_key);
+    if (overlay != nullptr) {
+        cJSON_AddItemToObject(values, field.nvs_key, cJSON_Duplicate(overlay, true));
         return;
     }
 
@@ -385,7 +464,10 @@ bool persistKeyToNvs(const char* nvs_key) {
     return ok;
 }
 
-bool isKeyDirty(const char* nvs_key) {
+bool isKeyDirty(const char* nvs_namespace, const char* nvs_key) {
+    if (findOverlayValue(nvs_namespace, nvs_key) != nullptr) {
+        return true;
+    }
     if (strcmp(nvs_key, KEY_LOG_LVL) == 0) {
         return g_cache.min_relay_severity != g_persisted.min_relay_severity;
     }
@@ -398,7 +480,8 @@ bool isKeyDirty(const char* nvs_key) {
     return false;
 }
 
-void copyPersistedKeyToCache(const char* nvs_key) {
+void copyPersistedKeyToCache(const char* nvs_namespace, const char* nvs_key) {
+    clearOverlay(nvs_namespace, nvs_key);
     if (strcmp(nvs_key, KEY_LOG_LVL) == 0) {
         g_cache.min_relay_severity = g_persisted.min_relay_severity;
         return;
@@ -501,7 +584,8 @@ cJSON* buildManagedValuesObject(const ManagedCatalog& catalog, const CachedSetti
     const bool has_handle = nvs_open(catalog.nvs_namespace, NVS_READONLY, &handle) == ESP_OK;
 
     for (size_t i = 0; i < catalog.field_count; ++i) {
-        addCatalogFieldToJson(values, has_handle ? handle : 0, catalog.fields[i], settings);
+        addCatalogFieldToJson(values, has_handle ? handle : 0, catalog.fields[i], settings,
+                              catalog.nvs_namespace);
     }
 
     if (has_handle) {
@@ -602,22 +686,34 @@ bool setValue(const char* nvs_namespace, const char* nvs_key, const cJSON* value
         return false;
     }
 
-    int parsed = 0;
-    if (!validateIntField(*field, value, &parsed)) {
+    if (!jsonMatchesFieldType(*field, value)) {
         if (error_out != nullptr && error_out_len > 0) {
             snprintf(error_out, error_out_len, "invalid value for %s", nvs_key);
         }
         return false;
     }
 
-    if (!applyParsedToCache(nvs_key, parsed)) {
+    if (strcmp(field->type, "int") == 0 || strcmp(field->type, "enum") == 0) {
+        int parsed = 0;
+        if (!validateIntField(*field, value, &parsed)) {
+            if (error_out != nullptr && error_out_len > 0) {
+                snprintf(error_out, error_out_len, "invalid value for %s", nvs_key);
+            }
+            return false;
+        }
+        if (applyParsedToCache(nvs_key, parsed)) {
+            applyRuntime();
+            return true;
+        }
+    }
+
+    if (!setOverlay(nvs_namespace, nvs_key, value)) {
         if (error_out != nullptr && error_out_len > 0) {
             snprintf(error_out, error_out_len, "unsupported key %s", nvs_key);
         }
         return false;
     }
 
-    applyRuntime();
     return true;
 }
 
@@ -638,13 +734,38 @@ bool persistManagedValues(const char* nvs_namespace, const cJSON* keys_or_null, 
             }
             return false;
         }
-        if (!persistKeyToNvs(key)) {
+        if (isCachedPatchableKey(key) && persistKeyToNvs(key)) {
+            copyCacheKeyToPersisted(key);
+            return true;
+        }
+
+        cJSON* overlay = findOverlayValue(catalog->nvs_namespace, key);
+        if (overlay == nullptr) {
             if (error_out != nullptr && error_out_len > 0) {
                 snprintf(error_out, error_out_len, "nvs persist failed");
             }
             return false;
         }
-        copyCacheKeyToPersisted(key);
+
+        nvs_handle_t handle = 0;
+        if (nvs_open(catalog->nvs_namespace, NVS_READWRITE, &handle) != ESP_OK) {
+            if (error_out != nullptr && error_out_len > 0) {
+                snprintf(error_out, error_out_len, "nvs persist failed");
+            }
+            return false;
+        }
+        bool ok = writeJsonValueToNvs(handle, key, overlay);
+        if (ok) {
+            ok = nvs_commit(handle) == ESP_OK;
+        }
+        nvs_close(handle);
+        if (!ok) {
+            if (error_out != nullptr && error_out_len > 0) {
+                snprintf(error_out, error_out_len, "nvs persist failed");
+            }
+            return false;
+        }
+        clearOverlay(catalog->nvs_namespace, key);
         return true;
     };
 
@@ -661,7 +782,7 @@ bool persistManagedValues(const char* nvs_namespace, const cJSON* keys_or_null, 
 
     for (size_t i = 0; i < catalog->field_count; ++i) {
         const char* key = catalog->fields[i].nvs_key;
-        if (!isKeyDirty(key)) {
+        if (!isKeyDirty(catalog->nvs_namespace, key)) {
             continue;
         }
         if (!persistOneKey(key)) {
@@ -698,14 +819,14 @@ bool revertManagedValues(const char* nvs_namespace, const cJSON* keys, char* err
                 }
                 return false;
             }
-            copyPersistedKeyToCache(item->valuestring);
+            copyPersistedKeyToCache(catalog->nvs_namespace, item->valuestring);
         }
         applyRuntime();
         return true;
     }
 
     for (size_t i = 0; i < catalog->field_count; ++i) {
-        copyPersistedKeyToCache(catalog->fields[i].nvs_key);
+        copyPersistedKeyToCache(catalog->nvs_namespace, catalog->fields[i].nvs_key);
     }
     applyRuntime();
     return true;

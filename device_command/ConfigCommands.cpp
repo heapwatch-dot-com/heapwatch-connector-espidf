@@ -88,14 +88,6 @@ void handleConfigSet(const char* suffix, char* command_id, const char* payload, 
             free(command_id);
             return;
         }
-        if (!cJSON_IsNumber(child) && !cJSON_IsBool(child)) {
-            char err[96] = {};
-            snprintf(err, sizeof(err), "invalid value for %s", child->string);
-            cJSON_Delete(root);
-            publishWithResult(suffix, command_id, false, "bad_args", err, nullptr);
-            free(command_id);
-            return;
-        }
 
         char set_err[96] = {};
         if (!heapwatch::connector_settings::setValue(namespace_buf, child->string, child, set_err,
