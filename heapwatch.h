@@ -149,7 +149,8 @@ bool heapwatch_keep_running(void);
    --------------------------------------------------------------------------- */
 
 /**
- * Queue a standard event. Pass boot_cycle < 0 to omit the boot_cycle JSON field.
+ * Queue a standard event. Pass boot_cycle < 0 to use the connector’s current boot cycle.
+ * The MQTT payload always includes boot_cycle.
  */
 esp_err_t heapwatch_queue_event(int event_type_id, int32_t boot_cycle);
 

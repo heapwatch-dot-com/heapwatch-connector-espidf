@@ -376,6 +376,12 @@ void HeapwatchConnector::setCoreDumpBuildIdentifier(const char* build_identifier
 void HeapwatchConnector::setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
     g_boot_cycle = boot_cycle;
     g_crash_boot_cycle = crash_boot_cycle;
+    // MQTT-up boot sync often runs while app_main is still waiting on network /
+    // server last-boot-cycle, so the first specs publish used boot_cycle=0.
+    // Re-queue once the host sets the real counter.
+    if (heapwatch_dispatcher_is_mqtt_connected()) {
+        queueSpecs();
+    }
 }
 
 static const char* severity_to_string(HeapwatchConnectorSeverity severity) {
@@ -793,31 +799,20 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    if (boot_cycle < 0) {
+        boot_cycle = static_cast<int32_t>(g_boot_cycle);
+    }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    if (boot_cycle >= 0) {
-        snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
-                 "{\"tsms\":%llu,\"utms\":%llu,\"event_type_id\":%d,\"boot_cycle\":%ld}",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-                 eventTypeId, static_cast<long>(boot_cycle));
-    } else {
-        snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
-                 "{\"tsms\":%llu,\"utms\":%llu,\"event_type_id\":%d}",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-                 eventTypeId);
-    }
+    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+             "{\"tsms\":%llu,\"utms\":%llu,\"event_type_id\":%d,\"boot_cycle\":%ld}",
+             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
+             eventTypeId, static_cast<long>(boot_cycle));
 #else
-    if (boot_cycle >= 0) {
-        snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
-                 "tsms=%llu|utms=%llu|event_type_id=%d|boot_cycle=%ld",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-                 eventTypeId, static_cast<long>(boot_cycle));
-    } else {
-        snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
-                 "tsms=%llu|utms=%llu|event_type_id=%d",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-                 eventTypeId);
-    }
+    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+             "tsms=%llu|utms=%llu|event_type_id=%d|boot_cycle=%ld",
+             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
+             eventTypeId, static_cast<long>(boot_cycle));
 #endif
 
     const bool fw_ota_event =
@@ -885,12 +880,14 @@ void HeapwatchConnector::queueSpecs() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             "{\"tsms\":%llu,\"utms\":%llu,\"boot_cycle\":%lu,%s",
+             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
+             static_cast<unsigned long>(g_boot_cycle), g_scratch_specs_body + 1);
 #else
     snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
-             "tsms=%llu|utms=%llu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             "tsms=%llu|utms=%llu|boot_cycle=%lu|%s", static_cast<unsigned long long>(tsms),
+             static_cast<unsigned long long>(utms), static_cast<unsigned long>(g_boot_cycle),
+             g_scratch_specs_body + 1);
 #endif
 
     heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
