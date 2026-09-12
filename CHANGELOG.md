@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-12
+
+### Fixed
+- `/network` reporter now compiles when the host firmware has lwIP IPv6 disabled. IPv6 address formatting used `ip6_addr_t` even if `CONFIG_LWIP_IPV6` was off, so IPv4-only clients (typical Arduino / cellular products) failed to build.
+
 ## [0.12.0] - 2026-09-12
 
 ### Removed

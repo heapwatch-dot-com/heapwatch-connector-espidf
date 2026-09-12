@@ -14,7 +14,9 @@
 #include "heapwatch_config.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
 #include "lwip/ip4_addr.h"
+#if CONFIG_LWIP_IPV6
 #include "lwip/ip6_addr.h"
+#endif
 
 namespace heapwatch::device_network {
 namespace {
@@ -148,14 +150,12 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
         }
     }
 
+#if CONFIG_LWIP_IPV6
     esp_ip6_addr_t ip6[3];
-    int ip6_count = 0;
-#if defined(CONFIG_LWIP_IPV6)
-    ip6_count = esp_netif_get_all_ip6(netif, ip6);
+    int ip6_count = esp_netif_get_all_ip6(netif, ip6);
     if (ip6_count > 3) {
         ip6_count = 3;
     }
-#endif
     if (ip6_count > 0) {
         if (!append(out, out_len, offset, ",\"ip6\":[")) {
             return false;
@@ -171,6 +171,7 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
             return false;
         }
     }
+#endif
 
     esp_netif_dns_info_t dns = {};
     if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK) {
