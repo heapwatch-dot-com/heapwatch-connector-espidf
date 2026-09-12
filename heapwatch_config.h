@@ -114,20 +114,6 @@
 #endif
 
 /**
- * How often the metrics collector reads each task's stack pointer between telemetry cycles.
- * The reported stack Max is a ratchet of those readings, so a spike that comes and goes inside
- * one telemetry interval is only caught when this is shorter than the telemetry interval. The
- * sample itself touches three TCB fields per task — no high-water-mark scan, no allocation — so
- * it is far cheaper than a telemetry cycle. Clamped to the telemetry interval at runtime; the
- * collector never samples slower than it publishes.
- */
-#ifdef CONFIG_HEAPWATCH_TASK_SAMPLE_INTERVAL_MS
-#define HEAPWATCH_TASK_SAMPLE_INTERVAL_MS CONFIG_HEAPWATCH_TASK_SAMPLE_INTERVAL_MS
-#else
-#define HEAPWATCH_TASK_SAMPLE_INTERVAL_MS 500
-#endif
-
-/**
  * Delay between MQTT reconnection attempts when connection fails.
  */
 #define HEAPWATCH_MQTT_RETRY_INTERVAL_MS 1000

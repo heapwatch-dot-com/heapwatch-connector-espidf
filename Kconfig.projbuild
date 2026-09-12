@@ -398,13 +398,6 @@ menu "Heapwatch Connector"
                 This is the initial interval at which the connector collects and sends out telemetry data.
                 Can be changed remotely from Heapwatch UI.
 
-        config HEAPWATCH_TASK_SAMPLE_INTERVAL_MS
-            int "Task Stack Sampling Interval (ms)"
-            default 500
-            range 100 5000
-            help
-                How often each task's stack statistics are read. Can be changed remotely from Heapwatch UI.
-
         config HEAPWATCH_LOG_BATCH_MAX
             int "Max Log Lines Per MQTT Publish"
             default 10

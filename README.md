@@ -49,31 +49,20 @@ The in-app wizard [**Connect your first device**](https://app.heapwatch.com/dash
 
 ## Task stack telemetry
 
-Every FreeRTOS task — yours, the connector's and the system's — reports three stack figures
-against its configured depth. They answer different questions, so none of them replaces another:
+Every FreeRTOS task — yours, the connector's and the system's — reports two stack figures
+against its configured depth. They answer different questions, so neither replaces the other:
 
 | Figure | Wire | What it measures |
 |---|---|---|
 | **Now** | `sc` | Stack pointer depth at the moment of the sample. |
-| **Max** | `sm` | Deepest stack pointer ever sampled — stack *reserved* by a call frame, whether or not it was written to. |
 | **Peak** | `sp` | Deepest stack ever *written*, from the FreeRTOS high-water mark (`0xa5` fill-byte scan). |
 | Total | `st` | The task's configured stack depth. |
 
-Max can sit above Peak: a large call frame moves the stack pointer down immediately, but the
-high-water mark only moves once those bytes are actually stored to. Peak is the honest
-overflow-risk number; Max tells you how little headroom was left even on the frames the task
-never filled.
+**Peak is the overflow-risk number.** Overflow is a *write* past the end of the stack, and the
+high-water mark records exactly that, whenever it happened — no sampling luck required.
 
-Two cadences, one `hw_metrics` task:
-
-- **Telemetry interval** (`CONFIG_HEAPWATCH_METRICS_INTERVAL_MS`, default 2000 ms) — when the
-  figures are published, and the only time the high-water mark is scanned.
-- **Task sample interval** (`CONFIG_HEAPWATCH_TASK_SAMPLE_INTERVAL_MS`, default 500 ms) — how
-  often the stack pointer is read in between. Max only moves when a sample is taken, so this is
-  what decides how short a burst is still caught. Reads three task-control-block fields per task,
-  allocates nothing, and is clamped to the telemetry interval.
-
-Both are patchable at runtime from the Heapwatch UI (`tel_int_ms`, `task_smp_ms`).
+Both figures are collected and published on the telemetry interval
+(`CONFIG_HEAPWATCH_METRICS_INTERVAL_MS`, default 2000 ms, patchable at runtime as `tel_int_ms`).
 
 Known, accepted imprecision:
 
@@ -82,9 +71,17 @@ Known, accepted imprecision:
   heap-allocated ones. `pxEndOfStack` marks the last aligned usable word, so the reported total
   is a few bytes (11 on Xtensa) below the depth you passed to `xTaskCreate*` — that is the true
   usable extent.
-- For a task other than the sampler, the stack pointer read is the one saved at its last context
-  switch, so a task running on another core is one switch behind, and the saved pointer sits
-  below the context-save frame. Both err high, never low.
+- **Now is a blocking-point reading for every task but one.** FreeRTOS writes `pxTopOfStack` only
+  when a task is switched out, so the depth read from outside is the one frozen at the task's last
+  context switch — in practice the depth at its blocking call (`xQueueReceive`, `vTaskDelay`).
+  While a task actually runs, its stack pointer lives in a CPU register and is not readable from
+  another task. The collector reads its own live stack pointer, and a task running on another core
+  is one switch behind; the saved pointer sits below the context-save frame, so all of these err
+  high, never low.
+- Consequently there is **no "deepest reserved stack" figure**. Stack merely reserved by a large
+  call frame — moved past by the stack pointer but never stored to — is not observable by polling
+  from outside the task, and a shorter sampling interval does not change that. It was tried and
+  removed in 0.12.0. Use Peak.
 
 ## License
 

@@ -46,8 +46,7 @@ MqttMessage g_mqtt_enqueue_msg;
 
 constexpr size_t kMaxTaskRows = 48;
 
-// One row per task name, carried across telemetry cycles. Stack geometry is cached here so the
-// cheap 500ms sampler can read a stack pointer without re-enumerating the kernel's task lists.
+// One row per task name, carried across telemetry cycles.
 struct TaskStats {
     char name[20];
     TaskHandle_t handle;
@@ -55,7 +54,6 @@ struct TaskStats {
     const uint8_t* stack_highest;
     uint32_t stack_total_bytes;
     uint32_t stack_current_bytes;
-    uint32_t stack_max_bytes;
     uint32_t stack_peak_bytes;
     uint64_t runtime;
 };
@@ -125,7 +123,7 @@ TaskStackSample measure_task_stack(const TaskStatus_t& task) {
 
     // Peak is FreeRTOS' high-water mark: the deepest point the task ever *wrote* to, found by
     // scanning the 0xa5 fill pattern. It says nothing about stack merely reserved by a large
-    // frame, which is what current (and its ratchet, max) measure.
+    // frame, which is what current measures.
     const uint32_t hwm_free_bytes =
         static_cast<uint32_t>(task.usStackHighWaterMark) * sizeof(StackType_t);
     if (sample.total > hwm_free_bytes) {
@@ -163,42 +161,6 @@ TaskStats* acquire_task_row(const char* task_name) {
     row = TaskStats{};
     strncpy(row.name, name, sizeof(row.name) - 1);
     return &row;
-}
-
-/**
- * Cheap between-telemetry sample: stack-pointer depth only, ratcheted into stack_max_bytes.
- *
- * Deliberately does not call uxTaskGetSystemState() — that always walks each stack's 0xa5 fill
- * bytes for the high-water mark and needs a heap-allocated TaskStatus_t table, both far too
- * expensive to repeat several times a second. Handles come from the last telemetry scan, so a task
- * deleted since then leaves a stale handle behind; the geometry read back from the TCB is checked
- * against the geometry recorded for the row, and a mismatch retires the handle until the next
- * telemetry scan re-discovers the name.
- */
-void sample_task_stack_pointers() {
-    for (size_t i = 0; i < g_task_stats_count; ++i) {
-        TaskStats& row = g_task_stats[i];
-        if (row.handle == nullptr) {
-            continue;
-        }
-
-        TaskSnapshot_t snapshot = {};
-        if (vTaskGetSnapshot(row.handle, &snapshot) != pdTRUE
-            || reinterpret_cast<const uint8_t*>(snapshot.pxEndOfStack) != row.stack_highest) {
-            row.handle = nullptr;
-            continue;
-        }
-
-        const uint8_t* stack_pointer = stack_pointer_of(row.handle, snapshot);
-        if (stack_pointer < row.stack_lowest || stack_pointer > row.stack_highest) {
-            continue;
-        }
-
-        row.stack_current_bytes = static_cast<uint32_t>(row.stack_highest - stack_pointer) + 1U;
-        if (row.stack_current_bytes > row.stack_max_bytes) {
-            row.stack_max_bytes = row.stack_current_bytes;
-        }
-    }
 }
 
 void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
@@ -268,13 +230,11 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
         if (!heapwatch::normalizeDynamicSegment(row.name, slug_seg, sizeof(slug_seg))) {
             continue;
         }
-        // All three stack series share one ceiling — the task's configured depth.
+        // Both stack series share one ceiling — the task's configured depth.
         pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
                         ",\"dynamic.task.%s.stack_current_bytes_max\":%" PRIu32
-                        ",\"dynamic.task.%s.stack_max_bytes_max\":%" PRIu32
                         ",\"dynamic.task.%s.stack_peak_bytes_max\":%" PRIu32,
-                        slug_seg, row.stack_total_bytes, slug_seg, row.stack_total_bytes,
-                        slug_seg, row.stack_total_bytes);
+                        slug_seg, row.stack_total_bytes, slug_seg, row.stack_total_bytes);
     }
     if (pos < HEAPWATCH_MAX_PAYLOAD_SIZE) {
         g_payload_buf[pos++] = '}';
@@ -329,45 +289,15 @@ void collectTask(void* arg) {
         }
         prev_mqtt_connected = mqtt_now;
 
-        // Two cadences, one task. The telemetry interval decides when we publish; the task sample
-        // interval decides how often the stack pointers behind stack_max_bytes are read in
-        // between. Sampling never runs slower than publishing, and the wait is additionally
-        // sliced so deinit does not have to sit out a long telemetry interval before the queues
-        // this task publishes into can be destroyed.
+        // Sliced so deinit does not have to wait out a long telemetry interval before
+        // the queues this task publishes into can be destroyed.
         const uint32_t interval_ms = heapwatch::connector_settings::telemetryIntervalMs();
-        uint32_t sample_ms = heapwatch::connector_settings::taskSampleIntervalMs();
-        if (sample_ms == 0 || sample_ms > interval_ms) {
-            sample_ms = interval_ms;
-        }
-
-        const TickType_t sample_ticks = pdMS_TO_TICKS(sample_ms);
-        const TickType_t telemetry_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval_ms);
-        TickType_t sample_at = xTaskGetTickCount() + sample_ticks;
-
-        while (heapwatch_collector_running()) {
-            const TickType_t now = xTaskGetTickCount();
-            if (static_cast<int32_t>(now - telemetry_at) >= 0) {
-                break;
-            }
-
-            TickType_t wake_at = telemetry_at;
-            if (static_cast<int32_t>(sample_at - wake_at) < 0) {
-                wake_at = sample_at;
-            }
-            const TickType_t stop_check_at = now + pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS);
-            if (static_cast<int32_t>(stop_check_at - wake_at) < 0) {
-                wake_at = stop_check_at;
-            }
-            if (static_cast<int32_t>(wake_at - now) > 0) {
-                vTaskDelay(wake_at - now);
-            }
-            if (!heapwatch_collector_running()) {
-                break;
-            }
-
-            if (static_cast<int32_t>(xTaskGetTickCount() - sample_at) >= 0) {
-                sample_task_stack_pointers();
-                sample_at = xTaskGetTickCount() + sample_ticks;
+        if (interval_ms <= HEAPWATCH_STOP_CHECK_SLICE_MS) {
+            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+        } else {
+            const TickType_t wake_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval_ms);
+            while (heapwatch_collector_running() && xTaskGetTickCount() < wake_at) {
+                vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS));
             }
         }
         if (!heapwatch_collector_running()) {
@@ -479,7 +409,6 @@ void collectTask(void* arg) {
                         row->handle = task.xHandle;
                         row->stack_total_bytes = 0;
                         row->stack_current_bytes = 0;
-                        row->stack_max_bytes = 0;
                         row->stack_peak_bytes = 0;
                     }
 
@@ -498,11 +427,12 @@ void collectTask(void* arg) {
 
                     row->stack_lowest = stack.lowest;
                     row->stack_highest = stack.highest;
-                    row->stack_current_bytes = stack.current;
-                    row->stack_peak_bytes = stack.peak;
-                    if (stack.current > row->stack_max_bytes) {
-                        row->stack_max_bytes = stack.current;
+                    // A depth of zero means the stack pointer failed the range check, not that the
+                    // task is using nothing, so keep the last good reading rather than report 0.
+                    if (stack.current > 0) {
+                        row->stack_current_bytes = stack.current;
                     }
+                    row->stack_peak_bytes = stack.peak;
                     note_task_stack_total(*row, stack.total);
 
                     float task_cpu_pct = 0.0f;
@@ -519,7 +449,7 @@ void collectTask(void* arg) {
                         }
                     }
 
-                    // Widest task record is ~105 bytes ({"n":…,"st":…,"sc":…,"sm":…,"sp":…,"cpu":…})
+                    // Widest task record is ~95 bytes ({"n":…,"st":…,"sc":…,"sp":…,"cpu":…})
                     // plus the closing "]}" — keep enough headroom for one more of them.
                     if (tasks_payload_len < 0
                         || tasks_payload_len >= static_cast<int>(HEAPWATCH_MAX_PAYLOAD_SIZE - 160)) {
@@ -530,13 +460,12 @@ void collectTask(void* arg) {
                     const int written = snprintf(
                         g_payload_buf + tasks_payload_len,
                         HEAPWATCH_MAX_PAYLOAD_SIZE - tasks_payload_len,
-                        "%s{\"n\":\"%s\",\"st\":%" PRIu32 ",\"sc\":%" PRIu32 ",\"sm\":%" PRIu32
+                        "%s{\"n\":\"%s\",\"st\":%" PRIu32 ",\"sc\":%" PRIu32
                         ",\"sp\":%" PRIu32 ",\"cpu\":%.2f}",
                         first_task_json ? "" : ",",
                         task_name,
                         stack.total,
                         row->stack_current_bytes,
-                        row->stack_max_bytes,
                         stack.peak,
                         static_cast<double>(task_cpu_pct));
                     if (written <= 0) {

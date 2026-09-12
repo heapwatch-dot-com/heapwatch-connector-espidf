@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-12
+
+### Removed
+- **BREAKING:** the task stack **max** figure (`sm`) and its menuconfig option *Task Stack Sampling Interval (ms)* (`CONFIG_HEAPWATCH_TASK_SAMPLE_INTERVAL_MS`) and remote setting `task_smp_ms`, both added in 0.11.0. The figure was meant to show the deepest stack a task ever *reserved*, but it could not: FreeRTOS records a task's stack pointer only when that task is switched out, so reading it from the collector only ever sees the depth at the task's blocking call — never the deep call frames it reaches while running. On hardware, 19 of 21 tasks reported max equal to now while only the high-water mark moved. Sampling more often cannot help, because the recorded pointer does not change between context switches. **Use Peak** (`sp`, the high-water mark): overflow is a *write* past the end of the stack, and Peak records exactly that. Task payloads are back to `st` / `sc` / `sp` / `cpu`, and the metrics task is back to one cadence.
+
+### Fixed
+- A task whose stack pointer fails the range check now keeps its last known **Now** value instead of reporting `0`. Two system tasks were charted as using no stack at all when the read failed.
+
 ## [0.11.0] - 2026-09-12
 
 ### Added
