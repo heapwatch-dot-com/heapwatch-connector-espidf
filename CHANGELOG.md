@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-12
+
+### Added
+- **`heapwatch_register_sd_volume(label, mount_path)`** — hand the connector an SD card the host app already mounted. A card has no partition-table entry, so it cannot be discovered the way flash volumes are; the host names it once, before `heapwatch_initialize()`, and it then appears in the file browser and the `fs/storage` report exactly like a flash volume (with a null `partition_id`, because no partition backs it). Read-only adoption: the connector queries used/free with `esp_vfs_fat_info()` and never initializes the SPI/SDMMC bus or unmounts the card. Up to 4 cards, in a table separate from the 8 flash volume slots.
+- Task telemetry now reports **current** stack usage next to the **peak** (high-water) figure, so a task's stack chart shows what it is using right now instead of only the worst case it ever reached. Peak usage is still reported and is still the number to watch for overflow risk.
+- Task telemetry adds a third stack figure, **max**: the deepest stack pointer the connector has sampled for that task. Peak counts only stack a task actually *wrote* to, so a burst that reserves a large call frame without filling it never moves the peak. Max counts reserved stack too, which is what tells you how close the task came to running off the end.
+- New menuconfig option **Task Stack Sampling Interval (ms)** (`CONFIG_HEAPWATCH_TASK_SAMPLE_INTERVAL_MS`, default 500, range 100–5000) and matching remotely patchable connector setting `task_smp_ms`. Max only moves when a sample is taken, so this decides how short a burst is still caught; the telemetry interval only decides how often the figures are published. A sample reads three task-control-block fields per task — no stack scan, no allocation — and is clamped to the telemetry interval so the connector never samples slower than it publishes.
+
+### Removed
+- **BREAKING:** the `storage.used_bytes` / `storage.free_bytes` parameters and the Kconfig option that produced them (`HEAPWATCH_ENABLE_STORAGE_STATS`, formerly *Report internal-flash filesystem stats (STORAGE1)*). They published one lumped total across every mounted volume, which duplicated the per-volume `fs/storage` report that the dashboard actually reads — and being a single pair, they could never describe a device with several volumes. Storage is now reported only through `fs/storage`. Devices lose storage history and the offline last-known storage value; no dashboard surface used either.
+- The SD card no longer has its own code path through the file browser. It is a volume like any other, so path validation, listing, reads, writes, uploads, and free-space checks all flow through `FsVolumeManager` instead of a parallel `/sd` special case.
+
+### Fixed
+- **Tasks created with `xTaskCreateStatic()` no longer crash the device.** Stack sizes were read with `heap_caps_get_allocated_size()`, which asserts when handed an address that belongs to no heap — exactly the case for a static task whose stack lives in `.bss`. Stack geometry now comes from the task control block, so static and heap-allocated tasks are measured the same way.
+- Reported stack size is now the task's exact configured depth. It previously came from the heap block backing the stack, so it read slightly high by whatever the allocator rounded up.
+
+### Changed
+- The *Also Mount And Take-Over SD Card Over SPI* option (renamed from "Also mount and report an SD card over SPI") moved into the **Filesystem Volumes** menu, since it mounts a volume rather than collecting stats. Its help now states plainly that the connector initializes the SPI bus itself, so it must stay off when the host owns the card — register the card instead. The symbol and its GPIO settings are unchanged.
+- Menuconfig prompts in the Filesystem Volumes menu now use the file's Title Case convention: *Auto-Mount All Storage Partitions*, *Auto-Format Blank Storage Partitions*.
+- Filesystem volumes are mounted from connector bootstrap instead of from the storage-stats module, so the volume lifecycle no longer depends on a telemetry feature being enabled.
+- **BREAKING:** `tasks` payloads replace the `su` field with `sc` (current stack bytes), `sm` (max sampled stack bytes) and `sp` (peak stack bytes); `st` (total) is unchanged. Needs Heapwatch backend support for the new fields.
+- **BREAKING:** Minimum ESP-IDF is now **5.3.0** (was 5.1.0) — 5.3 is the oldest release Espressif still maintains.
+
 ## [0.10.1] - 2026-09-11
 
 ### Fixed

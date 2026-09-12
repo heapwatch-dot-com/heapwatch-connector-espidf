@@ -16,7 +16,6 @@ file(GLOB_RECURSE HEAPWATCH_CONNECTOR_SRCS
     "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_dispatcher/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/metrics_collector/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sleep_tracking/SleepTracking.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/storage_stats/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/stream_ingress/*.cpp"
 )
 

@@ -255,9 +255,19 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
  * Auto-mount on: connector mounts this label at mount_path instead of /<label>.
  * Auto-mount off: required so the file browser can use a host-mounted volume.
  *
- * Table size is 8. Duplicate labels replace the previous mapping.
  */
 esp_err_t heapwatch_register_fs_volume(const char* partition_label, const char* mount_path);
+
+/**
+ * Register an SD card the host app already mounted. Call before heapwatch_initialize()
+ * (and after heapwatch_deinit() before the next init).
+ *
+ * A card has no partition-table entry, so the connector cannot discover it the way it
+ * discovers flash volumes — the host must name it. `label` is a host-chosen id (e.g. "sd0")
+ * used as the volume id; `mount_path` is the live VFS root (e.g. "/sd"). Call once per card.
+ *
+ */
+esp_err_t heapwatch_register_sd_volume(const char* label, const char* mount_path);
 
 /** Build metadata from generated heapwatch_build_metadata.h (compile-time). */
 const char* heapwatch_get_build_identifier(void);

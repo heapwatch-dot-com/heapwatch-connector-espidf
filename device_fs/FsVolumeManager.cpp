@@ -11,6 +11,12 @@
 #include "esp_vfs_fat.h"
 #include "sdkconfig.h"
 
+#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
+#include "sdmmc_cmd.h"
+#endif
+
 #include "HeapwatchFsPartition.h"
 #include "heapwatch.h"
 #include "heapwatch_connector/ConnectorLifecycle.h"
@@ -27,7 +33,8 @@ struct HostMapping {
     bool used = false;
 };
 
-HostMapping g_host_map[kMaxVolumes] = {};
+HostMapping g_host_map[kMaxFlashVolumes] = {};
+HostMapping g_sd_map[kMaxSdVolumes] = {};
 Volume g_volumes[kMaxVolumes] = {};
 size_t g_volume_count = 0;
 
@@ -91,12 +98,26 @@ const HostMapping* findHostMapping(const char* label) {
     if (label == nullptr) {
         return nullptr;
     }
-    for (size_t i = 0; i < kMaxVolumes; ++i) {
+    for (size_t i = 0; i < kMaxFlashVolumes; ++i) {
         if (g_host_map[i].used && strcmp(g_host_map[i].label, label) == 0) {
             return &g_host_map[i];
         }
     }
     return nullptr;
+}
+
+/** Reserve or reuse a slot for `label`; nullptr when the table is full. */
+HostMapping* claimMappingSlot(HostMapping* table, size_t table_len, const char* label) {
+    HostMapping* empty = nullptr;
+    for (size_t i = 0; i < table_len; ++i) {
+        if (table[i].used && strcmp(table[i].label, label) == 0) {
+            return &table[i];
+        }
+        if (!table[i].used && empty == nullptr) {
+            empty = &table[i];
+        }
+    }
+    return empty;
 }
 
 void defaultMountPath(const char* label, char* out, size_t out_len) {
@@ -232,7 +253,7 @@ MountOutcome doMount(Volume* volume) {
 }
 
 void adoptVolume(Kind kind, const char* label, const char* mount_path, bool connector_mounted,
-                 wl_handle_t fat_wl, bool browsable) {
+                 wl_handle_t fat_wl, bool browsable, bool external = false) {
     if (g_volume_count >= kMaxVolumes) {
         ESP_LOGW(kTag, "FS volume table full; skipping '%s'", label);
         return;
@@ -245,9 +266,109 @@ void adoptVolume(Kind kind, const char* label, const char* mount_path, bool conn
     vol.mounted = true;
     vol.browsable = browsable;
     vol.connector_mounted = connector_mounted;
+    vol.external = external;
     vol.fat_wl = fat_wl;
     ESP_LOGI(kTag, "%s volume '%s' at '%s' (%s)", kindName(kind), label, mount_path,
              connector_mounted ? "connector-mounted" : "host-owned");
+}
+
+#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
+constexpr char kConnectorSdLabel[] = "sd";
+constexpr char kConnectorSdMountPath[] = "/sd";
+sdmmc_card_t* g_connector_sd_card = nullptr;
+
+/**
+ * Connector-owned SD mount: only for hosts that do not use the card themselves. Takes over the
+ * SPI bus, so it must stay off whenever the host already mounted the card (register it instead).
+ */
+void mountConnectorSdCard() {
+    if (CONFIG_HEAPWATCH_SD_CARD_CS_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_MOSI_GPIO < 0 ||
+        CONFIG_HEAPWATCH_SD_CARD_MISO_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_SCK_GPIO < 0) {
+        ESP_LOGI(kTag, "SD take-over enabled but pins unconfigured (-1) -- skipping mount");
+        return;
+    }
+    if (dirExists(kConnectorSdMountPath)) {
+        ESP_LOGW(kTag,
+                 "'%s' is already mounted -- disable the SD take-over option and call "
+                 "heapwatch_register_sd_volume() instead",
+                 kConnectorSdMountPath);
+        adoptVolume(Kind::Fat, kConnectorSdLabel, kConnectorSdMountPath, false, WL_INVALID_HANDLE,
+                    true, true);
+        return;
+    }
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+
+    spi_bus_config_t bus_cfg = {};
+    bus_cfg.mosi_io_num = CONFIG_HEAPWATCH_SD_CARD_MOSI_GPIO;
+    bus_cfg.miso_io_num = CONFIG_HEAPWATCH_SD_CARD_MISO_GPIO;
+    bus_cfg.sclk_io_num = CONFIG_HEAPWATCH_SD_CARD_SCK_GPIO;
+    bus_cfg.quadwp_io_num = -1;
+    bus_cfg.quadhd_io_num = -1;
+
+    esp_err_t err = spi_bus_initialize(static_cast<spi_host_device_t>(host.slot), &bus_cfg,
+                                       SDSPI_DEFAULT_DMA);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "SD card SPI bus init failed: %s -- no card mounted", esp_err_to_name(err));
+        return;
+    }
+
+    sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_cfg.gpio_cs = static_cast<gpio_num_t>(CONFIG_HEAPWATCH_SD_CARD_CS_GPIO);
+    slot_cfg.host_id = static_cast<spi_host_device_t>(host.slot);
+
+    esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {};
+    mount_cfg.format_if_mount_failed = false;
+    mount_cfg.max_files = 4;
+    mount_cfg.allocation_unit_size = 16 * 1024;
+
+    err = esp_vfs_fat_sdspi_mount(kConnectorSdMountPath, &host, &slot_cfg, &mount_cfg,
+                                  &g_connector_sd_card);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "SD card mount failed (no card present?): %s -- skipping",
+                 esp_err_to_name(err));
+        spi_bus_free(static_cast<spi_host_device_t>(host.slot));
+        g_connector_sd_card = nullptr;
+        return;
+    }
+
+    adoptVolume(Kind::Fat, kConnectorSdLabel, kConnectorSdMountPath, true, WL_INVALID_HANDLE, true,
+                true);
+}
+
+void unmountConnectorSdCard(const char* mount_path) {
+    if (g_connector_sd_card == nullptr) {
+        return;
+    }
+    const sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    const esp_err_t err = esp_vfs_fat_sdcard_unmount(mount_path, g_connector_sd_card);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "SD card unmount failed: %s", esp_err_to_name(err));
+    }
+    spi_bus_free(static_cast<spi_host_device_t>(host.slot));
+    g_connector_sd_card = nullptr;
+}
+#endif  // CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
+
+/** Adopt host-mounted SD cards. They are never discovered — only registered. */
+void adoptSdVolumes() {
+#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
+    mountConnectorSdCard();
+#endif
+
+    for (size_t i = 0; i < kMaxSdVolumes; ++i) {
+        const HostMapping& mapping = g_sd_map[i];
+        if (!mapping.used) {
+            continue;
+        }
+        if (!dirExists(mapping.mount_path)) {
+            ESP_LOGW(kTag, "SD volume '%s' at '%s' is not mounted -- skipping", mapping.label,
+                     mapping.mount_path);
+            continue;
+        }
+        adoptVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
+                    true);
+    }
 }
 
 void processPartition(const esp_partition_t* part) {
@@ -316,25 +437,30 @@ esp_err_t registerVolume(const char* partition_label, const char* mount_path) {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
 
-    HostMapping* slot = nullptr;
-    HostMapping* empty = nullptr;
-    for (size_t i = 0; i < kMaxVolumes; ++i) {
-        if (g_host_map[i].used && strcmp(g_host_map[i].label, partition_label) == 0) {
-            slot = &g_host_map[i];
-            break;
-        }
-        if (!g_host_map[i].used && empty == nullptr) {
-            empty = &g_host_map[i];
-        }
-    }
-    if (slot == nullptr) {
-        slot = empty;
-    }
+    HostMapping* slot = claimMappingSlot(g_host_map, kMaxFlashVolumes, partition_label);
     if (slot == nullptr) {
         return ESP_ERR_HEAPWATCH_NO_SPACE;
     }
     slot->used = true;
     copyLabel(slot->label, sizeof(slot->label), partition_label);
+    snprintf(slot->mount_path, sizeof(slot->mount_path), "%s", mount_path);
+    return ESP_OK;
+}
+
+esp_err_t registerSdVolume(const char* label, const char* mount_path) {
+    if (heapwatch::connector_lifecycle::initializeCalled()) {
+        return ESP_ERR_HEAPWATCH_ALREADY_INITIALIZED;
+    }
+    if (!validLabel(label) || !validMountPath(mount_path)) {
+        return ESP_ERR_HEAPWATCH_INVALID_ARG;
+    }
+
+    HostMapping* slot = claimMappingSlot(g_sd_map, kMaxSdVolumes, label);
+    if (slot == nullptr) {
+        return ESP_ERR_HEAPWATCH_NO_SPACE;
+    }
+    slot->used = true;
+    copyLabel(slot->label, sizeof(slot->label), label);
     snprintf(slot->mount_path, sizeof(slot->mount_path), "%s", mount_path);
     return ESP_OK;
 }
@@ -352,6 +478,8 @@ void mountAll() {
         processPartition(part);
         it = esp_partition_next(it);
     }
+
+    adoptSdVolumes();
 }
 
 void unmountConnectorOwned() {
@@ -361,6 +489,13 @@ void unmountConnectorOwned() {
             continue;
         }
         esp_err_t err = ESP_OK;
+#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
+        if (vol.external) {
+            unmountConnectorSdCard(vol.mount_path);
+            ESP_LOGI(kTag, "Unmounted connector volume '%s'", vol.label);
+            continue;
+        }
+#endif
         switch (vol.kind) {
             case Kind::Spiffs:
                 err = esp_vfs_spiffs_unregister(vol.label);
@@ -492,7 +627,11 @@ cJSON* buildVolumeObject(const Volume& volume) {
     cJSON_AddStringToObject(vol, "label", volume.label);
     cJSON_AddStringToObject(vol, "path", volume.mount_path);
     cJSON_AddStringToObject(vol, "filesystem", kindName(volume.kind));
-    cJSON_AddStringToObject(vol, "partition_id", volume.label);
+    if (volume.external) {
+        cJSON_AddNullToObject(vol, "partition_id");
+    } else {
+        cJSON_AddStringToObject(vol, "partition_id", volume.label);
+    }
     cJSON_AddNumberToObject(vol, "total_bytes", static_cast<double>(total));
     cJSON_AddNumberToObject(vol, "used_bytes", static_cast<double>(used));
     return vol;

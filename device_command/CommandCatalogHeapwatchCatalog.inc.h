@@ -14,6 +14,13 @@
     "collection cycles.\",\"type\":\"int\",\"secret\":false,\"patchable\":true," \
     "\"unit\":\"ms\",\"min\":1000,\"max\":86400000,\"default\":" HW_CATALOG_INT( \
         HEAPWATCH_METRICS_INTERVAL_MS) "},"                                     \
+    "{\"nvs_key\":\"task_smp_ms\",\"name\":\"Task stack sampling "               \
+    "interval\",\"description\":\"How often each task's stack pointer is "       \
+    "sampled between telemetry cycles. Task stack Max only moves when a sample " \
+    "is taken, so shorter intervals catch shorter bursts. Clamped to the "       \
+    "telemetry interval.\",\"type\":\"int\",\"secret\":false,\"patchable\":true," \
+    "\"unit\":\"ms\",\"min\":100,\"max\":5000,\"default\":" HW_CATALOG_INT(      \
+        HEAPWATCH_TASK_SAMPLE_INTERVAL_MS) "},"                                  \
     "{\"nvs_key\":\"log_lvl\",\"name\":\"Log relay "                            \
     "level\",\"description\":\"Minimum ESP-IDF log severity relayed to "       \
     "Heapwatch over MQTT.\",\"type\":\"enum\",\"secret\":false,\"patchable\":"  \

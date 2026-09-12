@@ -37,7 +37,9 @@ void refreshConnectorGaugeLimits();
  * @brief Metrics collector task function
  *
  * Main loop that:
- * 1. Sleeps for HEAPWATCH_METRICS_INTERVAL_MS (default: 2000ms)
+ * 1. Sleeps for HEAPWATCH_METRICS_INTERVAL_MS (default: 2000ms), waking every
+ *    HEAPWATCH_TASK_SAMPLE_INTERVAL_MS (default: 500ms) to read each task's stack pointer into
+ *    the in-RAM stats that back the reported stack max — no scan, no allocation, no publish
  * 2. Collects all telemetry metrics (CPU, heap, WiFi, tasks, etc.)
  * 3. Creates one parameter payload with formatted metrics values
  * 4. Sends message to shared MQTT queue

@@ -395,6 +395,10 @@ esp_err_t heapwatch_register_fs_volume(const char* partition_label, const char* 
     return heapwatch::fs_volumes::registerVolume(partition_label, mount_path);
 }
 
+esp_err_t heapwatch_register_sd_volume(const char* label, const char* mount_path) {
+    return heapwatch::fs_volumes::registerSdVolume(label, mount_path);
+}
+
 const char* heapwatch_get_build_identifier(void) { return k_embedded_build_identifier; }
 
 const char* heapwatch_get_app_source_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }

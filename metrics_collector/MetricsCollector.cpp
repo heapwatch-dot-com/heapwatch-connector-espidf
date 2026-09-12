@@ -22,6 +22,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_private/freertos_debug.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/idf_additions.h"
@@ -35,8 +36,6 @@
 #include "../connector_settings/ConnectorSettings.h"
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_network/NetifTraffic.h"
-#include "../storage_stats/StorageStats.h"
-
 namespace heapwatch::metrics_collector {
 
 namespace {
@@ -47,15 +46,21 @@ MqttMessage g_mqtt_enqueue_msg;
 
 constexpr size_t kMaxTaskRows = 48;
 
-struct PrevTaskRuntime {
+// One row per task name, carried across telemetry cycles. Stack geometry is cached here so the
+// cheap 500ms sampler can read a stack pointer without re-enumerating the kernel's task lists.
+struct TaskStats {
     char name[20];
+    TaskHandle_t handle;
+    const uint8_t* stack_lowest;
+    const uint8_t* stack_highest;
     uint32_t stack_total_bytes;
+    uint32_t stack_current_bytes;
+    uint32_t stack_max_bytes;
+    uint32_t stack_peak_bytes;
     uint64_t runtime;
 };
 
-// CPU1: core-count-agnostic — sized for the widest ESP-IDF target in the VER2 support
-// matrix rather than assuming exactly 2 cores (portNUM_PROCESSORS is 1 on single-core
-// targets like ESP32-C3/C2, 2 on ESP32/S3, etc.).
+
 constexpr size_t kMaxCoresSupported = 4;
 
 struct CpuUsageState {
@@ -64,35 +69,136 @@ struct CpuUsageState {
     bool initialized = false;
 };
 
-PrevTaskRuntime g_prev_task_runtime[kMaxTaskRows];
-size_t g_prev_task_runtime_count = 0;
+TaskStats g_task_stats[kMaxTaskRows];
+size_t g_task_stats_count = 0;
+bool g_task_table_full_logged = false;
 CpuUsageState g_cpu_usage_state;
 
 uint8_t g_dirty_task_stack_idx[kMaxTaskRows];
 uint8_t g_dirty_task_stack_max_count = 0;
 
-uint64_t task_runtime_delta_by_name(const char* task_name, uint64_t current_runtime) {
-    const char* name = task_name != nullptr ? task_name : "?";
+struct TaskStackSample {
+    const uint8_t* lowest = nullptr;
+    const uint8_t* highest = nullptr;
+    uint32_t total = 0;
+    uint32_t current = 0;
+    uint32_t peak = 0;
+};
 
-    for (size_t i = 0; i < g_prev_task_runtime_count; ++i) {
-        if (strcmp(g_prev_task_runtime[i].name, name) == 0) {
-            const uint64_t previous = g_prev_task_runtime[i].runtime;
-            g_prev_task_runtime[i].runtime = current_runtime;
-            return current_runtime >= previous ? current_runtime - previous : 0;
+// pxTopOfStack is the stack pointer saved on the task's last context switch, so for the task doing
+// the measuring it is one switch out of date — read the live frame pointer instead. A task running
+// on another core stays one switch behind; that is inherent to sampling it from the outside, and
+// the saved pointer sits below the context-save frame, so this errs high.
+const uint8_t* stack_pointer_of(TaskHandle_t handle, const TaskSnapshot_t& snapshot) {
+    if (handle == xTaskGetCurrentTaskHandle()) {
+        return static_cast<const uint8_t*>(__builtin_frame_address(0));
+    }
+    return reinterpret_cast<const uint8_t*>(snapshot.pxTopOfStack);
+}
+
+// Stack geometry read straight out of the TCB. pxStackBase (lowest address) is always populated by
+// FreeRTOS, and vTaskGetSnapshot() hands over pxEndOfStack / pxTopOfStack, which TaskStatus_t omits
+// on downward-growing ports like Xtensa and RISC-V. Nothing here asks the heap allocator about the
+// stack, so a task created with xTaskCreateStatic() — whose stack lives in .bss and belongs to no
+// heap — measures exactly like a heap-allocated one.
+TaskStackSample measure_task_stack(const TaskStatus_t& task) {
+    TaskStackSample sample;
+
+    if (task.xHandle == nullptr || task.pxStackBase == nullptr) {
+        return sample;
+    }
+
+    TaskSnapshot_t snapshot = {};
+    if (vTaskGetSnapshot(task.xHandle, &snapshot) != pdTRUE || snapshot.pxEndOfStack == nullptr) {
+        return sample;
+    }
+
+    const uint8_t* lowest = reinterpret_cast<const uint8_t*>(task.pxStackBase);
+    const uint8_t* highest = reinterpret_cast<const uint8_t*>(snapshot.pxEndOfStack);
+    if (highest <= lowest) {
+        return sample;
+    }
+
+    sample.lowest = lowest;
+    sample.highest = highest;
+    sample.total = static_cast<uint32_t>(highest - lowest) + 1U;
+
+    // Peak is FreeRTOS' high-water mark: the deepest point the task ever *wrote* to, found by
+    // scanning the 0xa5 fill pattern. It says nothing about stack merely reserved by a large
+    // frame, which is what current (and its ratchet, max) measure.
+    const uint32_t hwm_free_bytes =
+        static_cast<uint32_t>(task.usStackHighWaterMark) * sizeof(StackType_t);
+    if (sample.total > hwm_free_bytes) {
+        sample.peak = sample.total - hwm_free_bytes;
+    }
+
+    const uint8_t* stack_pointer = stack_pointer_of(task.xHandle, snapshot);
+    if (stack_pointer >= lowest && stack_pointer <= highest) {
+        sample.current = static_cast<uint32_t>(highest - stack_pointer) + 1U;
+    }
+
+    return sample;
+}
+
+/** Row for a task name, creating it on first sight. Returns nullptr once the table is full. */
+TaskStats* acquire_task_row(const char* task_name) {
+    const char* name = (task_name != nullptr && task_name[0] != '\0') ? task_name : "?";
+
+    for (size_t i = 0; i < g_task_stats_count; ++i) {
+        if (strcmp(g_task_stats[i].name, name) == 0) {
+            return &g_task_stats[i];
         }
     }
 
-    if (g_prev_task_runtime_count < kMaxTaskRows) {
-        memset(g_prev_task_runtime[g_prev_task_runtime_count].name, 0,
-               sizeof(g_prev_task_runtime[g_prev_task_runtime_count].name));
-        strncpy(g_prev_task_runtime[g_prev_task_runtime_count].name, name,
-                sizeof(g_prev_task_runtime[g_prev_task_runtime_count].name) - 1);
-        g_prev_task_runtime[g_prev_task_runtime_count].runtime = current_runtime;
-        g_prev_task_runtime[g_prev_task_runtime_count].stack_total_bytes = 0;
-        g_prev_task_runtime_count++;
+    if (g_task_stats_count >= kMaxTaskRows) {
+        if (!g_task_table_full_logged) {
+            ESP_LOGW(kTag, "task stats table full (%u rows) — '%s' is not reported",
+                     static_cast<unsigned>(kMaxTaskRows), name);
+            g_task_table_full_logged = true;
+        }
+        return nullptr;
     }
 
-    return 0;
+    TaskStats& row = g_task_stats[g_task_stats_count++];
+    row = TaskStats{};
+    strncpy(row.name, name, sizeof(row.name) - 1);
+    return &row;
+}
+
+/**
+ * Cheap between-telemetry sample: stack-pointer depth only, ratcheted into stack_max_bytes.
+ *
+ * Deliberately does not call uxTaskGetSystemState() — that always walks each stack's 0xa5 fill
+ * bytes for the high-water mark and needs a heap-allocated TaskStatus_t table, both far too
+ * expensive to repeat several times a second. Handles come from the last telemetry scan, so a task
+ * deleted since then leaves a stale handle behind; the geometry read back from the TCB is checked
+ * against the geometry recorded for the row, and a mismatch retires the handle until the next
+ * telemetry scan re-discovers the name.
+ */
+void sample_task_stack_pointers() {
+    for (size_t i = 0; i < g_task_stats_count; ++i) {
+        TaskStats& row = g_task_stats[i];
+        if (row.handle == nullptr) {
+            continue;
+        }
+
+        TaskSnapshot_t snapshot = {};
+        if (vTaskGetSnapshot(row.handle, &snapshot) != pdTRUE
+            || reinterpret_cast<const uint8_t*>(snapshot.pxEndOfStack) != row.stack_highest) {
+            row.handle = nullptr;
+            continue;
+        }
+
+        const uint8_t* stack_pointer = stack_pointer_of(row.handle, snapshot);
+        if (stack_pointer < row.stack_lowest || stack_pointer > row.stack_highest) {
+            continue;
+        }
+
+        row.stack_current_bytes = static_cast<uint32_t>(row.stack_highest - stack_pointer) + 1U;
+        if (row.stack_current_bytes > row.stack_max_bytes) {
+            row.stack_max_bytes = row.stack_current_bytes;
+        }
+    }
 }
 
 void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
@@ -135,32 +241,14 @@ void refresh_connector_gauge_limits(size_t core_count) {
     connector.setParameterIntMax("wifi.rssi_dbm", -20);
 }
 
-void note_task_stack_total(const char* task_name, uint32_t stack_total_bytes) {
-    const char* name = (task_name != nullptr && task_name[0] != '\0') ? task_name : "?";
-    size_t idx = kMaxTaskRows;
-    for (size_t i = 0; i < g_prev_task_runtime_count; ++i) {
-        if (strcmp(g_prev_task_runtime[i].name, name) == 0) {
-            idx = i;
-            break;
-        }
-    }
-    if (idx >= kMaxTaskRows) {
-        if (g_prev_task_runtime_count >= kMaxTaskRows) {
-            return;
-        }
-        idx = g_prev_task_runtime_count;
-        memset(g_prev_task_runtime[idx].name, 0, sizeof(g_prev_task_runtime[idx].name));
-        strncpy(g_prev_task_runtime[idx].name, name, sizeof(g_prev_task_runtime[idx].name) - 1);
-        g_prev_task_runtime[idx].runtime = 0;
-        g_prev_task_runtime[idx].stack_total_bytes = 0;
-        g_prev_task_runtime_count++;
-    }
-
-    PrevTaskRuntime& row = g_prev_task_runtime[idx];
+/** Record the task's configured depth and queue a limits publish when it changed. */
+void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
     if (row.stack_total_bytes == stack_total_bytes) {
         return;
     }
     row.stack_total_bytes = stack_total_bytes;
+
+    const size_t idx = static_cast<size_t>(&row - g_task_stats);
     if (g_dirty_task_stack_max_count < kMaxTaskRows) {
         g_dirty_task_stack_idx[g_dirty_task_stack_max_count++] = static_cast<uint8_t>(idx);
     }
@@ -175,14 +263,18 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
     pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
                     "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64, tsms, utms);
     for (size_t i = 0; i < g_dirty_task_stack_max_count && pos < HEAPWATCH_MAX_PAYLOAD_SIZE; ++i) {
-        const PrevTaskRuntime& row = g_prev_task_runtime[g_dirty_task_stack_idx[i]];
+        const TaskStats& row = g_task_stats[g_dirty_task_stack_idx[i]];
         char slug_seg[32];
         if (!heapwatch::normalizeDynamicSegment(row.name, slug_seg, sizeof(slug_seg))) {
             continue;
         }
+        // All three stack series share one ceiling — the task's configured depth.
         pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
-                        ",\"dynamic.task.%s.stack_used_bytes_max\":%" PRIu32, slug_seg,
-                        row.stack_total_bytes);
+                        ",\"dynamic.task.%s.stack_current_bytes_max\":%" PRIu32
+                        ",\"dynamic.task.%s.stack_max_bytes_max\":%" PRIu32
+                        ",\"dynamic.task.%s.stack_peak_bytes_max\":%" PRIu32,
+                        slug_seg, row.stack_total_bytes, slug_seg, row.stack_total_bytes,
+                        slug_seg, row.stack_total_bytes);
     }
     if (pos < HEAPWATCH_MAX_PAYLOAD_SIZE) {
         g_payload_buf[pos++] = '}';
@@ -237,15 +329,45 @@ void collectTask(void* arg) {
         }
         prev_mqtt_connected = mqtt_now;
 
-        // Sliced so deinit does not have to wait out a long telemetry interval before
-        // the queues this task publishes into can be destroyed.
+        // Two cadences, one task. The telemetry interval decides when we publish; the task sample
+        // interval decides how often the stack pointers behind stack_max_bytes are read in
+        // between. Sampling never runs slower than publishing, and the wait is additionally
+        // sliced so deinit does not have to sit out a long telemetry interval before the queues
+        // this task publishes into can be destroyed.
         const uint32_t interval_ms = heapwatch::connector_settings::telemetryIntervalMs();
-        if (interval_ms <= HEAPWATCH_STOP_CHECK_SLICE_MS) {
-            vTaskDelay(pdMS_TO_TICKS(interval_ms));
-        } else {
-            const TickType_t wake_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval_ms);
-            while (heapwatch_collector_running() && xTaskGetTickCount() < wake_at) {
-                vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS));
+        uint32_t sample_ms = heapwatch::connector_settings::taskSampleIntervalMs();
+        if (sample_ms == 0 || sample_ms > interval_ms) {
+            sample_ms = interval_ms;
+        }
+
+        const TickType_t sample_ticks = pdMS_TO_TICKS(sample_ms);
+        const TickType_t telemetry_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval_ms);
+        TickType_t sample_at = xTaskGetTickCount() + sample_ticks;
+
+        while (heapwatch_collector_running()) {
+            const TickType_t now = xTaskGetTickCount();
+            if (static_cast<int32_t>(now - telemetry_at) >= 0) {
+                break;
+            }
+
+            TickType_t wake_at = telemetry_at;
+            if (static_cast<int32_t>(sample_at - wake_at) < 0) {
+                wake_at = sample_at;
+            }
+            const TickType_t stop_check_at = now + pdMS_TO_TICKS(HEAPWATCH_STOP_CHECK_SLICE_MS);
+            if (static_cast<int32_t>(stop_check_at - wake_at) < 0) {
+                wake_at = stop_check_at;
+            }
+            if (static_cast<int32_t>(wake_at - now) > 0) {
+                vTaskDelay(wake_at - now);
+            }
+            if (!heapwatch_collector_running()) {
+                break;
+            }
+
+            if (static_cast<int32_t>(xTaskGetTickCount() - sample_at) >= 0) {
+                sample_task_stack_pointers();
+                sample_at = xTaskGetTickCount() + sample_ticks;
             }
         }
         if (!heapwatch_collector_running()) {
@@ -343,30 +465,45 @@ void collectTask(void* arg) {
                         }
                     }
 
-                    const uint64_t current_runtime = static_cast<uint64_t>(task.ulRunTimeCounter);
-                    const uint64_t runtime_delta =
-                        task_runtime_delta_by_name(task.pcTaskName, current_runtime);
-
-                    uint32_t stack_total_bytes = 0;
-                    if (task.xHandle != nullptr) {
-                        uint8_t* stack_start = pxTaskGetStackStart(task.xHandle);
-                        if (stack_start != nullptr) {
-                            stack_total_bytes = heap_caps_get_allocated_size(stack_start);
-                        }
-                    }
-
-                    const uint32_t stack_hwm_free_bytes =
-                        static_cast<uint32_t>(task.usStackHighWaterMark) * sizeof(StackType_t);
-                    uint32_t stack_used_bytes = 0;
-                    if (stack_total_bytes > stack_hwm_free_bytes) {
-                        stack_used_bytes = stack_total_bytes - stack_hwm_free_bytes;
-                    }
-
-                    if (stack_total_bytes == 0) {
+                    TaskStats* row = acquire_task_row(task.pcTaskName);
+                    if (row == nullptr) {
                         continue;
                     }
 
-                    note_task_stack_total(task.pcTaskName, stack_total_bytes);
+                    // A name can be reused by a task that was deleted and created again. Its stack
+                    // lives somewhere else and its run-time counter starts over, so every
+                    // statistic accumulated for the previous instance has to go — including the
+                    // recorded depth, so the ceiling limits are republished for the new stack.
+                    const bool new_instance = row->handle != task.xHandle;
+                    if (new_instance) {
+                        row->handle = task.xHandle;
+                        row->stack_total_bytes = 0;
+                        row->stack_current_bytes = 0;
+                        row->stack_max_bytes = 0;
+                        row->stack_peak_bytes = 0;
+                    }
+
+                    const uint64_t current_runtime = static_cast<uint64_t>(task.ulRunTimeCounter);
+                    const uint64_t runtime_delta =
+                        (!new_instance && current_runtime >= row->runtime)
+                            ? current_runtime - row->runtime
+                            : 0;
+                    row->runtime = current_runtime;
+
+                    const TaskStackSample stack = measure_task_stack(task);
+
+                    if (stack.total == 0) {
+                        continue;
+                    }
+
+                    row->stack_lowest = stack.lowest;
+                    row->stack_highest = stack.highest;
+                    row->stack_current_bytes = stack.current;
+                    row->stack_peak_bytes = stack.peak;
+                    if (stack.current > row->stack_max_bytes) {
+                        row->stack_max_bytes = stack.current;
+                    }
+                    note_task_stack_total(*row, stack.total);
 
                     float task_cpu_pct = 0.0f;
                     if (total_runtime_delta > 0) {
@@ -382,8 +519,10 @@ void collectTask(void* arg) {
                         }
                     }
 
+                    // Widest task record is ~105 bytes ({"n":…,"st":…,"sc":…,"sm":…,"sp":…,"cpu":…})
+                    // plus the closing "]}" — keep enough headroom for one more of them.
                     if (tasks_payload_len < 0
-                        || tasks_payload_len >= static_cast<int>(HEAPWATCH_MAX_PAYLOAD_SIZE - 96)) {
+                        || tasks_payload_len >= static_cast<int>(HEAPWATCH_MAX_PAYLOAD_SIZE - 160)) {
                         continue;
                     }
 
@@ -391,11 +530,14 @@ void collectTask(void* arg) {
                     const int written = snprintf(
                         g_payload_buf + tasks_payload_len,
                         HEAPWATCH_MAX_PAYLOAD_SIZE - tasks_payload_len,
-                        "%s{\"n\":\"%s\",\"st\":%" PRIu32 ",\"su\":%" PRIu32 ",\"cpu\":%.2f}",
+                        "%s{\"n\":\"%s\",\"st\":%" PRIu32 ",\"sc\":%" PRIu32 ",\"sm\":%" PRIu32
+                        ",\"sp\":%" PRIu32 ",\"cpu\":%.2f}",
                         first_task_json ? "" : ",",
                         task_name,
-                        stack_total_bytes,
-                        stack_used_bytes,
+                        stack.total,
+                        row->stack_current_bytes,
+                        row->stack_max_bytes,
+                        stack.peak,
                         static_cast<double>(task_cpu_pct));
                     if (written <= 0) {
                         continue;
@@ -530,15 +672,10 @@ void collectTask(void* arg) {
         enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
         enqueue_dirty_task_stack_maxes(tsms, utms);
 
-        // STORAGE1: update storage.free_bytes / storage.used_bytes in the parameter map
-        // (no-op internally if HEAPWATCH_ENABLE_STORAGE_STATS=n or nothing is mounted)
-        // before flushing it below, so the round below carries the freshest values.
-        heapwatch::storage_stats::collectAndReport();
-
         // PARAM1 (Phase 5c): flush the generic slug->value parameter map (POW1
-        // power API, CELL1 cellular signal, STORAGE1 storage stats, connector
-        // gauge limits, any other updateParameter*() / setParameter*Max call
-        // site) as its own batched publish. No-op if nothing is due this round.
+        // power API, CELL1 cellular signal, connector gauge limits, any other
+        // updateParameter*() / setParameter*Max call site) as its own batched
+        // publish. No-op if nothing is due this round.
         HeapwatchConnector::getInstance().flushParameters();
 
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK

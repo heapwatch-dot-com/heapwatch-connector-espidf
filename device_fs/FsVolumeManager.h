@@ -9,7 +9,9 @@
 
 namespace heapwatch::fs_volumes {
 
-constexpr size_t kMaxVolumes = 8;
+constexpr size_t kMaxFlashVolumes = 8;
+constexpr size_t kMaxSdVolumes = 4;
+constexpr size_t kMaxVolumes = kMaxFlashVolumes + kMaxSdVolumes;
 constexpr size_t kLabelMax = 17;
 constexpr size_t kMountPathMax = 64;
 
@@ -26,11 +28,19 @@ struct Volume {
     bool mounted = false;
     bool browsable = false;
     bool connector_mounted = false;
+    /** No flash partition backs this volume (SD card) — reported with a null partition_id. */
+    bool external = false;
     wl_handle_t fat_wl = WL_INVALID_HANDLE;
 };
 
 /** Host mapping: call only before heapwatch_initialize() (and after deinit). */
 esp_err_t registerVolume(const char* partition_label, const char* mount_path);
+
+/**
+ * Host-mounted SD card at an arbitrary VFS path. Call only before heapwatch_initialize().
+ * Read-only adoption: the connector never touches the bus and never unmounts the card.
+ */
+esp_err_t registerSdVolume(const char* label, const char* mount_path);
 
 /** Scan flash FS partitions; auto-mount or adopt already-mounted volumes. */
 void mountAll();

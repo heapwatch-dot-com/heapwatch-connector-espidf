@@ -43,8 +43,8 @@
 #include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
+#include "../device_fs/FsVolumeManager.h"
 #include "../device_ota/OtaService.h"
-#include "../storage_stats/StorageStats.h"
 #include "../stream_ingress/StreamIngressClient.h"
 #include "ParameterStore.h"
 #include "heapwatch_connector_timing.h"
@@ -154,7 +154,7 @@ void initConnectorSubsystemsOnce() {
     }
     g_subsystems_initialized = true;
 
-    heapwatch::storage_stats::init();
+    heapwatch::fs_volumes::mountAll();
     heapwatch::connector_settings::init();
     heapwatch::going_dark::init();
     heapwatch::device_command::initCommandWorker();

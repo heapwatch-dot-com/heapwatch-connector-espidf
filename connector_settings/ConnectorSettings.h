@@ -23,6 +23,12 @@ struct FieldSchema {
 void init();
 
 uint32_t telemetryIntervalMs();
+
+/**
+ * Interval between task stack-pointer samples inside one telemetry cycle. Callers must clamp this
+ * to the telemetry interval — the connector never samples slower than it publishes.
+ */
+uint32_t taskSampleIntervalMs();
 uint8_t minRelaySeverity();
 uint32_t outboxDrainTimeoutMs();
 

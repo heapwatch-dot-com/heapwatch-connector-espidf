@@ -19,6 +19,7 @@ constexpr char NVS_NAMESPACE[] = "heapwatch";
 constexpr char MASKED_SECRET[] = "••••••";
 
 constexpr char KEY_TEL_INT_MS[] = "tel_int_ms";
+constexpr char KEY_TASK_SMP_MS[] = "task_smp_ms";
 constexpr char KEY_LOG_LVL[] = "log_lvl";
 constexpr char KEY_OUT_DRAIN_MS[] = "out_drain_ms";
 constexpr char KEY_TENANT_SLUG[] = "tenant_slug";
@@ -36,6 +37,8 @@ constexpr char KEY_MAN_BUILD[] = "man_build";
 constexpr uint32_t kDefaultOutboxDrainMs = 30000;
 constexpr uint32_t kMinTelemetryMs = 1000;
 constexpr uint32_t kMaxTelemetryMs = 86400000;
+constexpr uint32_t kMinTaskSampleMs = 100;
+constexpr uint32_t kMaxTaskSampleMs = 5000;
 constexpr uint32_t kMinOutboxDrainMs = 1000;
 constexpr uint32_t kMaxOutboxDrainMs = 120000;
 constexpr size_t kMaxManagedCatalogs = 4;
@@ -44,6 +47,12 @@ constexpr FieldSchema kHeapwatchFields[] = {
     {KEY_TEL_INT_MS, "Telemetry interval",
      "Interval between automatic telemetry metric collection cycles.", "int", false, true, "ms",
      static_cast<int>(kMinTelemetryMs), static_cast<int>(kMaxTelemetryMs)},
+    {KEY_TASK_SMP_MS, "Task stack sampling interval",
+     "How often each task's stack pointer is sampled between telemetry cycles. Task stack Max "
+     "only moves when a sample is taken, so shorter intervals catch shorter bursts. Clamped to "
+     "the telemetry interval.",
+     "int", false, true, "ms", static_cast<int>(kMinTaskSampleMs),
+     static_cast<int>(kMaxTaskSampleMs)},
     {KEY_LOG_LVL, "Log relay level",
      "Minimum ESP-IDF log severity relayed to Heapwatch over MQTT.", "enum", false, true,
      nullptr, HEAPWATCH_SEVERITY_DEBUG, HEAPWATCH_SEVERITY_CRITICAL},
@@ -87,6 +96,7 @@ struct ManagedCatalog {
 
 struct CachedSettings {
     uint32_t telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
+    uint32_t task_sample_interval_ms = HEAPWATCH_TASK_SAMPLE_INTERVAL_MS;
     uint8_t min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
     uint32_t outbox_drain_timeout_ms = kDefaultOutboxDrainMs;
 };
@@ -240,6 +250,7 @@ void loadSettingsFromNvs(CachedSettings* target) {
     nvs_handle_t handle = 0;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
         target->telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
+        target->task_sample_interval_ms = HEAPWATCH_TASK_SAMPLE_INTERVAL_MS;
         target->min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
         target->outbox_drain_timeout_ms = kDefaultOutboxDrainMs;
         return;
@@ -247,12 +258,18 @@ void loadSettingsFromNvs(CachedSettings* target) {
 
     readU32(handle, KEY_TEL_INT_MS, &target->telemetry_interval_ms,
             HEAPWATCH_METRICS_INTERVAL_MS);
+    readU32(handle, KEY_TASK_SMP_MS, &target->task_sample_interval_ms,
+            HEAPWATCH_TASK_SAMPLE_INTERVAL_MS);
     readU8(handle, KEY_LOG_LVL, &target->min_relay_severity, HEAPWATCH_MIN_RELAY_SEVERITY);
     readU32(handle, KEY_OUT_DRAIN_MS, &target->outbox_drain_timeout_ms, kDefaultOutboxDrainMs);
 
     if (target->telemetry_interval_ms < kMinTelemetryMs ||
         target->telemetry_interval_ms > kMaxTelemetryMs) {
         target->telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
+    }
+    if (target->task_sample_interval_ms < kMinTaskSampleMs ||
+        target->task_sample_interval_ms > kMaxTaskSampleMs) {
+        target->task_sample_interval_ms = HEAPWATCH_TASK_SAMPLE_INTERVAL_MS;
     }
     if (target->min_relay_severity > HEAPWATCH_SEVERITY_CRITICAL) {
         target->min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
@@ -374,6 +391,11 @@ void addCachedFieldToJson(cJSON* values, const char* nvs_key, const CachedSettin
                                 static_cast<double>(settings.telemetry_interval_ms));
         return;
     }
+    if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        cJSON_AddNumberToObject(values, nvs_key,
+                                static_cast<double>(settings.task_sample_interval_ms));
+        return;
+    }
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         cJSON_AddNumberToObject(values, nvs_key,
                                 static_cast<double>(settings.outbox_drain_timeout_ms));
@@ -382,7 +404,7 @@ void addCachedFieldToJson(cJSON* values, const char* nvs_key, const CachedSettin
 
 bool isCachedPatchableKey(const char* nvs_key) {
     return strcmp(nvs_key, KEY_LOG_LVL) == 0 || strcmp(nvs_key, KEY_TEL_INT_MS) == 0 ||
-           strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0;
+           strcmp(nvs_key, KEY_TASK_SMP_MS) == 0 || strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0;
 }
 
 cJSON* readCatalogFieldFromNvs(nvs_handle_t handle, const FieldSchema& field) {
@@ -435,6 +457,10 @@ bool applyParsedToCache(const char* nvs_key, int parsed) {
         g_cache.telemetry_interval_ms = static_cast<uint32_t>(parsed);
         return true;
     }
+    if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        g_cache.task_sample_interval_ms = static_cast<uint32_t>(parsed);
+        return true;
+    }
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         g_cache.outbox_drain_timeout_ms = static_cast<uint32_t>(parsed);
         return true;
@@ -453,6 +479,8 @@ bool persistKeyToNvs(const char* nvs_key) {
         ok = writeU8(handle, nvs_key, g_cache.min_relay_severity);
     } else if (strcmp(nvs_key, KEY_TEL_INT_MS) == 0) {
         ok = writeU32(handle, nvs_key, g_cache.telemetry_interval_ms);
+    } else if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        ok = writeU32(handle, nvs_key, g_cache.task_sample_interval_ms);
     } else if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         ok = writeU32(handle, nvs_key, g_cache.outbox_drain_timeout_ms);
     }
@@ -474,6 +502,9 @@ bool isKeyDirty(const char* nvs_namespace, const char* nvs_key) {
     if (strcmp(nvs_key, KEY_TEL_INT_MS) == 0) {
         return g_cache.telemetry_interval_ms != g_persisted.telemetry_interval_ms;
     }
+    if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        return g_cache.task_sample_interval_ms != g_persisted.task_sample_interval_ms;
+    }
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         return g_cache.outbox_drain_timeout_ms != g_persisted.outbox_drain_timeout_ms;
     }
@@ -490,6 +521,10 @@ void copyPersistedKeyToCache(const char* nvs_namespace, const char* nvs_key) {
         g_cache.telemetry_interval_ms = g_persisted.telemetry_interval_ms;
         return;
     }
+    if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        g_cache.task_sample_interval_ms = g_persisted.task_sample_interval_ms;
+        return;
+    }
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
         g_cache.outbox_drain_timeout_ms = g_persisted.outbox_drain_timeout_ms;
     }
@@ -502,6 +537,10 @@ void copyCacheKeyToPersisted(const char* nvs_key) {
     }
     if (strcmp(nvs_key, KEY_TEL_INT_MS) == 0) {
         g_persisted.telemetry_interval_ms = g_cache.telemetry_interval_ms;
+        return;
+    }
+    if (strcmp(nvs_key, KEY_TASK_SMP_MS) == 0) {
+        g_persisted.task_sample_interval_ms = g_cache.task_sample_interval_ms;
         return;
     }
     if (strcmp(nvs_key, KEY_OUT_DRAIN_MS) == 0) {
@@ -538,6 +577,9 @@ cJSON* buildCatalogJson(const ManagedCatalog& catalog) {
         } else if (strcmp(field.nvs_key, KEY_TEL_INT_MS) == 0) {
             cJSON_AddNumberToObject(field_obj, "default",
                                     static_cast<double>(HEAPWATCH_METRICS_INTERVAL_MS));
+        } else if (strcmp(field.nvs_key, KEY_TASK_SMP_MS) == 0) {
+            cJSON_AddNumberToObject(field_obj, "default",
+                                    static_cast<double>(HEAPWATCH_TASK_SAMPLE_INTERVAL_MS));
         } else if (strcmp(field.nvs_key, KEY_LOG_LVL) == 0) {
             cJSON_AddNumberToObject(field_obj, "default",
                                     static_cast<double>(HEAPWATCH_MIN_RELAY_SEVERITY));
@@ -618,13 +660,16 @@ void init() {
     registerManagedCatalog("heapwatch", "Heapwatch Connector", NVS_NAMESPACE, kHeapwatchFields,
                            sizeof(kHeapwatchFields) / sizeof(kHeapwatchFields[0]));
     reloadFromNvs();
-    ESP_LOGI(TAG, "telemetry=%u ms log_lvl=%u outbox_drain=%u ms",
+    ESP_LOGI(TAG, "telemetry=%u ms task_sample=%u ms log_lvl=%u outbox_drain=%u ms",
              static_cast<unsigned>(g_cache.telemetry_interval_ms),
+             static_cast<unsigned>(g_cache.task_sample_interval_ms),
              static_cast<unsigned>(g_cache.min_relay_severity),
              static_cast<unsigned>(g_cache.outbox_drain_timeout_ms));
 }
 
 uint32_t telemetryIntervalMs() { return g_cache.telemetry_interval_ms; }
+
+uint32_t taskSampleIntervalMs() { return g_cache.task_sample_interval_ms; }
 
 uint8_t minRelaySeverity() { return g_cache.min_relay_severity; }
 

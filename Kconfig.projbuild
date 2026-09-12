@@ -234,23 +234,17 @@ menu "Heapwatch Connector"
                 catches corruption before it causes a crash, instead of only finding out
                 post-hoc via coredump. Default off: walking the full heap has a heavy CPU load.
 
-        menu "Filesystem volumes"
+        menu "Filesystem Volumes"
             config HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
-                bool "Auto-mount all storage partitions"
+                bool "Auto-Mount All Storage Partitions"
                 default y
                 help
-                    At heapwatch_initialize(), scan data/spiffs, data/littlefs, and data/fat
-                    flash partitions and mount each at /<label> (or a path from
-                    heapwatch_register_fs_volume). Already-mounted partitions are treated as
-                    success and remain host-owned (not unmounted on deinit).
-                    When disabled, the host must call heapwatch_register_fs_volume(label,
-                    mount_path) before init; the connector never mounts and only browses
-                    registered VFS roots that are already up.
-                    Raise CONFIG_SPIFFS_MAX_PARTITIONS / CONFIG_LITTLEFS_MAX_PARTITIONS if
-                    the table has more filesystem partitions than those IDF defaults.
+                    At heapwatch_initialize(), the connector automatically mounts all "storage" partitions
+                    in the partition table. If your application mounts your partitions, you should DISABLE this
+                    option and register each your partition and its mountpoint via heapwatch_register_fs_volume().
 
             config HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
-                bool "Auto-format blank storage partitions"
+                bool "Auto-Format Blank Storage Partitions"
                 default y
                 depends on HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
                 help
@@ -258,28 +252,20 @@ menu "Heapwatch Connector"
                     SPIFFS, LittleFS, and FatFS. Only applies to connector-owned mounts, not
                     to partitions the host already mounted.
 
-        endmenu
-
-        menu "Collect Storage Stats"
-            config HEAPWATCH_ENABLE_STORAGE_STATS
-                bool "Report internal-flash filesystem stats (STORAGE1)"
-                default y
-                help
-                    Reports storage.free_bytes/storage.used_bytes (PARAM1) once per telemetry
-                    round, summing every mounted flash filesystem volume plus an optional SD
-                    card. Separate from NVS stats.
-
             config HEAPWATCH_ENABLE_SD_CARD_STATS
-                bool "Also mount and report an SD card over SPI"
+                bool "Also Mount And Take-Over SD Card Over SPI"
                 default n
-                depends on HEAPWATCH_ENABLE_STORAGE_STATS
                 help
-                    Attempts to mount a FAT-formatted SD card over SPI at boot using the pins
-                    below. If no card is present or the mount fails, this is logged and
-                    skipped -- never fatal, never retried. When mounted, its free/used bytes
-                    are added to the same storage.free_bytes/storage.used_bytes totals as
-                    the SPIFFS partition (aggregate "internal + removable storage" figure,
-                    per PARAM2's fixed-slug design -- not a separate per-medium slug).
+                    Only for hosts that do NOT use the SD card themselves: the connector
+                    takes over the bus, calling spi_bus_initialize() and mounting a
+                    FAT-formatted card at /sd with the pins below. If no card is present or
+                    the mount fails, this is logged and skipped -- never fatal, never
+                    retried. Once mounted it becomes a normal volume in the file browser.
+
+                    Leave this off when the host firmware already owns the SPI bus or has
+                    already mounted the card -- a second bus init will fight the host.
+                    Call heapwatch_register_sd_volume(label, mount_path) instead: the
+                    connector then only reads used/free and never touches the bus.
 
             config HEAPWATCH_SD_CARD_CS_GPIO
                 int "SD card CS (chip select) GPIO"
@@ -411,6 +397,13 @@ menu "Heapwatch Connector"
             help
                 This is the initial interval at which the connector collects and sends out telemetry data.
                 Can be changed remotely from Heapwatch UI.
+
+        config HEAPWATCH_TASK_SAMPLE_INTERVAL_MS
+            int "Task Stack Sampling Interval (ms)"
+            default 500
+            range 100 5000
+            help
+                How often each task's stack statistics are read. Can be changed remotely from Heapwatch UI.
 
         config HEAPWATCH_LOG_BATCH_MAX
             int "Max Log Lines Per MQTT Publish"

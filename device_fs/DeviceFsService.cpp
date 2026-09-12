@@ -14,7 +14,6 @@
 #include "esp_flash_partitions.h"
 #include "esp_log.h"
 #include "esp_partition.h"
-#include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "mbedtls/sha256.h"
 #include "sdkconfig.h"
@@ -29,8 +28,6 @@ namespace heapwatch::device_fs {
 namespace {
 
 constexpr char TAG[] = "HwFs";
-
-constexpr char kSdMount[] = "/sd";
 
 /** ESP-IDF: partition table always occupies one 4 KiB flash sector. */
 constexpr uint32_t kPartitionTableSectorBytes = 0x1000;
@@ -76,36 +73,12 @@ struct ActiveUpload {
 ActiveUpload g_upload = {};
 bool g_logged_inactive_upload_drop = false;
 
-bool pathStartsWith(const char* path, const char* prefix) {
-    if (path == nullptr || prefix == nullptr) {
-        return false;
-    }
-    const size_t prefix_len = strlen(prefix);
-    if (strncmp(path, prefix, prefix_len) != 0) {
-        return false;
-    }
-    if (path[prefix_len] == '\0' || path[prefix_len] == '/') {
-        return true;
-    }
-    return false;
-}
-
 bool containsDotDot(const char* path) {
     if (path == nullptr) {
         return true;
     }
     return strstr(path, "/..") != nullptr || strstr(path, "../") != nullptr ||
            strcmp(path, "..") == 0;
-}
-
-bool sdMounted() {
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    uint64_t total = 0;
-    uint64_t free_bytes = 0;
-    return esp_vfs_fat_info(kSdMount, &total, &free_bytes) == ESP_OK;
-#else
-    return false;
-#endif
 }
 
 /** Remove leftover `.hw-*.tmp` objects from a prior failed upload (SPIFFS slots + space). */
@@ -174,22 +147,7 @@ bool volumeHasSpaceForUpload(const char* path, int64_t needed, FsError* error) {
             return false;
         }
         free_bytes = static_cast<int64_t>(total) - static_cast<int64_t>(used);
-    }
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    else if (pathStartsWith(path, kSdMount) && sdMounted()) {
-        uint64_t total = 0;
-        uint64_t sd_free = 0;
-        if (esp_vfs_fat_info(kSdMount, &total, &sd_free) != ESP_OK) {
-            if (error != nullptr) {
-                error->code = "io_error";
-                error->message = "Failed to query SD free space.";
-            }
-            return false;
-        }
-        free_bytes = static_cast<int64_t>(sd_free);
-    }
-#endif
-    else {
+    } else {
         // Unknown / unmounted volume — let fopen fail rather than guessing.
         return true;
     }
@@ -412,13 +370,7 @@ bool isAllowedPath(const char* path) {
     if (containsDotDot(path)) {
         return false;
     }
-    if (fs_volumes::pathIsAllowed(path)) {
-        return true;
-    }
-    if (pathStartsWith(path, kSdMount) && sdMounted()) {
-        return true;
-    }
-    return false;
+    return fs_volumes::pathIsAllowed(path);
 }
 
 void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON* result) {
@@ -455,28 +407,6 @@ void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON*
 
     cJSON_free(json);
 }
-
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-cJSON* buildSdVolumeObject() {
-    uint64_t total = 0;
-    uint64_t free_bytes = 0;
-    if (esp_vfs_fat_info(kSdMount, &total, &free_bytes) != ESP_OK) {
-        return nullptr;
-    }
-
-    const uint64_t used = total >= free_bytes ? (total - free_bytes) : 0;
-
-    cJSON* vol = cJSON_CreateObject();
-    cJSON_AddStringToObject(vol, "id", "sd");
-    cJSON_AddStringToObject(vol, "label", "SD Card");
-    cJSON_AddStringToObject(vol, "path", kSdMount);
-    cJSON_AddStringToObject(vol, "filesystem", "fat");
-    // External media — not an internal flash partition.
-    cJSON_AddNumberToObject(vol, "total_bytes", static_cast<double>(total));
-    cJSON_AddNumberToObject(vol, "used_bytes", static_cast<double>(used));
-    return vol;
-}
-#endif
 
 /** ESP-IDF type name when known; nullptr if only type_id should be used. */
 const char* espTypeName(esp_partition_type_t type) {
@@ -563,7 +493,8 @@ bool tryFsUsedBytes(const char* label, fs_volumes::Kind kind, int64_t* used_out,
         const fs_volumes::Volume* vol = nullptr;
         for (size_t i = 0; i < fs_volumes::mountedCount(); ++i) {
             const fs_volumes::Volume* candidate = fs_volumes::volumeAt(i);
-            if (candidate != nullptr && strcmp(candidate->label, label) == 0) {
+            if (candidate != nullptr && !candidate->external &&
+                strcmp(candidate->label, label) == 0) {
                 vol = candidate;
                 break;
             }
@@ -682,7 +613,8 @@ cJSON* buildPartitionObject(const esp_partition_t* part) {
         }
         for (size_t i = 0; i < fs_volumes::mountedCount(); ++i) {
             const fs_volumes::Volume* vol = fs_volumes::volumeAt(i);
-            if (vol != nullptr && vol->browsable && strcmp(vol->label, label) == 0) {
+            if (vol != nullptr && vol->browsable && !vol->external &&
+                strcmp(vol->label, label) == 0) {
                 browsable = true;
                 volume_id = vol->label;
                 break;
@@ -747,16 +679,10 @@ cJSON* buildPartitionsArray() {
 }
 
 cJSON* buildVolumeSnapshotForPath(const char* path) {
-    const fs_volumes::Volume* flash_vol = fs_volumes::findByPath(path);
-    if (flash_vol != nullptr) {
-        return fs_volumes::buildVolumeObject(*flash_vol);
+    const fs_volumes::Volume* vol = fs_volumes::findByPath(path);
+    if (vol != nullptr) {
+        return fs_volumes::buildVolumeObject(*vol);
     }
-
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    if (pathStartsWith(path, kSdMount) && sdMounted()) {
-        return buildSdVolumeObject();
-    }
-#endif
 
     return nullptr;
 }
@@ -770,19 +696,10 @@ cJSON* buildVolumesResult() {
             continue;
         }
         cJSON* obj = fs_volumes::buildVolumeObject(*vol);
-        if (vol != nullptr && obj != nullptr) {
+        if (obj != nullptr) {
             cJSON_AddItemToArray(volumes, obj);
         }
     }
-
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    if (sdMounted()) {
-        cJSON* vol = buildSdVolumeObject();
-        if (vol != nullptr) {
-            cJSON_AddItemToArray(volumes, vol);
-        }
-    }
-#endif
 
     cJSON* result = cJSON_CreateObject();
     cJSON_AddItemToObject(result, "volumes", volumes);
@@ -1202,15 +1119,10 @@ bool beginUploadJob(const char* command_id, const char* path, const char* temp_p
         }
     }
 
-    const fs_volumes::Volume* flash_vol = fs_volumes::findByPath(path);
-    if (flash_vol != nullptr) {
-        cleanupOrphanUploadTemps(flash_vol->mount_path);
+    const fs_volumes::Volume* target_vol = fs_volumes::findByPath(path);
+    if (target_vol != nullptr) {
+        cleanupOrphanUploadTemps(target_vol->mount_path);
     }
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    else if (pathStartsWith(path, kSdMount)) {
-        cleanupOrphanUploadTemps(kSdMount);
-    }
-#endif
 
     if (!volumeHasSpaceForUpload(path, expected_size, error)) {
         // Replace on a nearly-full volume: temp + target cannot coexist. Unlink the
