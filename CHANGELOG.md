@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-13
+
 ### Fixed
 - Post-build firmware upload now takes the partition table CSV that ESP-IDF already resolved (`PARTITION_CSV_PATH`) instead of requiring a file named `partitions.csv` in the project root. Custom names such as `partition_unsecured_16MB.csv` upload correctly.
 
 ### Changed
+- `hw_dispatcher` stack default is **12 KiB** (`CONFIG_HEAPWATCH_DISPATCHER_TASK_STACK_BYTES`, was a hard-coded 8 KiB). That thread runs claimed-identities HTTPS and streamed coredump upload; 8 KiB overflows the mbedTLS handshake (stack canary on `hw_dispatcher`).
 - **BREAKING:** Post-build firmware upload fails the ESP-IDF build when the Heapwatch API call fails. The switch is `HEAPWATCH_FAIL_ON_UPLOAD_ERROR` (default on). Set `HEAPWATCH_FAIL_ON_UPLOAD_ERROR=0` to warn and continue. `HEAPWATCH_UPLOAD_STRICT` is gone.
+- **BREAKING:** `TASKS` JSON uses English keys matching the dashboard: `name`, `total`, `now`,
+  `min`, `max`, `peak`, `cpu`. The compact `n` / `st` / `sc` / `sp` keys are gone.
+- When the task list does not fit one `HEAPWATCH_LARGE_PAYLOAD_SIZE` MQTT slot, it is split
+  across multiple `TASKS` publishes. Each message is a complete subset (ingest is per-task).
+  Stack-limit PARAMETER fields (`stack_{current,min,max,peak}_bytes_max`) split the same way.
 
+### Added
+- Per-task **min** and **max** of **Now** (lowest / highest stack-pointer depth this instance has
+  shown on a telemetry tick). First valid sample seeds both; a new handle resets the range. Peak
+  (FreeRTOS high-water mark) is unchanged.
 
 ## [0.12.1] - 2026-09-12
 

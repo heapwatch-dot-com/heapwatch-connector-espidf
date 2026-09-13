@@ -95,9 +95,13 @@
 #define HEAPWATCH_MAX_LOG_LINE_LEN       160
 #endif
 
-/** FreeRTOS task stacks (bytes) — keep tight; largest MQTT payloads are ~2KB. */
+/** FreeRTOS task stacks (bytes). */
 #define HEAPWATCH_METRICS_TASK_STACK_BYTES      8192
-#define HEAPWATCH_DISPATCHER_TASK_STACK_BYTES   8192
+#ifdef CONFIG_HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
+#define HEAPWATCH_DISPATCHER_TASK_STACK_BYTES   CONFIG_HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
+#else
+#define HEAPWATCH_DISPATCHER_TASK_STACK_BYTES   12288
+#endif
 
 /* ---------------------------------------------------------------------------
    Timing Configuration

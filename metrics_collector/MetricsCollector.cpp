@@ -54,8 +54,11 @@ struct TaskStats {
     const uint8_t* stack_highest;
     uint32_t stack_total_bytes;
     uint32_t stack_current_bytes;
+    uint32_t stack_min_bytes;
+    uint32_t stack_max_bytes;
     uint32_t stack_peak_bytes;
     uint64_t runtime;
+    bool stack_range_seeded;
 };
 
 
@@ -176,6 +179,188 @@ void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     }
 }
 
+static_assert(HEAPWATCH_MAX_PAYLOAD_SIZE >= HEAPWATCH_LARGE_PAYLOAD_SIZE,
+              "g_payload_buf must cover the large MQTT queue slot");
+
+// LargeMqttMessage.payload is HEAPWATCH_LARGE_PAYLOAD_SIZE and is filled with snprintf,
+// so the JSON string (including the closer) must be at most that size minus the NUL.
+constexpr size_t kLargeJsonMax = HEAPWATCH_LARGE_PAYLOAD_SIZE - 1;
+constexpr int kParameterJsonCloseLen = 1;   // }
+
+bool append_json_chunk(int* payload_len, const char* chunk, int chunk_len, int close_len) {
+    if (payload_len == nullptr || chunk == nullptr || chunk_len <= 0) {
+        return false;
+    }
+    if (*payload_len < 0
+        || *payload_len + chunk_len + close_len > static_cast<int>(kLargeJsonMax)) {
+        return false;
+    }
+    memcpy(g_payload_buf + *payload_len, chunk, static_cast<size_t>(chunk_len));
+    *payload_len += chunk_len;
+    return true;
+}
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+constexpr int kTasksJsonCloseLen = 2;       // ]}
+
+constexpr size_t kTasksJsonHeaderMax =
+    sizeof("{\"tsms\":18446744073709551615,\"utms\":18446744073709551615,\"tasks\":[") - 1;
+constexpr size_t kTaskNameMaxChars = sizeof(TaskStats::name) - 1;
+constexpr size_t kTaskJsonRowMax =
+    sizeof(",{\"name\":\"\",\"total\":4294967295,\"now\":4294967295,\"min\":4294967295,"
+           "\"max\":4294967295,\"peak\":4294967295,\"cpu\":100.00}")
+    - 1 + kTaskNameMaxChars;
+
+static_assert(kTasksJsonHeaderMax + kTaskJsonRowMax + kTasksJsonCloseLen <= kLargeJsonMax,
+              "HEAPWATCH_LARGE_PAYLOAD_SIZE cannot hold one TASKS object");
+
+// How many TASKS objects go in one MQTT_MESSAGE_TYPE_TASKS publish. Each publish is a
+// complete, independently ingestible subset — later messages do not replace earlier ones.
+constexpr size_t kMaxTasksPerPublish =
+    (kLargeJsonMax - kTasksJsonHeaderMax - static_cast<size_t>(kTasksJsonCloseLen))
+    / kTaskJsonRowMax;
+static_assert(kMaxTasksPerPublish >= 1, "large MQTT slot cannot hold a single TASKS row");
+
+constexpr size_t kTaskJsonRowBuf = kTaskJsonRowMax + 8;
+
+int start_tasks_payload(uint64_t tsms, uint64_t utms) {
+    return snprintf(
+        g_payload_buf,
+        HEAPWATCH_LARGE_PAYLOAD_SIZE,
+        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"tasks\":[",
+        tsms,
+        utms);
+}
+
+void close_and_enqueue_tasks(int* payload_len) {
+    if (payload_len == nullptr || *payload_len <= 0) {
+        return;
+    }
+
+    if (*payload_len + kTasksJsonCloseLen <= static_cast<int>(kLargeJsonMax)) {
+        *payload_len += snprintf(
+            g_payload_buf + *payload_len,
+            HEAPWATCH_LARGE_PAYLOAD_SIZE - static_cast<size_t>(*payload_len),
+            "]}");
+    } else {
+        g_payload_buf[kLargeJsonMax] = '\0';
+    }
+    enqueue_mqtt_message(MQTT_MESSAGE_TYPE_TASKS, g_payload_buf);
+}
+
+int format_task_json_row(
+    char* out,
+    size_t out_len,
+    bool leading_comma,
+    const char* task_name,
+    uint32_t total,
+    uint32_t now,
+    uint32_t min_bytes,
+    uint32_t max_bytes,
+    uint32_t peak,
+    float cpu_pct) {
+    return snprintf(
+        out,
+        out_len,
+        "%s{\"name\":\"%s\",\"total\":%" PRIu32 ",\"now\":%" PRIu32
+        ",\"min\":%" PRIu32 ",\"max\":%" PRIu32 ",\"peak\":%" PRIu32
+        ",\"cpu\":%.2f}",
+        leading_comma ? "," : "",
+        task_name,
+        total,
+        now,
+        min_bytes,
+        max_bytes,
+        peak,
+        static_cast<double>(cpu_pct));
+}
+
+struct TasksPublish {
+    uint64_t tsms = 0;
+    uint64_t utms = 0;
+    int len = 0;
+    size_t rows = 0;
+};
+
+void tasks_publish_begin(TasksPublish* pub, uint64_t tsms, uint64_t utms) {
+    pub->tsms = tsms;
+    pub->utms = utms;
+    pub->len = start_tasks_payload(tsms, utms);
+    pub->rows = 0;
+}
+
+void tasks_publish_close(TasksPublish* pub) {
+    if (pub->rows == 0) {
+        return;
+    }
+    close_and_enqueue_tasks(&pub->len);
+    pub->len = 0;
+    pub->rows = 0;
+}
+
+void tasks_publish_append(
+    TasksPublish* pub,
+    const char* task_name,
+    uint32_t total,
+    uint32_t now,
+    uint32_t min_bytes,
+    uint32_t max_bytes,
+    uint32_t peak,
+    float cpu_pct) {
+    char row[kTaskJsonRowBuf];
+    const bool slot_full =
+        pub->rows > 0
+        && pub->len + static_cast<int>(kTaskJsonRowMax) + kTasksJsonCloseLen
+            > static_cast<int>(kLargeJsonMax);
+    if (slot_full) {
+        tasks_publish_close(pub);
+        tasks_publish_begin(pub, pub->tsms, pub->utms);
+    }
+
+    int row_len = format_task_json_row(
+        row,
+        sizeof(row),
+        pub->rows > 0,
+        task_name,
+        total,
+        now,
+        min_bytes,
+        max_bytes,
+        peak,
+        cpu_pct);
+    if (row_len <= 0 || row_len >= static_cast<int>(sizeof(row))) {
+        return;
+    }
+
+    if (!append_json_chunk(&pub->len, row, row_len, kTasksJsonCloseLen)) {
+        if (pub->rows == 0) {
+            ESP_LOGW(kTag, "task '%s' does not fit one TASKS slot", task_name);
+            return;
+        }
+        tasks_publish_close(pub);
+        tasks_publish_begin(pub, pub->tsms, pub->utms);
+        row_len = format_task_json_row(
+            row,
+            sizeof(row),
+            false,
+            task_name,
+            total,
+            now,
+            min_bytes,
+            max_bytes,
+            peak,
+            cpu_pct);
+        if (row_len <= 0
+            || row_len >= static_cast<int>(sizeof(row))
+            || !append_json_chunk(&pub->len, row, row_len, kTasksJsonCloseLen)) {
+            ESP_LOGW(kTag, "task '%s' does not fit one TASKS slot", task_name);
+            return;
+        }
+    }
+    pub->rows++;
+}
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+
 void refresh_connector_gauge_limits(size_t core_count) {
     auto& connector = HeapwatchConnector::getInstance();
     const int64_t internal_total =
@@ -216,35 +401,74 @@ void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
     }
 }
 
+int start_parameter_payload(uint64_t tsms, uint64_t utms) {
+    return snprintf(
+        g_payload_buf,
+        HEAPWATCH_LARGE_PAYLOAD_SIZE,
+        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64,
+        tsms,
+        utms);
+}
+
+void close_and_enqueue_parameter(int* payload_len) {
+    if (payload_len == nullptr || *payload_len <= 0) {
+        return;
+    }
+
+    if (*payload_len + kParameterJsonCloseLen <= static_cast<int>(kLargeJsonMax)) {
+        g_payload_buf[(*payload_len)++] = '}';
+        g_payload_buf[*payload_len] = '\0';
+    } else {
+        g_payload_buf[kLargeJsonMax] = '\0';
+    }
+    enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
+}
+
 void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
     if (g_dirty_task_stack_max_count == 0) {
         return;
     }
 
-    size_t pos = 0;
-    pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
-                    "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64, tsms, utms);
-    for (size_t i = 0; i < g_dirty_task_stack_max_count && pos < HEAPWATCH_MAX_PAYLOAD_SIZE; ++i) {
+    int pos = start_parameter_payload(tsms, utms);
+    int header_len = pos;
+    for (size_t i = 0; i < g_dirty_task_stack_max_count; ++i) {
         const TaskStats& row = g_task_stats[g_dirty_task_stack_idx[i]];
         char slug_seg[32];
         if (!heapwatch::normalizeDynamicSegment(row.name, slug_seg, sizeof(slug_seg))) {
             continue;
         }
-        // Both stack series share one ceiling — the task's configured depth.
-        pos += snprintf(g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos,
-                        ",\"dynamic.task.%s.stack_current_bytes_max\":%" PRIu32
-                        ",\"dynamic.task.%s.stack_peak_bytes_max\":%" PRIu32,
-                        slug_seg, row.stack_total_bytes, slug_seg, row.stack_total_bytes);
+
+        char chunk[256];
+        const int chunk_len = snprintf(
+            chunk,
+            sizeof(chunk),
+            ",\"dynamic.task.%s.stack_current_bytes_max\":%" PRIu32
+            ",\"dynamic.task.%s.stack_min_bytes_max\":%" PRIu32
+            ",\"dynamic.task.%s.stack_max_bytes_max\":%" PRIu32
+            ",\"dynamic.task.%s.stack_peak_bytes_max\":%" PRIu32,
+            slug_seg, row.stack_total_bytes,
+            slug_seg, row.stack_total_bytes,
+            slug_seg, row.stack_total_bytes,
+            slug_seg, row.stack_total_bytes);
+        if (chunk_len <= 0 || chunk_len >= static_cast<int>(sizeof(chunk))) {
+            continue;
+        }
+
+        if (!append_json_chunk(&pos, chunk, chunk_len, kParameterJsonCloseLen)) {
+            if (pos > header_len) {
+                close_and_enqueue_parameter(&pos);
+            }
+            pos = start_parameter_payload(tsms, utms);
+            header_len = pos;
+            if (!append_json_chunk(&pos, chunk, chunk_len, kParameterJsonCloseLen)) {
+                ESP_LOGW(kTag, "stack limit fields for '%s' do not fit one PARAMETER slot",
+                         row.name);
+            }
+        }
     }
-    if (pos < HEAPWATCH_MAX_PAYLOAD_SIZE) {
-        g_payload_buf[pos++] = '}';
+    if (pos > header_len) {
+        close_and_enqueue_parameter(&pos);
     }
-    if (pos < HEAPWATCH_MAX_PAYLOAD_SIZE) {
-        g_payload_buf[pos] = '\0';
-    } else {
-        g_payload_buf[HEAPWATCH_MAX_PAYLOAD_SIZE - 1] = '\0';
-    }
-    enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
     g_dirty_task_stack_max_count = 0;
 }
 }  // namespace
@@ -373,13 +597,10 @@ void collectTask(void* arg) {
                         total_runtime_u64 - g_cpu_usage_state.prev_total_runtime;
                 }
 
-                int tasks_payload_len = snprintf(
-                    g_payload_buf,
-                    HEAPWATCH_MAX_PAYLOAD_SIZE,
-                    "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"tasks\":[",
-                    tsms,
-                    utms);
-                bool first_task_json = true;
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+                TasksPublish tasks_pub;
+                tasks_publish_begin(&tasks_pub, tsms, utms);
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
                 for (UBaseType_t i = 0; i < task_count; ++i) {
                     const TaskStatus_t& task = task_status[i];
@@ -409,7 +630,10 @@ void collectTask(void* arg) {
                         row->handle = task.xHandle;
                         row->stack_total_bytes = 0;
                         row->stack_current_bytes = 0;
+                        row->stack_min_bytes = 0;
+                        row->stack_max_bytes = 0;
                         row->stack_peak_bytes = 0;
+                        row->stack_range_seeded = false;
                     }
 
                     const uint64_t current_runtime = static_cast<uint64_t>(task.ulRunTimeCounter);
@@ -431,6 +655,18 @@ void collectTask(void* arg) {
                     // task is using nothing, so keep the last good reading rather than report 0.
                     if (stack.current > 0) {
                         row->stack_current_bytes = stack.current;
+                        if (!row->stack_range_seeded) {
+                            row->stack_min_bytes = stack.current;
+                            row->stack_max_bytes = stack.current;
+                            row->stack_range_seeded = true;
+                        } else {
+                            if (stack.current < row->stack_min_bytes) {
+                                row->stack_min_bytes = stack.current;
+                            }
+                            if (stack.current > row->stack_max_bytes) {
+                                row->stack_max_bytes = stack.current;
+                            }
+                        }
                     }
                     row->stack_peak_bytes = stack.peak;
                     note_task_stack_total(*row, stack.total);
@@ -449,31 +685,23 @@ void collectTask(void* arg) {
                         }
                     }
 
-                    // Widest task record is ~95 bytes ({"n":…,"st":…,"sc":…,"sp":…,"cpu":…})
-                    // plus the closing "]}" — keep enough headroom for one more of them.
-                    if (tasks_payload_len < 0
-                        || tasks_payload_len >= static_cast<int>(HEAPWATCH_MAX_PAYLOAD_SIZE - 160)) {
+                    if (!row->stack_range_seeded) {
                         continue;
                     }
 
-                    const char* task_name = task.pcTaskName != nullptr ? task.pcTaskName : "?";
-                    const int written = snprintf(
-                        g_payload_buf + tasks_payload_len,
-                        HEAPWATCH_MAX_PAYLOAD_SIZE - tasks_payload_len,
-                        "%s{\"n\":\"%s\",\"st\":%" PRIu32 ",\"sc\":%" PRIu32
-                        ",\"sp\":%" PRIu32 ",\"cpu\":%.2f}",
-                        first_task_json ? "" : ",",
-                        task_name,
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+                    tasks_publish_append(
+                        &tasks_pub,
+                        task.pcTaskName != nullptr ? task.pcTaskName : "?",
                         stack.total,
                         row->stack_current_bytes,
+                        row->stack_min_bytes,
+                        row->stack_max_bytes,
                         stack.peak,
-                        static_cast<double>(task_cpu_pct));
-                    if (written <= 0) {
-                        continue;
-                    }
-
-                    tasks_payload_len += written;
-                    first_task_json = false;
+                        task_cpu_pct);
+#else
+                    (void)task_cpu_pct;
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
                 }
 
 #if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
@@ -503,18 +731,7 @@ void collectTask(void* arg) {
 #endif  /* CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS */
 
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-                if (!first_task_json
-                    && tasks_payload_len > 0
-                    && tasks_payload_len < static_cast<int>(HEAPWATCH_MAX_PAYLOAD_SIZE - 4)) {
-                    tasks_payload_len += snprintf(
-                        g_payload_buf + tasks_payload_len,
-                        HEAPWATCH_MAX_PAYLOAD_SIZE - tasks_payload_len,
-                        "]}");
-                    enqueue_mqtt_message(MQTT_MESSAGE_TYPE_TASKS, g_payload_buf);
-                }
-#else
-                (void)first_task_json;
-                (void)tasks_payload_len;
+                tasks_publish_close(&tasks_pub);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
             }
             vPortFree(task_status);

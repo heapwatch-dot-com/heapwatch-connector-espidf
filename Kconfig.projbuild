@@ -377,6 +377,17 @@ menu "Heapwatch Connector"
                 and want to preserve stats during intermittent connection outages like
                 having a CatM modem and moving around with the device.
 
+        config HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
+            int "MQTT dispatcher task stack (bytes)"
+            default 12288
+            range 8192 32768
+            help
+                Stack for hw_dispatcher. That thread does claimed-identities HTTPS
+                and streamed coredump upload (mbedTLS handshake on this stack), not
+                only MQTT enqueue. 8 KiB overflows during the handshake (stack canary
+                watchpoint on hw_dispatcher). 12 KiB is the connector default; enrollment
+                stays on hw_bootstrap at 16 KiB.
+
         config HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
             bool "Allocate MQTT message queues in PSRAM"
             default n
