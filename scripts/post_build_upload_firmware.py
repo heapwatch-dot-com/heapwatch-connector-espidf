@@ -122,13 +122,10 @@ def stale_sources_newer_than(*, artifact_mtime: float, roots: tuple[Path, ...]) 
     return stale
 
 
-def is_strict_upload() -> bool:
-    return os.environ.get("HEAPWATCH_UPLOAD_STRICT", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+def fail_on_upload_error() -> bool:
+    """Fail the ESP-IDF build when firmware upload fails. Default on; set HEAPWATCH_FAIL_ON_UPLOAD_ERROR=0 to opt out."""
+    raw = os.environ.get("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
 def upload_firmware_bundle(
@@ -136,6 +133,7 @@ def upload_firmware_bundle(
     build_dir: Path,
     metadata_header: Path,
     project_name: str,
+    partitions_csv: Path,
     app_root: Path | None = None,
     build_identifier: str | None = None,
 ) -> None:
@@ -150,7 +148,7 @@ def upload_firmware_bundle(
     description = os.environ.get("HEAPWATCH_FIRMWARE_DESCRIPTION", "").strip() or None
 
     flasher_args_path = build_dir / "flasher_args.json"
-    partitions_csv_path = resolved_app_root / "partitions.csv"
+    partitions_csv_path = partitions_csv
     sdkconfig_path = resolved_app_root / "sdkconfig"
     elf_path = build_dir / f"{project_name}.elf"
     metadata_header_path = metadata_header
@@ -265,20 +263,20 @@ def upload_firmware_bundle(
         body = e.read().decode("utf-8", errors="replace")
         code = e.code
         message = f"ERROR: firmware POST failed HTTP {code}: {body!r}"
-        if is_strict_upload():
+        if fail_on_upload_error():
             die(message)
         print(f"WARNING: {message}", file=sys.stderr)
         return
     except urllib.error.URLError as e:
         message = f"ERROR: network failure: {e}"
-        if is_strict_upload():
+        if fail_on_upload_error():
             die(message)
         print(f"WARNING: {message}", file=sys.stderr)
         return
 
     if code not in (200, 201):
         message = f"ERROR: firmware POST failed HTTP {code}: {body!r}"
-        if is_strict_upload():
+        if fail_on_upload_error():
             die(message)
         print(f"WARNING: {message}", file=sys.stderr)
         return
@@ -506,12 +504,19 @@ def main() -> None:
         default=None,
         help="Client firmware project root (defaults to build-dir parent)",
     )
+    parser.add_argument(
+        "--partitions-csv",
+        type=Path,
+        required=True,
+        help="Absolute path to the partition table CSV resolved by ESP-IDF (PARTITION_CSV_PATH).",
+    )
     args = parser.parse_args()
 
     upload_firmware_bundle(
         build_dir=args.build_dir,
         metadata_header=args.metadata_header,
         project_name=args.project_name,
+        partitions_csv=args.partitions_csv,
         app_root=args.app_root,
     )
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Post-build firmware upload now takes the partition table CSV that ESP-IDF already resolved (`PARTITION_CSV_PATH`) instead of requiring a file named `partitions.csv` in the project root. Custom names such as `partition_unsecured_16MB.csv` upload correctly.
+
+### Changed
+- **BREAKING:** Post-build firmware upload fails the ESP-IDF build when the Heapwatch API call fails. The switch is `HEAPWATCH_FAIL_ON_UPLOAD_ERROR` (default on). Set `HEAPWATCH_FAIL_ON_UPLOAD_ERROR=0` to warn and continue. `HEAPWATCH_UPLOAD_STRICT` is gone.
+
+
 ## [0.12.1] - 2026-09-12
 
 ### Fixed

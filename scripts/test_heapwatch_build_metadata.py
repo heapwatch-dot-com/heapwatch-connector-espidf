@@ -6,7 +6,9 @@ import json
 import os
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from heapwatch_build_metadata import git_describe, resolve_source_version
 from heapwatch_multipart_upload import encode_multipart_form_data
@@ -19,8 +21,10 @@ from post_build_upload_firmware import (
     api_version_fields,
     ensure_artifacts_match_successful_build,
     format_firmware_upload_success,
+    fail_on_upload_error,
     normalize_optional_version,
     stale_sources_newer_than,
+    upload_firmware_bundle,
 )
 
 
@@ -250,6 +254,62 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
                 app_root=app_root,
                 connector_root=connector_root,
             )
+
+    def test_fail_on_upload_error_defaults_true(self) -> None:
+        saved = os.environ.pop("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", None)
+        try:
+            self.assertTrue(fail_on_upload_error())
+        finally:
+            if saved is not None:
+                os.environ["HEAPWATCH_FAIL_ON_UPLOAD_ERROR"] = saved
+
+    def test_fail_on_upload_error_opt_out(self) -> None:
+        saved = os.environ.pop("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", None)
+        os.environ["HEAPWATCH_FAIL_ON_UPLOAD_ERROR"] = "0"
+        try:
+            self.assertFalse(fail_on_upload_error())
+        finally:
+            if saved is not None:
+                os.environ["HEAPWATCH_FAIL_ON_UPLOAD_ERROR"] = saved
+            else:
+                os.environ.pop("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", None)
+
+    def test_upload_uses_passed_partitions_csv_path(self) -> None:
+        saved = {key: os.environ.pop(key, None) for key in (
+            "HEAPWATCH_API_BASE",
+            "HEAPWATCH_BUILD_TOKEN",
+            "HEAPWATCH_TENANT_UUID",
+            "HEAPWATCH_APPLICATION_ID",
+        )}
+        os.environ["HEAPWATCH_API_BASE"] = "https://api.example.test"
+        os.environ["HEAPWATCH_BUILD_TOKEN"] = "sk_build_test"
+        os.environ["HEAPWATCH_TENANT_UUID"] = "tenant-uuid"
+        os.environ["HEAPWATCH_APPLICATION_ID"] = "42"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                app_root = Path(tmp)
+                build_dir = app_root / "build"
+                build_dir.mkdir()
+                (build_dir / "flasher_args.json").write_text("{}", encoding="utf-8")
+                custom_csv = app_root / "partition_unsecured_16MB.csv"
+                stderr = StringIO()
+                with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as ctx:
+                    upload_firmware_bundle(
+                        build_dir=build_dir,
+                        metadata_header=app_root / "heapwatch_build_metadata.h",
+                        project_name="remoted-node-gps",
+                        partitions_csv=custom_csv,
+                        app_root=app_root,
+                    )
+                self.assertEqual(ctx.exception.code, 1)
+                self.assertIn(str(custom_csv), stderr.getvalue())
+                self.assertNotIn(str(app_root / "partitions.csv"), stderr.getvalue())
+        finally:
+            for key, value in saved.items():
+                if value is not None:
+                    os.environ[key] = value
+                else:
+                    os.environ.pop(key, None)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,12 @@ function(heapwatch_register_firmware_upload)
         return()
     endif()
 
+    if(NOT PARTITION_CSV_PATH)
+        message(FATAL_ERROR
+            "Heapwatch firmware upload: PARTITION_CSV_PATH is not set. "
+            "ESP-IDF partition_table must resolve the partition CSV before upload is registered.")
+    endif()
+
     set(_hw_stamp "${CMAKE_BINARY_DIR}/heapwatch_firmware_upload.stamp")
     set(_hw_bin_timestamp "${CMAKE_BINARY_DIR}/.bin_timestamp")
 
@@ -37,6 +43,7 @@ function(heapwatch_register_firmware_upload)
                 --metadata-header ${HEAPWATCH_METADATA_HEADER}
                 --sdkconfig ${CMAKE_SOURCE_DIR}/sdkconfig
                 --project-name ${CMAKE_PROJECT_NAME}
+                --partitions-csv "${PARTITION_CSV_PATH}"
         COMMAND ${CMAKE_COMMAND} -E touch "${_hw_stamp}"
         DEPENDS "${_hw_bin_timestamp}"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

@@ -4,7 +4,7 @@
 #  1. Refuse leftover binaries if compile/link did not succeed
 #  2. Compute composite HEAPWATCH_BUILD_IDENTIFIER and refresh heapwatch_build_metadata.h
 #  3. Re-link once when the fingerprint header changed
-#  4. Upload firmware bundle to Heapwatch (network errors are non-fatal unless HEAPWATCH_UPLOAD_STRICT=1)
+#  4. Upload firmware bundle to Heapwatch (fails the build on upload error unless HEAPWATCH_FAIL_ON_UPLOAD_ERROR=0)
 
 from __future__ import annotations
 
@@ -102,6 +102,12 @@ def main() -> None:
     parser.add_argument("--metadata-header", type=Path, required=True)
     parser.add_argument("--sdkconfig", type=Path, required=True)
     parser.add_argument("--project-name", type=str, required=True)
+    parser.add_argument(
+        "--partitions-csv",
+        type=Path,
+        required=True,
+        help="Absolute path to the partition table CSV resolved by ESP-IDF (PARTITION_CSV_PATH).",
+    )
     args = parser.parse_args()
 
     try:
@@ -121,6 +127,7 @@ def main() -> None:
             build_dir=args.build_dir,
             metadata_header=args.metadata_header,
             project_name=args.project_name,
+            partitions_csv=args.partitions_csv,
             build_identifier=build_identifier,
         )
     except FileNotFoundError as err:
