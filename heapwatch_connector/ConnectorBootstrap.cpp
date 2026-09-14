@@ -15,6 +15,7 @@
 
 #include "heapwatch_connector/ConnectorBootstrap.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
+#include "heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "device_network/DeviceNetworkReporter.h"
 #include "device_radio/BluetoothReporter.h"
 #include "heapwatch_connector/heapwatch_connector_timing.h"
@@ -431,7 +432,7 @@ void logForwardTask(void* arg) {
     }
     g_log_task_exited = true;
     g_log_forward_task = nullptr;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete(nullptr);
 }
 #endif /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 
@@ -458,6 +459,8 @@ void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
             xEventGroupSetBits(g_wifi_event_group, kWifiFailBit);
             g_wifi_permanently_failed = true;
             heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
+            heapwatch::device_enrollment::setIndicatorPhase(
+                heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
             ESP_LOGE(kTag, "Wi-Fi connect failed after %d retries", kWifiMaxRetry);
         }
     }
@@ -665,8 +668,8 @@ void startLogRelayTaskIfEnabled() {
     }
     g_log_stop_requested = false;
     g_log_task_exited = false;
-    if (xTaskCreate(logForwardTask, "hw_log_forward", 6144, nullptr, tskIDLE_PRIORITY + 1,
-                    &g_log_forward_task) != pdPASS) {
+    if (heapwatch_task_create(logForwardTask, "hw_log_forward", 6144, nullptr, tskIDLE_PRIORITY + 1,
+                              &g_log_forward_task) != pdPASS) {
         g_log_forward_task = nullptr;
         g_log_task_exited = true;
     }

@@ -34,6 +34,7 @@
 #include "device_command/DeviceCommandHandler.h"
 #include "device_command/SleepHooks.h"
 #include "connector_settings/ConnectorSettings.h"
+#include "device_command/ConfigCatalog.h"
 #include "device_fs/FsVolumeManager.h"
 #include "device_ota/OtaService.h"
 #include "device_ota/OtaService.h"
@@ -388,6 +389,7 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
 
+    heapwatch::device_command::requestConfigCatalogUpload(true);
     return ESP_OK;
 }
 

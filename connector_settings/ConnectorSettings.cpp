@@ -39,6 +39,7 @@ constexpr uint32_t kMaxTelemetryMs = 86400000;
 constexpr uint32_t kMinOutboxDrainMs = 1000;
 constexpr uint32_t kMaxOutboxDrainMs = 120000;
 constexpr size_t kMaxManagedCatalogs = 4;
+constexpr size_t kMaxCatalogFields = 32;
 
 constexpr FieldSchema kHeapwatchFields[] = {
     {KEY_TEL_INT_MS, "Telemetry interval",
@@ -81,7 +82,7 @@ struct ManagedCatalog {
     const char* id;
     const char* title;
     const char* nvs_namespace;
-    const FieldSchema* fields;
+    FieldSchema fields[kMaxCatalogFields] = {};
     size_t field_count;
 };
 
@@ -657,13 +658,21 @@ bool shouldMaskNvsKey(const char* nvs_namespace, const char* nvs_key) {
 bool registerManagedCatalog(const char* catalog_id, const char* title, const char* nvs_namespace,
                             const FieldSchema* fields, size_t field_count) {
     if (catalog_id == nullptr || title == nullptr || nvs_namespace == nullptr || fields == nullptr ||
-        field_count == 0 || g_catalog_count >= kMaxManagedCatalogs) {
+        field_count == 0 || field_count > kMaxCatalogFields ||
+        g_catalog_count >= kMaxManagedCatalogs) {
         return false;
     }
     if (findCatalog(nvs_namespace) != nullptr) {
         return false;
     }
-    g_catalogs[g_catalog_count] = {catalog_id, title, nvs_namespace, fields, field_count};
+    ManagedCatalog& catalog = g_catalogs[g_catalog_count];
+    catalog.id = catalog_id;
+    catalog.title = title;
+    catalog.nvs_namespace = nvs_namespace;
+    catalog.field_count = field_count;
+    for (size_t i = 0; i < field_count; ++i) {
+        catalog.fields[i] = fields[i];
+    }
     ++g_catalog_count;
     return true;
 }

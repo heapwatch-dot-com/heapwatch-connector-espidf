@@ -12,6 +12,7 @@
 #include "heapwatch/radio/BleDelegate.h"
 #include "heapwatch_config.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
+#include "heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "heapwatch_connector/heapwatch_connector_timing.h"
 #include "device_radio/IRadioBleProvider.h"
 #include "sdkconfig.h"
@@ -176,7 +177,7 @@ void telemetryTask(void* /*arg*/) {
     }
 #endif
     g_task_exited = true;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete(nullptr);
 }
 
 }  // namespace
@@ -325,7 +326,7 @@ void start() {
     g_stop_requested = false;
 #if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
     g_task_exited = false;
-    xTaskCreate(telemetryTask, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+    heapwatch_task_create(telemetryTask, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 #else
     g_task_exited = true;
 #endif

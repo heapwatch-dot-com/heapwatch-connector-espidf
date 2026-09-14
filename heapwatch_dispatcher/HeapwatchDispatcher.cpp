@@ -29,9 +29,11 @@
 #include "esp_system.h"
 #include "mqtt_client.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../device_command/CommandWorker.h"
+#include "../heapwatch_connector/ConnectorLifecycle.h"
 #include "heapwatch_config.h"
 #include "heapwatch_endpoints.h"
 #include "sdkconfig.h"
@@ -256,8 +258,10 @@ static void subscribe_command_topics() {
 static void mqtt_event_handler(void*, esp_event_base_t, int32_t event_id, void* event_data) {
     if (event_id == MQTT_EVENT_CONNECTED) {
         g_mqtt_connected = true;
+        heapwatch::connector_lifecycle::onRuntimeConnectivityChanged();
     } else if (event_id == MQTT_EVENT_DISCONNECTED || event_id == MQTT_EVENT_ERROR) {
         g_mqtt_connected = false;
+        heapwatch::connector_lifecycle::onRuntimeConnectivityChanged();
     } else if (event_id == MQTT_EVENT_DATA && event_data != nullptr && !g_mqtt_shutting_down) {
         const auto* event = static_cast<esp_mqtt_event_handle_t>(event_data);
         if (event->topic_len <= 0 || event->data_len <= 0) {
@@ -338,6 +342,7 @@ void heapwatch_dispatch_task(void* arg) {
             esp_mqtt_client_destroy(g_mqtt_client);
             g_mqtt_client = nullptr;
             g_mqtt_username.clear();
+            heapwatch::connector_lifecycle::onRuntimeConnectivityChanged();
             continue;
         }
         
@@ -499,7 +504,7 @@ void heapwatch_dispatch_task(void* arg) {
         heapwatch_outbound_wait_for_work();
     }
     heapwatch_mark_dispatcher_task_exited();
-    vTaskDelete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 /* ============================================================================

@@ -298,7 +298,20 @@ void finalizeUpload() {
     }
 
     if (rename(temp_path, target_path) != 0) {
-        FsError err = {"io_error", "Failed to rename temp file to target path."};
+        const int rename_errno = errno;
+        ESP_LOGE(TAG, "rename(%s -> %s) failed errno=%d (%s)", temp_path, target_path,
+                 rename_errno, strerror(rename_errno));
+        static char rename_msg[160];
+        if (rename_errno == EINVAL) {
+            snprintf(rename_msg, sizeof(rename_msg),
+                     "Target filename is not valid on this volume (errno=%d). "
+                     "FatFS without long names only allows 8.3 names.",
+                     rename_errno);
+        } else {
+            snprintf(rename_msg, sizeof(rename_msg),
+                     "Failed to rename temp file to target path (errno=%d).", rename_errno);
+        }
+        FsError err = {"io_error", rename_msg};
         unlink(temp_path);
         resetUploadState();
         sendTcpResult(command_id, false, &err, nullptr);

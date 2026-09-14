@@ -28,6 +28,7 @@
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "../heapwatch_connector/DynamicParameterSegment.h"
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
@@ -41,8 +42,8 @@ namespace heapwatch::metrics_collector {
 namespace {
 constexpr char kTag[] = "HwMetrics";
 uint64_t g_start_time_us = 0;
-char g_payload_buf[HEAPWATCH_MAX_PAYLOAD_SIZE];
-MqttMessage g_mqtt_enqueue_msg;
+char* g_payload_buf = nullptr;
+MqttMessage* g_mqtt_enqueue_msg = nullptr;
 
 constexpr size_t kMaxTaskRows = 48;
 
@@ -70,7 +71,7 @@ struct CpuUsageState {
     bool initialized = false;
 };
 
-TaskStats g_task_stats[kMaxTaskRows];
+TaskStats* g_task_stats = nullptr;
 size_t g_task_stats_count = 0;
 bool g_task_table_full_logged = false;
 CpuUsageState g_cpu_usage_state;
@@ -167,12 +168,12 @@ TaskStats* acquire_task_row(const char* task_name) {
 }
 
 void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
-    g_mqtt_enqueue_msg.type = type;
-    snprintf(g_mqtt_enqueue_msg.payload, sizeof(g_mqtt_enqueue_msg.payload), "%s", payload);
+    g_mqtt_enqueue_msg->type = type;
+    snprintf(g_mqtt_enqueue_msg->payload, sizeof(g_mqtt_enqueue_msg->payload), "%s", payload);
 
     QueueHandle_t queue = heapwatch_get_queue();
     if (queue != nullptr) {
-        if (!heapwatch_outbound_send(queue, &g_mqtt_enqueue_msg, 0)) {
+        if (!heapwatch_outbound_send(queue, g_mqtt_enqueue_msg, 0)) {
             ESP_LOGW(kTag, "large MQTT queue full — dropped %s payload",
                      type == MQTT_MESSAGE_TYPE_TASKS ? "TASKS" : "PARAMETER");
         }
@@ -481,6 +482,15 @@ void refreshConnectorGaugeLimits() {
 
 void init() {
     g_start_time_us = static_cast<uint64_t>(esp_timer_get_time());
+    if (g_payload_buf == nullptr) {
+        g_payload_buf = static_cast<char*>(heapwatch_data_alloc(HEAPWATCH_MAX_PAYLOAD_SIZE));
+    }
+    if (g_mqtt_enqueue_msg == nullptr) {
+        g_mqtt_enqueue_msg = static_cast<MqttMessage*>(heapwatch_data_alloc(sizeof(MqttMessage)));
+    }
+    if (g_task_stats == nullptr) {
+        g_task_stats = static_cast<TaskStats*>(heapwatch_data_alloc(sizeof(TaskStats) * kMaxTaskRows));
+    }
 }
 
 // NOTE (Phase 2 scope): the periodic PARAMETER message below bundles heap,
@@ -834,7 +844,7 @@ void collectTask(void* arg) {
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
     }
     heapwatch_mark_collector_task_exited();
-    vTaskDelete(nullptr);
+    heapwatch_task_delete(nullptr);
 }
 
 }  // namespace heapwatch::metrics_collector

@@ -20,4 +20,8 @@ void deinitialize();
 
 bool activateConnectorFromCredentials(const connector_bootstrap::BootCredentials& creds);
 
+/** MQTT/network phase + enroll LED after credentials exist. Safe after hw_bootstrap has exited. */
+void updateMqttPhaseFromStatus();
+void onRuntimeConnectivityChanged();
+
 }  // namespace heapwatch::connector_lifecycle

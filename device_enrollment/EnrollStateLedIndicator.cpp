@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "heapwatch_config.h"
+#include "heapwatch_connector/heapwatch_freertos_alloc.h"
 
 namespace heapwatch::device_enrollment {
 
@@ -192,7 +193,7 @@ void indicatorTaskEntry(void* /*param*/) {
     }
     driveLed(false);
     g_task_exited = true;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete(nullptr);
 }
 
 }  // namespace
@@ -214,8 +215,8 @@ void startIndicator() {
 
     g_stop_requested = false;
     g_task_exited = false;
-    if (xTaskCreate(indicatorTaskEntry, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
-                    nullptr) != pdPASS) {
+    if (heapwatch_task_create(indicatorTaskEntry, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
+                              nullptr) != pdPASS) {
         ESP_LOGE(kTag, "Failed to start enroll state LED task");
         g_task_exited = true;
         return;

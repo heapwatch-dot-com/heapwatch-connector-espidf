@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-14
+
+### Added
+- Kconfig **Allocate Heapwatch Connector stacks in PSRAM (Recommended)** (`CONFIG_HEAPWATCH_STACKS_IN_PSRAM`, default off, requires SPIRAM). Flash-safe tasks (`hw_metrics`, `hw_log_forward`, `hw_going_dark`, `hw_enroll_led`, `hw_ble_report`) use PSRAM stacks. `hw_bootstrap`, `hw_command`, `hw_ota`, `hw_streaming`, and `hw_dispatcher` stay in DRAM (`xTaskCreate`, not WithCaps) because they touch NVS/OTA/coredump/FS while SPI cache is off. Implies `SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY`.
+
+### Changed
+- `heapwatch_register_fs_volume` and `heapwatch_register_sd_volume` are valid **after** `heapwatch_initialize()`. Host apps can start the connector first so telemetry queues immediately, then register volumes when storage comes up. If the VFS path is not mounted yet, the mapping is kept and adopted on the next `fs/storage`. A connector-owned flash volume cannot be remounted to a different path live.
+- `heapwatch_register_config_catalog` after MQTT-up re-uploads the catalog so a late host catalog is not stuck as the first-boot snapshot.
+- `hw_bootstrap` DRAM stack is **10 KiB** (was 16 KiB). The task now exits after handoff instead of sitting in a 1-second poll loop.
+- `hw_bootstrap` exits after enroll or NVS credentials, MQTT/dispatcher start, and the optional one-shot HTTP that realigns the boot number if NVS was wiped. Credential rotation stays on `hw_command`. Enroll LED after that handoff is driven from IP and MQTT events (not a 1-second poll loop).
+- Kconfig **Put as much data as possible in PSRAM (Recommended)** is `CONFIG_HEAPWATCH_ALLOCATE_DATA_IN_PSRAM` (was `CONFIG_HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM`). Besides MQTT outbound queues it also puts the command inbound queue, stream TCP buffers, and metrics/publish scratch in PSRAM. Allocation failure aborts (no silent DRAM fallback). OTA/FS flash dest buffers stay in DRAM. `idf.py reconfigure` remaps the old symbol.
+
+### Fixed
+- File Browser still lists a mounted volume when used/total cannot be read (Arduino SPIFFS with a NULL partition label used to omit the volume entirely). SPIFFS usage also falls back to the unnamed mount if the labelled query fails.
+- `HwOta` no longer logs “OTA service ready” when `hw_ota` failed to start. The worker-running line is only printed if the DRAM task was created.
+- File-browser upload rename failures now log errno. `EINVAL` (22) is the usual FatFS-without-long-names case (target is not 8.3). Enable `CONFIG_FATFS_LFN_HEAP` on the host.
+
 ## [0.13.0] - 2026-09-13
 
 ### Fixed

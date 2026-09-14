@@ -16,6 +16,7 @@
 #include "sdkconfig.h"
 
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_endpoints.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
@@ -83,14 +84,35 @@ int g_socket_fd = -1;
 
 FsUploadChunkHandler g_fs_upload_handler = nullptr;
 
-char g_coalesce_buf[mux::kCoalesceMaxBytes];
+char* g_coalesce_buf = nullptr;
 size_t g_coalesce_len = 0;
 uint64_t g_coalesce_uptime_ms = 0;
 
 /** Single-threaded stream_ingress worker owns these — no malloc on the hot path. */
-OutboundSlot g_outbound_slots[kOutboundQueueDepth];
-uint8_t g_encode_buf[kEncodeMax];
-uint8_t g_inbound_buf[kInboundPayloadMax];
+OutboundSlot* g_outbound_slots = nullptr;
+uint8_t* g_encode_buf = nullptr;
+uint8_t* g_inbound_buf = nullptr;
+
+void ensureStreamDataAllocated() {
+    if (g_encode_buf != nullptr) {
+        return;
+    }
+    g_coalesce_buf = static_cast<char*>(heapwatch_data_alloc(mux::kCoalesceMaxBytes));
+    g_outbound_slots = static_cast<OutboundSlot*>(heapwatch_data_alloc(sizeof(OutboundSlot) * kOutboundQueueDepth));
+    g_encode_buf = static_cast<uint8_t*>(heapwatch_data_alloc(kEncodeMax));
+    g_inbound_buf = static_cast<uint8_t*>(heapwatch_data_alloc(kInboundPayloadMax));
+}
+
+void freeStreamData() {
+    heapwatch_data_free(g_coalesce_buf);
+    heapwatch_data_free(g_outbound_slots);
+    heapwatch_data_free(g_encode_buf);
+    heapwatch_data_free(g_inbound_buf);
+    g_coalesce_buf = nullptr;
+    g_outbound_slots = nullptr;
+    g_encode_buf = nullptr;
+    g_inbound_buf = nullptr;
+}
 
 bool streamIngressEnabled() {
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
@@ -556,7 +578,7 @@ void workerTask(void* arg) {
     unlock();
     g_worker_exited = true;
     g_worker_task = nullptr;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 }  // namespace
@@ -579,14 +601,15 @@ static void ensureWorkerStarted() {
         g_mutex = xSemaphoreCreateMutex();
     }
     if (g_outbound_queue == nullptr) {
-        g_outbound_queue = xQueueCreate(kOutboundQueueDepth, sizeof(OutboundQueued));
+        g_outbound_queue = heapwatch_queue_create(kOutboundQueueDepth, sizeof(OutboundQueued));
     }
+    ensureStreamDataAllocated();
     if (g_worker_task == nullptr) {
         g_stop_requested = false;
         g_worker_exited = false;
         // Create only when TCP is actually needed — saves ~8KiB stack at boot for MQTT.
-        if (xTaskCreate(workerTask, "hw_streaming", kWorkerStackBytes, nullptr,
-                        tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
+        if (heapwatch_task_create_dram(workerTask, "hw_streaming", kWorkerStackBytes, nullptr,
+                                       tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create hw_streaming task");
             g_worker_task = nullptr;
             g_worker_exited = true;
@@ -606,8 +629,9 @@ void init() {
         g_mutex = xSemaphoreCreateMutex();
     }
     if (g_outbound_queue == nullptr) {
-        g_outbound_queue = xQueueCreate(kOutboundQueueDepth, sizeof(OutboundQueued));
+        g_outbound_queue = heapwatch_queue_create(kOutboundQueueDepth, sizeof(OutboundQueued));
     }
+    ensureStreamDataAllocated();
     ESP_LOGI(TAG, "Stream ingress ready (worker deferred until TCP needed)");
 }
 
@@ -655,6 +679,11 @@ void shutdown() {
     g_close_requested = false;
     g_boot_stream_upload_requested = false;
     g_stop_requested = false;
+    if (g_outbound_queue != nullptr) {
+        heapwatch_queue_delete(g_outbound_queue);
+        g_outbound_queue = nullptr;
+    }
+    freeStreamData();
 }
 
 bool isShuttingDown() { return g_stop_requested; }

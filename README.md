@@ -28,7 +28,7 @@ dependencies:
 
 void app_main(void) {
     ESP_ERROR_CHECK(heapwatch_initialize());
-    // ... your application ...
+    // ... your application (mount storage, then heapwatch_register_sd_volume, etc.) ...
     heapwatch_notify_app_started();
 }
 ```

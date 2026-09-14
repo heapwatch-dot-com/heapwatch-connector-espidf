@@ -66,14 +66,25 @@
 #define HEAPWATCH_COREDUMP_QUEUE_LEN     1
 
 /**
- * When enabled (Kconfig + SPIRAM in project sdkconfig), MQTT outbound queue slot
- * storage is allocated in PSRAM via xQueueCreateWithCaps(). Default off — ESP-IDF
- * 5.x always places xQueueCreate() in internal DRAM.
+ * When enabled (Kconfig + SPIRAM): MQTT queues, command inbound queue, stream
+ * TCP buffers, and metrics/publish scratch in PSRAM. Alloc failure aborts.
+ * Default off.
  */
-#ifdef CONFIG_HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
-#define HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM 1
+#if defined(CONFIG_HEAPWATCH_ALLOCATE_DATA_IN_PSRAM)
+#define HEAPWATCH_ALLOCATE_DATA_IN_PSRAM 1
 #else
-#define HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM 0
+#define HEAPWATCH_ALLOCATE_DATA_IN_PSRAM 0
+#endif
+
+/**
+ * When enabled (Kconfig + SPIRAM), flash-safe hw_* stacks (metrics, log forward,
+ * going-dark, enroll LED, BLE reporter) are allocated in PSRAM. Tasks that call
+ * NVS / OTA / coredump / on-flash VFS stay in internal DRAM. Default off.
+ */
+#ifdef CONFIG_HEAPWATCH_STACKS_IN_PSRAM
+#define HEAPWATCH_STACKS_IN_PSRAM 1
+#else
+#define HEAPWATCH_STACKS_IN_PSRAM 0
 #endif
 
 /** Max log objects per MQTT /log publish (backend accepts a JSON array). */

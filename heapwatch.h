@@ -19,7 +19,7 @@
  * Typical app_main:
  *
  *   ESP_ERROR_CHECK(heapwatch_initialize());
- *   // ... your application (LVGL, sensors, etc.) — never blocks on enrollment ...
+ *   // ... your application (mount SD, register volumes, sensors) — never blocks on enrollment ...
  *   heapwatch_notify_app_started();
  *
  * Boot identity (boot counter, crash attribution, STARTING_UP and deep-sleep wake telemetry)
@@ -196,9 +196,9 @@ esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_
    --------------------------------------------------------------------------- */
 
 /**
- * Register a client command (topic suffix). Built-ins ping/specs_refresh/restart
- * cannot be overridden. Table is fixed-size (8); returns ESP_ERR_HEAPWATCH_NO_SPACE
- * when full.
+ * Register a client command (topic suffix). Safe before or after heapwatch_initialize().
+ * Built-ins ping/specs_refresh/restart cannot be overridden. Table is fixed-size (8);
+ * returns ESP_ERR_HEAPWATCH_NO_SPACE when full.
  */
 esp_err_t heapwatch_register_command(const char* name, heapwatch_command_handler_t handler,
                                      void* user_ctx);
@@ -239,8 +239,9 @@ typedef struct {
 } heapwatch_config_catalog_def_t;
 
 /**
- * Register a managed NVS config catalog. The namespace becomes managed and supports
- * config/set, config/persist, and config/revert via MQTT commands.
+ * Register a managed NVS config catalog. Safe before or after heapwatch_initialize().
+ * The namespace becomes managed and supports config/set, config/persist, and
+ * config/revert via MQTT commands. A late register re-uploads the catalog to the cloud.
  */
 esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t* catalog);
 
@@ -249,22 +250,25 @@ esp_err_t heapwatch_register_config_catalog(const heapwatch_config_catalog_def_t
    --------------------------------------------------------------------------- */
 
 /**
- * Map a flash partition label to a VFS mount path. Call before
+ * Map a flash partition label to a VFS mount path. Safe before or after
  * heapwatch_initialize() (and after heapwatch_deinit() before the next init).
  *
- * Auto-mount on: connector mounts this label at mount_path instead of /<label>.
+ * Auto-mount on: connector mounts this label at mount_path instead of /<label>
+ * if you register before it mounts. After a connector-owned mount, a different
+ * path is rejected — do not unmount/remount live.
  * Auto-mount off: required so the file browser can use a host-mounted volume.
  *
  */
 esp_err_t heapwatch_register_fs_volume(const char* partition_label, const char* mount_path);
 
 /**
- * Register an SD card the host app already mounted. Call before heapwatch_initialize()
- * (and after heapwatch_deinit() before the next init).
+ * Register an SD card the host app already mounted (or will mount shortly).
+ * Safe before or after heapwatch_initialize().
  *
  * A card has no partition-table entry, so the connector cannot discover it the way it
  * discovers flash volumes — the host must name it. `label` is a host-chosen id (e.g. "sd0")
  * used as the volume id; `mount_path` is the live VFS root (e.g. "/sd"). Call once per card.
+ * If the path is not a VFS root yet, the mapping is kept and adopted on the next fs/storage.
  *
  */
 esp_err_t heapwatch_register_sd_volume(const char* label, const char* mount_path);

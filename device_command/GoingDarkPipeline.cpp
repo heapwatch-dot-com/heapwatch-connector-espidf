@@ -15,6 +15,7 @@
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_connector/ConnectorBootstrap.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "../sleep_tracking/SleepTracking.h"
 #include "../heapwatch.h"
 #include "DeviceCommandHandler.h"
@@ -228,7 +229,7 @@ void goingDarkTask(void* /*arg*/) {
         }
     }
     g_task_exited = true;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete(nullptr);
 }
 
 }  // namespace
@@ -245,7 +246,7 @@ void init() {
     }
 
     g_task_exited = false;
-    xTaskCreate(goingDarkTask, "hw_going_dark", 6144, nullptr, tskIDLE_PRIORITY + 2, nullptr);
+    heapwatch_task_create(goingDarkTask, "hw_going_dark", 6144, nullptr, tskIDLE_PRIORITY + 2, nullptr);
 }
 
 void shutdown() {

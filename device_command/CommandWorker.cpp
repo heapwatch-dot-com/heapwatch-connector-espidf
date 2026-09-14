@@ -11,6 +11,7 @@
 #include "../device_credential_rotation/DeviceCredentialRotationClient.h"
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_endpoints.h"
 #include "DeviceCommandHandler.h"
@@ -97,7 +98,7 @@ void commandWorkerTask(void* /*arg*/) {
         handleMqttMessage(msg.topic, msg.topic_len, msg.payload, msg.payload_len, msg.mqtt_retain);
     }
     g_worker_exited = true;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 }  // namespace
@@ -107,17 +108,17 @@ void initCommandWorker() {
         return;
     }
 
-    g_inbound_queue = xQueueCreate(kInboundQueueDepth, sizeof(CommandInboundMessage));
+    g_inbound_queue = heapwatch_queue_create(kInboundQueueDepth, sizeof(CommandInboundMessage));
     if (g_inbound_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create inbound command queue");
         return;
     }
 
     g_worker_exited = false;
-    if (xTaskCreate(commandWorkerTask, "hw_command", kWorkerStackBytes, nullptr, tskIDLE_PRIORITY + 2,
-                    nullptr) != pdPASS) {
+    if (heapwatch_task_create_dram(commandWorkerTask, "hw_command", kWorkerStackBytes, nullptr, tskIDLE_PRIORITY + 2,
+                                  nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hw_command task");
-        vQueueDelete(g_inbound_queue);
+        heapwatch_queue_delete(g_inbound_queue);
         g_inbound_queue = nullptr;
         g_worker_exited = true;
     }
@@ -142,7 +143,7 @@ void shutdownCommandWorker() {
         return;
     }
 
-    vQueueDelete(g_inbound_queue);
+    heapwatch_queue_delete(g_inbound_queue);
     g_inbound_queue = nullptr;
 }
 

@@ -239,9 +239,10 @@ menu "Heapwatch Connector"
                 bool "Auto-Mount All Storage Partitions"
                 default y
                 help
-                    At heapwatch_initialize(), the connector automatically mounts all "storage" partitions
-                    in the partition table. If your application mounts your partitions, you should DISABLE this
-                    option and register each your partition and its mountpoint via heapwatch_register_fs_volume().
+                    After the connector starts, it automatically mounts all "storage" partitions
+                    in the partition table. If your application mounts those partitions itself,
+                    disable this option and call heapwatch_register_fs_volume() with each
+                    partition label and mount path (before or after heapwatch_initialize()).
 
             config HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
                 bool "Auto-Format Blank Storage Partitions"
@@ -264,8 +265,9 @@ menu "Heapwatch Connector"
 
                     Leave this off when the host firmware already owns the SPI bus or has
                     already mounted the card -- a second bus init will fight the host.
-                    Call heapwatch_register_sd_volume(label, mount_path) instead: the
-                    connector then only reads used/free and never touches the bus.
+                    Call heapwatch_register_sd_volume(label, mount_path) instead, before or after
+                    heapwatch_initialize(): the connector then only reads used/free and never
+                    touches the bus.
 
             config HEAPWATCH_SD_CARD_CS_GPIO
                 int "SD card CS (chip select) GPIO"
@@ -373,7 +375,7 @@ menu "Heapwatch Connector"
             help
                 Depth of the large-tier queue used for SPECS/TASKS messages and
                 the periodic metrics PARAMETER blob. Increase depth when you have spare
-                memory (internal DRAM or PSRAM — see "Allocate MQTT message queues in PSRAM")
+                memory (internal DRAM or PSRAM — see "Put as much data as possible in PSRAM (Recommended)")
                 and want to preserve stats during intermittent connection outages like
                 having a CatM modem and moving around with the device.
 
@@ -382,24 +384,28 @@ menu "Heapwatch Connector"
             default 12288
             range 8192 32768
             help
-                Stack for hw_dispatcher. That thread does claimed-identities HTTPS
-                and streamed coredump upload (mbedTLS handshake on this stack), not
-                only MQTT enqueue. 8 KiB overflows during the handshake (stack canary
-                watchpoint on hw_dispatcher). 12 KiB is the connector default; enrollment
-                stays on hw_bootstrap at 16 KiB.
+                Stack for hw_dispatcher.
 
-        config HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
-            bool "Allocate MQTT message queues in PSRAM"
+        config HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
+            bool "Put as much data as possible in PSRAM (Recommended)"
             default n
             depends on SPIRAM
             help
-                Places all queue slots in the external
+                Places as much data as possible in the external
                 PSRAM instead of internal RAM.
 
                 Requires SPIRAM enabled and initialized in the project sdkconfig.
 
                 Great for storing lots of pending telemetry during intermittent modem connection disconnects.
-                Recommended for modem applications that face constant signal interruptions (moving vehicles etc).
+                Recommended for modem applications that face constant signal interruptions.
+
+        config HEAPWATCH_STACKS_IN_PSRAM
+            bool "Allocate Heapwatch Connector stacks in PSRAM (Recommended)"
+            default n
+            depends on SPIRAM
+            imply SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+            help
+                Put as many Heapwatch Connector tasks' stacks into PSRAM to offload internal DRAM.
 
         config HEAPWATCH_METRICS_INTERVAL_MS
             int "Initial Metrics Collection Interval (ms)"

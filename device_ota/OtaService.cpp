@@ -20,6 +20,7 @@
 #include "../heapwatch_config.h"
 #include "../heapwatch_connector/ConnectorBootstrap.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
+#include "../heapwatch_connector/heapwatch_freertos_alloc.h"
 
 namespace heapwatch::device_ota {
 
@@ -562,7 +563,7 @@ void otaWorkerTask(void* /*arg*/) {
     }
     g_task_exited = true;
     g_ota_task = nullptr;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 bool parse_start_payload(const char* payload, size_t payload_len, OtaJob* job) {
@@ -792,20 +793,22 @@ void init() {
     if (g_ota_task == nullptr) {
         g_stop_requested = false;
         g_task_exited = false;
-        if (xTaskCreate(otaWorkerTask, "hw_ota", kOtaTaskStackBytes, nullptr, tskIDLE_PRIORITY + 3,
-                        &g_ota_task) != pdPASS) {
-            ESP_LOGE(kLogTag, "FATAL: failed to create persistent hw_ota task");
+        if (heapwatch_task_create_dram(otaWorkerTask, "hw_ota", kOtaTaskStackBytes, nullptr, tskIDLE_PRIORITY + 3,
+                                       &g_ota_task) != pdPASS) {
+            ESP_LOGE(kLogTag, "FATAL: failed to create hw_ota task");
             g_ota_task = nullptr;
             g_task_exited = true;
         }
     }
 
     const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
-    if (next != nullptr) {
-        ESP_LOGI(kLogTag, "OTA service ready (next slot=%s size=%lu chunk=%u B)", next->label,
+    if (g_ota_task == nullptr) {
+        ESP_LOGE(kLogTag, "OTA worker not running — Heapwatch OTA commands will not execute");
+    } else if (next != nullptr) {
+        ESP_LOGI(kLogTag, "OTA worker running (next slot=%s size=%lu chunk=%u B)", next->label,
                  static_cast<unsigned long>(next->size), static_cast<unsigned>(kDownloadChunk));
     } else {
-        ESP_LOGW(kLogTag, "OTA service ready but no next OTA partition (factory-only layout?)");
+        ESP_LOGW(kLogTag, "OTA worker running but no next OTA partition (factory-only layout?)");
     }
 }
 

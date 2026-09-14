@@ -83,29 +83,20 @@ char g_coredump_build_identifier[128] = {0};
 uint32_t g_boot_cycle = 0;
 uint32_t g_crash_boot_cycle = 0;
 
-// Scratch buffers shared by the queue*() publish helpers below. LargeMqttMessage alone
-// is ~2KB (HEAPWATCH_LARGE_PAYLOAD_SIZE payload). Several producers of these
-// messages run on tiny stacks -- notably ESP-IDF's default system event loop task
-// (CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE, 2304 bytes) which drives
-// wifi_event_handler() and the esp-mqtt MQTT_EVENT_* callback -- so these must never
-// be stack-allocated. Access is serialized by g_publish_mutex since queueLog(),
-// queueParameter(), queueEvent(), and queueSpecs() can be called concurrently from
-// different tasks (event loop task, log_forward_task, sensor/app tasks, ...).
-// One scratch struct per queue tier (M1, Phase 2b) since each tier has a different
-// payload size.
-TinyMqttMessage g_scratch_tiny_msg;
-SmallMqttMessage g_scratch_small_msg;
-LargeMqttMessage g_scratch_large_msg;
-char g_scratch_specs_body[HEAPWATCH_LARGE_PAYLOAD_SIZE - 96];
-// Bounded to 2x the raw log line cap (worst case every char needs a "\\"/"\\uXXXX"
-// escape) — matches the ~160B framing headroom baked into HEAPWATCH_SMALL_PAYLOAD_SIZE
-// (see heapwatch_config.h). message is truncated to HEAPWATCH_MAX_LOG_LINE_LEN raw
-// chars in queueLog() before escaping, so this bound actually holds at runtime too.
-char g_scratch_raw_log_line[HEAPWATCH_MAX_LOG_LINE_LEN + 1];
-char g_scratch_escaped_message[HEAPWATCH_MAX_LOG_LINE_LEN * 2 + 1];
-char g_scratch_escaped_task[64];
-char g_scratch_escaped_tag[64];
-char g_scratch_optional[192];
+// Scratch buffers shared by the queue*() publish helpers below. Allocated in
+// ensureInfrastructure (PSRAM when the data option is on).
+struct PublishScratch {
+    TinyMqttMessage tiny;
+    SmallMqttMessage small;
+    LargeMqttMessage large;
+    char specs_body[HEAPWATCH_LARGE_PAYLOAD_SIZE - 96];
+    char raw_log_line[HEAPWATCH_MAX_LOG_LINE_LEN + 1];
+    char escaped_message[HEAPWATCH_MAX_LOG_LINE_LEN * 2 + 1];
+    char escaped_task[64];
+    char escaped_tag[64];
+    char optional[192];
+};
+PublishScratch* g_scratch = nullptr;
 
 void destroy_message_queues() {
     if (g_outbound_sem != nullptr) {
@@ -190,13 +181,17 @@ bool HeapwatchConnector::ensureInfrastructure() {
         return true;
     }
 
+    if (g_scratch == nullptr) {
+        g_scratch = static_cast<PublishScratch*>(heapwatch_data_alloc(sizeof(PublishScratch)));
+    }
+
     g_tiny_queue = heapwatch_queue_create(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage));
     g_small_queue = heapwatch_queue_create(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
     g_large_queue = heapwatch_queue_create(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
     if (g_tiny_queue == nullptr || g_small_queue == nullptr || g_large_queue == nullptr) {
         ESP_LOGE(TAG,
                  "Failed to create message queues (psram=%d, free_heap=%u, largest_block=%u)",
-                 HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM,
+                 HEAPWATCH_ALLOCATE_DATA_IN_PSRAM,
                  static_cast<unsigned>(esp_get_free_heap_size()),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
         destroy_message_queues();
@@ -231,8 +226,8 @@ bool HeapwatchConnector::ensureInfrastructure() {
     }
 
     g_infrastructure_ready = true;
-#if HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM
-    ESP_LOGI(TAG, "MQTT queues in PSRAM (internal free=%u largest=%u)",
+#if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
+    ESP_LOGI(TAG, "connector data in PSRAM (internal free=%u largest=%u)",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
 #endif
@@ -305,6 +300,8 @@ void HeapwatchConnector::deinitialize() {
     // instead of leaking a second set) when a task overran its stop deadline.
     if (dispatcher_gone && collector_gone) {
         destroy_message_queues();
+        heapwatch_data_free(g_scratch);
+        g_scratch = nullptr;
         if (g_coredump_queue != nullptr) {
             CoreDumpPayload* pending_payload = nullptr;
             while (xQueueReceive(g_coredump_queue, &pending_payload, 0) == pdTRUE) {
@@ -443,40 +440,40 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    snprintf(g_scratch_raw_log_line, sizeof(g_scratch_raw_log_line), "%s", message);
-    json_escape_string(g_scratch_raw_log_line, g_scratch_escaped_message,
-                       sizeof(g_scratch_escaped_message));
+    snprintf(g_scratch->raw_log_line, sizeof(g_scratch->raw_log_line), "%s", message);
+    json_escape_string(g_scratch->raw_log_line, g_scratch->escaped_message,
+                       sizeof(g_scratch->escaped_message));
 
-    g_scratch_escaped_task[0] = '\0';
-    g_scratch_escaped_tag[0] = '\0';
+    g_scratch->escaped_task[0] = '\0';
+    g_scratch->escaped_tag[0] = '\0';
     const bool has_task =
         context != nullptr && context->task != nullptr && context->task[0] != '\0';
     const bool has_tag = context != nullptr && context->tag != nullptr && context->tag[0] != '\0';
     const bool has_core = context != nullptr && context->core >= 0;
 
     if (has_task) {
-        json_escape_string(context->task, g_scratch_escaped_task, sizeof(g_scratch_escaped_task));
+        json_escape_string(context->task, g_scratch->escaped_task, sizeof(g_scratch->escaped_task));
     }
     if (has_tag) {
-        json_escape_string(context->tag, g_scratch_escaped_tag, sizeof(g_scratch_escaped_tag));
+        json_escape_string(context->tag, g_scratch->escaped_tag, sizeof(g_scratch->escaped_tag));
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    g_scratch_optional[0] = '\0';
+    g_scratch->optional[0] = '\0';
     size_t optional_json_len = 0;
     if (has_task) {
-        optional_json_len += snprintf(g_scratch_optional + optional_json_len,
-                                      sizeof(g_scratch_optional) - optional_json_len, ",\"task\":\"%s\"",
-                                      g_scratch_escaped_task);
+        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
+                                      sizeof(g_scratch->optional) - optional_json_len, ",\"task\":\"%s\"",
+                                      g_scratch->escaped_task);
     }
     if (has_tag) {
-        optional_json_len += snprintf(g_scratch_optional + optional_json_len,
-                                      sizeof(g_scratch_optional) - optional_json_len, ",\"tag\":\"%s\"",
-                                      g_scratch_escaped_tag);
+        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
+                                      sizeof(g_scratch->optional) - optional_json_len, ",\"tag\":\"%s\"",
+                                      g_scratch->escaped_tag);
     }
     if (has_core) {
-        optional_json_len += snprintf(g_scratch_optional + optional_json_len,
-                                      sizeof(g_scratch_optional) - optional_json_len, ",\"core\":%d",
+        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
+                                      sizeof(g_scratch->optional) - optional_json_len, ",\"core\":%d",
                                       context->core);
     }
 
@@ -484,7 +481,7 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
         out, out_len,
         "{\"tsms\":%llu,\"utms\":%llu%s,\"severity\":\"%s\",\"message\":\"%s\"}",
         static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-        g_scratch_optional, severity_to_string(severity), g_scratch_escaped_message);
+        g_scratch->optional, severity_to_string(severity), g_scratch->escaped_message);
 
     return written > 0 && static_cast<size_t>(written) < out_len;
 #else
@@ -512,13 +509,13 @@ bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const cha
         return false;
     }
 
-    g_scratch_small_msg.type = MQTT_MESSAGE_TYPE_LOG;
-    if (!formatLogJsonLine(severity, message, context, g_scratch_small_msg.payload,
-                           sizeof(g_scratch_small_msg.payload))) {
+    g_scratch->small.type = MQTT_MESSAGE_TYPE_LOG;
+    if (!formatLogJsonLine(severity, message, context, g_scratch->small.payload,
+                           sizeof(g_scratch->small.payload))) {
         return false;
     }
 
-    return heapwatch_outbound_send(g_small_queue, &g_scratch_small_msg, 0);
+    return heapwatch_outbound_send(g_small_queue, &g_scratch->small, 0);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 }
 
@@ -737,24 +734,24 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
     if (!lock.locked) {
         return;
     }
-    g_scratch_tiny_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "{\"tsms\":%llu,\"utms\":%llu,\"%s\":%lld}",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name,
              static_cast<long long>(value));
 #else
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "tsms=%llu|utms=%llu|%s=%lld",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name,
              static_cast<long long>(value));
 #endif
 
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, 0);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
 }
 
 void HeapwatchConnector::queueParameter(const char* name, double value) {
@@ -765,22 +762,22 @@ void HeapwatchConnector::queueParameter(const char* name, double value) {
     if (!lock.locked) {
         return;
     }
-    g_scratch_tiny_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "{\"tsms\":%llu,\"utms\":%llu,\"%s\":%.6f}",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
 #else
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "tsms=%llu|utms=%llu|%s=%.6f",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
 #endif
 
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, 0);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
 }
 
 void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
@@ -796,7 +793,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     if (!lock.locked) {
         return;
     }
-    g_scratch_tiny_msg.type = MQTT_MESSAGE_TYPE_EVENT;
+    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_EVENT;
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
@@ -805,12 +802,12 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "{\"tsms\":%llu,\"utms\":%llu,\"event_type_id\":%d,\"boot_cycle\":%ld}",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
              eventTypeId, static_cast<long>(boot_cycle));
 #else
-    snprintf(g_scratch_tiny_msg.payload, sizeof(g_scratch_tiny_msg.payload),
+    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
              "tsms=%llu|utms=%llu|event_type_id=%d|boot_cycle=%ld",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
              eventTypeId, static_cast<long>(boot_cycle));
@@ -820,7 +817,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
         eventTypeId >= HEAPWATCH_EVENT_FW_UPDATE_STARTED &&
         eventTypeId <= HEAPWATCH_EVENT_FW_UPDATE_FAILED;
     const TickType_t send_wait = fw_ota_event ? kOtaMqttQueueWait : 0;
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch_tiny_msg, send_wait);
+    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, send_wait);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS */
 }
 
@@ -835,27 +832,27 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
         return;
     }
 
-    g_scratch_small_msg.type = MQTT_MESSAGE_TYPE_OTA_PROGRESS;
+    g_scratch->small.type = MQTT_MESSAGE_TYPE_OTA_PROGRESS;
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_small_msg.payload, sizeof(g_scratch_small_msg.payload),
+    snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
              "{\"tsms\":%llu,\"utms\":%llu,\"ota_session_id\":%lld,\"phase\":\"%s\",\"bytes\":%lld,"
              "\"total\":%lld}",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
              static_cast<long long>(ota_session_id), phase, static_cast<long long>(bytes),
              static_cast<long long>(total));
 #else
-    snprintf(g_scratch_small_msg.payload, sizeof(g_scratch_small_msg.payload),
+    snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
              "tsms=%llu|utms=%llu|ota_session_id=%lld|phase=%s|bytes=%lld|total=%lld",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
              static_cast<long long>(ota_session_id), phase, static_cast<long long>(bytes),
              static_cast<long long>(total));
 #endif
 
-    heapwatch_outbound_send(g_small_queue, &g_scratch_small_msg, kOtaMqttQueueWait);
+    heapwatch_outbound_send(g_small_queue, &g_scratch->small, kOtaMqttQueueWait);
 }
 
 void HeapwatchConnector::queueSpecs() {
@@ -868,30 +865,30 @@ void HeapwatchConnector::queueSpecs() {
         return;
     }
 
-    g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_SPECS;
+    g_scratch->large.type = MQTT_MESSAGE_TYPE_SPECS;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    if (!heapwatch::device_specs::buildPayload(g_scratch_specs_body, sizeof(g_scratch_specs_body))) {
+    if (!heapwatch::device_specs::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device specs payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "{\"tsms\":%llu,\"utms\":%llu,\"boot_cycle\":%lu,%s",
              static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             static_cast<unsigned long>(g_boot_cycle), g_scratch_specs_body + 1);
+             static_cast<unsigned long>(g_boot_cycle), g_scratch->specs_body + 1);
 #else
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "tsms=%llu|utms=%llu|boot_cycle=%lu|%s", static_cast<unsigned long long>(tsms),
              static_cast<unsigned long long>(utms), static_cast<unsigned long>(g_boot_cycle),
-             g_scratch_specs_body + 1);
+             g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::queueNetwork() {
@@ -904,28 +901,28 @@ void HeapwatchConnector::queueNetwork() {
         return;
     }
 
-    g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_NETWORK;
+    g_scratch->large.type = MQTT_MESSAGE_TYPE_NETWORK;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    if (!heapwatch::device_network::buildPayload(g_scratch_specs_body, sizeof(g_scratch_specs_body))) {
+    if (!heapwatch::device_network::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device network payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "{\"tsms\":%llu,\"utms\":%llu,%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #else
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "tsms=%llu|utms=%llu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::queueBluetoothSnapshot() {
@@ -938,28 +935,28 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
         return;
     }
 
-    g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_BLUETOOTH;
+    g_scratch->large.type = MQTT_MESSAGE_TYPE_BLUETOOTH;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    if (!heapwatch::device_radio::buildPayload(g_scratch_specs_body, sizeof(g_scratch_specs_body))) {
+    if (!heapwatch::device_radio::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device bluetooth payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "{\"tsms\":%llu,\"utms\":%llu,%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #else
-    snprintf(g_scratch_large_msg.payload, sizeof(g_scratch_large_msg.payload),
+    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
              "tsms=%llu|utms=%llu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch_specs_body + 1);
+             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
 }
 
 void HeapwatchConnector::updateParameterInt(const char* slug, int64_t value) {
@@ -1006,13 +1003,13 @@ void HeapwatchConnector::flushParameters() {
         return;
     }
 
-    if (!heapwatch::parameter_store::buildFlushPayload(g_scratch_large_msg.payload,
-                                                        sizeof(g_scratch_large_msg.payload))) {
+    if (!heapwatch::parameter_store::buildFlushPayload(g_scratch->large.payload,
+                                                        sizeof(g_scratch->large.payload))) {
         return;  // Nothing has ever been set via updateParameter*() this boot.
     }
 
-    g_scratch_large_msg.type = MQTT_MESSAGE_TYPE_PARAMETER;
-    if (heapwatch_outbound_send(g_large_queue, &g_scratch_large_msg, kBootCriticalQueueWait)) {
+    g_scratch->large.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    if (heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait)) {
         heapwatch::parameter_store::acknowledgeBoundsSent();
     }
 }
@@ -1044,16 +1041,16 @@ HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {
 void HeapwatchConnector::startDispatcherThread() {
     g_dispatcher_running = true;
     g_dispatcher_exited = false;
-    xTaskCreate(heapwatch_dispatch_task, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
-                nullptr, tskIDLE_PRIORITY + 3, &g_dispatcher_task);
+    heapwatch_task_create_dram(heapwatch_dispatch_task, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
+                               nullptr, tskIDLE_PRIORITY + 3, &g_dispatcher_task);
 }
 
 void HeapwatchConnector::startCollectorThread() {
     g_collector_running = true;
     g_collector_exited = false;
-    xTaskCreate(heapwatch::metrics_collector::collectTask, "hw_metrics",
-                HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
-                &g_collector_task);
+    heapwatch_task_create(heapwatch::metrics_collector::collectTask, "hw_metrics",
+                         HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
+                         &g_collector_task);
 }
 
 void HeapwatchConnector::ensureMetricsCollectorThreadStarted() {

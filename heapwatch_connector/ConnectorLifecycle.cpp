@@ -1,6 +1,7 @@
 #include "heapwatch_connector/ConnectorLifecycle.h"
 
 #include "heapwatch_build_metadata.h"
+#include "heapwatch_connector/heapwatch_freertos_alloc.h"
 #include "heapwatch.h"
 #include "heapwatch_connector/ConnectorBootstrap.h"
 #include "heapwatch_connector/HeapwatchConnector.h"
@@ -26,6 +27,8 @@
 #include "sdkconfig.h"
 
 namespace heapwatch::connector_lifecycle {
+
+void refreshHandoffLed();
 
 namespace {
 
@@ -160,12 +163,14 @@ void onNetIpEvent(void*, esp_event_base_t event_base, int32_t event_id, void*) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_CONNECTED);
         }
         ESP_LOGI(kTag, "Network IP acquired (event %ld)", static_cast<long>(event_id));
+        onRuntimeConnectivityChanged();
     } else if (event_id == IP_EVENT_STA_LOST_IP || event_id == IP_EVENT_ETH_LOST_IP) {
         connector.setNetworkReady(false);
         if (connector.getStatus().initialized) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
         }
         ESP_LOGI(kTag, "Network IP lost (event %ld)", static_cast<long>(event_id));
+        onRuntimeConnectivityChanged();
     }
 }
 
@@ -197,22 +202,6 @@ void unregisterNetIpEventHandlers() {
     g_ip_sta_lost = nullptr;
     g_ip_eth_lost = nullptr;
     g_ip_handlers_registered = false;
-}
-
-void updateMqttPhaseFromStatus() {
-    const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
-    if (!status.initialized) {
-        return;
-    }
-    if (status.mqtt_connected) {
-        setPhase(HEAPWATCH_PHASE_MQTT_CONNECTED);
-    } else if (status.network_ready) {
-        setPhase(HEAPWATCH_PHASE_MQTT_CONNECTING);
-    } else if (getPhase() != HEAPWATCH_PHASE_NETWORK_FAILED &&
-               getPhase() != HEAPWATCH_PHASE_PROVISIONING &&
-               getPhase() != HEAPWATCH_PHASE_WAITING_ACCEPT) {
-        setPhase(HEAPWATCH_PHASE_READY);
-    }
 }
 
 void bootstrapTask(void*) {
@@ -247,8 +236,10 @@ void bootstrapTask(void*) {
                 g_boot_cycle_resumed = true;
                 resumeBootCycleFromServer();
             }
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+            updateMqttPhaseFromStatus();
+            refreshHandoffLed();
+            ESP_LOGI(kTag, "hw_bootstrap done — exiting");
+            break;
         }
 
         if (g_enrollment_cycle_active) {
@@ -260,6 +251,7 @@ void bootstrapTask(void*) {
         if (connector_bootstrap::loadBootCredentials(&creds)) {
             if (activateConnectorFromCredentials(creds)) {
                 setPhase(HEAPWATCH_PHASE_READY);
+                continue;
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -282,7 +274,7 @@ void bootstrapTask(void*) {
     }
     g_bootstrap_exited = true;
     g_bootstrap_task = nullptr;
-    vTaskDelete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 }  // namespace
@@ -290,6 +282,47 @@ void bootstrapTask(void*) {
 void setPhase(heapwatch_phase_t phase) { g_phase = phase; }
 
 heapwatch_phase_t getPhase() { return g_phase; }
+
+void updateMqttPhaseFromStatus() {
+    const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
+    if (!status.initialized) {
+        return;
+    }
+    if (status.mqtt_connected) {
+        setPhase(HEAPWATCH_PHASE_MQTT_CONNECTED);
+    } else if (connector_bootstrap::isWifiPermanentlyFailed()) {
+        setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
+    } else if (status.network_ready) {
+        setPhase(HEAPWATCH_PHASE_MQTT_CONNECTING);
+    } else if (getPhase() != HEAPWATCH_PHASE_NETWORK_FAILED &&
+               getPhase() != HEAPWATCH_PHASE_PROVISIONING &&
+               getPhase() != HEAPWATCH_PHASE_WAITING_ACCEPT) {
+        setPhase(HEAPWATCH_PHASE_READY);
+    }
+}
+
+void refreshHandoffLed() {
+#if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
+    if (!HeapwatchConnector::getInstance().getStatus().initialized) {
+        return;
+    }
+    if (connector_bootstrap::isWifiPermanentlyFailed()) {
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
+    } else if (!heapwatch_network_ready()) {
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kNetworkError);
+    } else {
+        heapwatch::device_enrollment::setIndicatorPhase(
+            heapwatch::device_enrollment::EnrollStateLedPhase::kProvisioned);
+    }
+#endif
+}
+
+void onRuntimeConnectivityChanged() {
+    updateMqttPhaseFromStatus();
+    refreshHandoffLed();
+}
 
 bool activateConnectorFromCredentials(const connector_bootstrap::BootCredentials& creds) {
     auto& connector = HeapwatchConnector::getInstance();
@@ -373,9 +406,9 @@ esp_err_t initialize() {
         g_bootstrap_started = true;
         g_bootstrap_stop = false;
         g_bootstrap_exited = false;
-        constexpr uint32_t kBootstrapStackBytes = 16384;
-        if (xTaskCreate(bootstrapTask, "hw_bootstrap", kBootstrapStackBytes, nullptr,
-                        tskIDLE_PRIORITY + 2, &g_bootstrap_task) != pdPASS) {
+        constexpr uint32_t kBootstrapStackBytes = 10240;
+        if (heapwatch_task_create_dram(bootstrapTask, "hw_bootstrap", kBootstrapStackBytes, nullptr,
+                                         tskIDLE_PRIORITY + 2, &g_bootstrap_task) != pdPASS) {
             ESP_LOGE(kTag, "FATAL: failed to start hw_bootstrap task");
             g_bootstrap_started = false;
             g_bootstrap_exited = true;
