@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-14
+
 ### Changed
+- Parameter slots, OTA job URLs, and FS volume/host-map tables live in the working set (PSRAM when `CONFIG_HEAPWATCH_ALLOCATE_DATA_IN_PSRAM` is on) instead of internal `.bss`. `heapwatch_register_fs_volume` before `heapwatch_initialize()` still works: it allocates the working set early. Log ring, OTA download chunk, and FS sha256/download buffers stay in DRAM (flash-cache / vprintf).
 - Log capture ring is **16** slots (was 64). Slot text length is `HEAPWATCH_MAX_LOG_LINE_LEN` (default 160, was a hardcoded 256). Lines are truncated at the ESP log hook, matching MQTT. At defaults this is about 3.3 KiB DRAM instead of 19.7 KiB; a burst larger than 16 lines in ~100 ms can drop (`g_log_lines_dropped_total`).
+
+### Fixed
+- Restored `heapwatch/Radio/BleDelegate.h` (0.16.0 left a shim that included itself, so the public BLE delegate C API failed to compile).
 
 ## [0.16.0] - 2026-09-14
 

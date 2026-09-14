@@ -40,6 +40,24 @@
  */
 namespace Heapwatch::Parameters::Store {
 
+constexpr size_t MAX_SLUG_LEN = 48;
+
+/** In-RAM parameter row. Lives in the working set, not .bss. */
+struct Slot {
+    char slug[MAX_SLUG_LEN] = {0};
+    int64_t int_value = 0;
+    double double_value = 0.0;
+    int64_t int_min = 0;
+    int64_t int_max = 0;
+    double double_min = 0.0;
+    double double_max = 0.0;
+    uint32_t last_bounds_sent_tick = 0;
+    uint8_t flags = 0;
+};
+
+/** Drop the working-set pointer after MemoryManager::deinit(). */
+void unbindWorkingSet();
+
 /** Sets/overwrites a slug's live integer value. No bounds. */
 void updateInt(const char* slug, int64_t value);
 

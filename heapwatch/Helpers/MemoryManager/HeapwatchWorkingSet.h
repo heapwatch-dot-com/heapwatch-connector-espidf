@@ -24,7 +24,13 @@
 #include "heapwatch_config.h"
 #include "heapwatch/Mqtt/HeapwatchConnector.h"
 #include "heapwatch/Metrics/MetricsCollector.h"
+#include "heapwatch/Parameters/Store/ParameterStore.h"
+#include "heapwatch/Fs/Volumes/FsVolumeManager.h"
 #include "sdkconfig.h"
+
+#if CONFIG_HEAPWATCH_ENABLE_OTA
+#include "heapwatch/Ota/OtaService.h"
+#endif
 
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
 #include "heapwatch/StreamIngress/Mux/StreamIngressMux.h"
@@ -108,6 +114,14 @@ struct HeapwatchWorkingSet {
     StaticSemaphore_t stream_mutex_buf;
     QueueHandle_t stream_outbound_queue;
     SemaphoreHandle_t stream_mutex;
+#endif
+
+    Heapwatch::Parameters::Store::Slot parameter_slots[HEAPWATCH_MAX_PARAMETER_SLOTS];
+    Heapwatch::Fs::Volumes::HostMapping fs_host_map[Heapwatch::Fs::Volumes::MAX_FLASH_VOLUMES];
+    Heapwatch::Fs::Volumes::HostMapping fs_sd_map[Heapwatch::Fs::Volumes::MAX_SD_VOLUMES];
+    Heapwatch::Fs::Volumes::Volume fs_volumes[Heapwatch::Fs::Volumes::MAX_VOLUMES];
+#if CONFIG_HEAPWATCH_ENABLE_OTA
+    Heapwatch::Ota::OtaJob ota_job;
 #endif
 
     alignas(8) uint8_t scratch[HEAPWATCH_MEM_SCRATCH_BYTES];

@@ -263,6 +263,8 @@ void HeapwatchConnector::deinitialize() {
     const bool command_gone = Heapwatch::DeviceCommand::commandWorkerExited();
     const bool stream_gone = Heapwatch::StreamIngress::workerExited();
     if (dispatcher_gone && collector_gone && command_gone && stream_gone) {
+        Heapwatch::Parameters::Store::unbindWorkingSet();
+        Heapwatch::Fs::Volumes::unbindWorkingSet();
         Heapwatch::Helpers::MemoryManager::deinit();
         clear_working_set_aliases();
         g_infrastructure_ready = false;

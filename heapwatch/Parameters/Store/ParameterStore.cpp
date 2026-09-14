@@ -25,24 +25,11 @@
 #include "freertos/task.h"
 #include "heapwatch_config.h"
 #include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 
 namespace Heapwatch::Parameters::Store {
 
 namespace {
-
-constexpr size_t MAX_SLUG_LEN = 48;
-
-struct ParamSlot {
-    char slug[MAX_SLUG_LEN] = {0};
-    int64_t int_value = 0;
-    double double_value = 0.0;
-    int64_t int_min = 0;
-    int64_t int_max = 0;
-    double double_min = 0.0;
-    double double_max = 0.0;
-    TickType_t last_bounds_sent_tick = 0;
-    uint8_t flags = 0;
-};
 
 constexpr uint8_t SLOT_IN_USE = 1 << 0;
 constexpr uint8_t SLOT_IS_DOUBLE = 1 << 1;
@@ -51,11 +38,11 @@ constexpr uint8_t SLOT_HAS_MIN = 1 << 3;
 constexpr uint8_t SLOT_HAS_MAX = 1 << 4;
 constexpr uint8_t SLOT_BOUNDS_DIRTY = 1 << 5;
 
-bool slot_flag(const ParamSlot& slot, uint8_t bit) {
+bool slot_flag(const Slot& slot, uint8_t bit) {
     return (slot.flags & bit) != 0;
 }
 
-void slot_set_flag(ParamSlot& slot, uint8_t bit, bool on) {
+void slot_set_flag(Slot& slot, uint8_t bit, bool on) {
     if (on) {
         slot.flags = static_cast<uint8_t>(slot.flags | bit);
     } else {
@@ -63,8 +50,21 @@ void slot_set_flag(ParamSlot& slot, uint8_t bit, bool on) {
     }
 }
 
-ParamSlot g_slots[HEAPWATCH_MAX_PARAMETER_SLOTS];
+Slot* g_slots = nullptr;
 SemaphoreHandle_t g_mutex = nullptr;
+
+bool bindSlots() {
+    if (g_slots != nullptr) {
+        return true;
+    }
+    Heapwatch::Helpers::MemoryManager::init();
+    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    if (ws == nullptr) {
+        return false;
+    }
+    g_slots = ws->parameter_slots;
+    return true;
+}
 
 SemaphoreHandle_t get_or_create_mutex() {
     if (g_mutex == nullptr) {
@@ -74,8 +74,8 @@ SemaphoreHandle_t get_or_create_mutex() {
 }
 
 // Not thread-safe by itself -- callers must hold g_mutex.
-ParamSlot* find_or_create_slot_locked(const char* slug) {
-    if (slug == nullptr || slug[0] == '\0') {
+Slot* find_or_create_slot_locked(const char* slug) {
+    if (g_slots == nullptr || slug == nullptr || slug[0] == '\0') {
         return nullptr;
     }
 
@@ -87,7 +87,7 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
         if (!slot_flag(g_slots[i], SLOT_IN_USE)) {
-            g_slots[i] = ParamSlot();
+            g_slots[i] = Slot();
             slot_set_flag(g_slots[i], SLOT_IN_USE, true);
             slot_set_flag(g_slots[i], SLOT_BOUNDS_DIRTY, true);
             snprintf(g_slots[i].slug, sizeof(g_slots[i].slug), "%s", slug);
@@ -102,18 +102,23 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
     return nullptr;
 }
 
-bool slot_has_publishable_content_locked(const ParamSlot& slot) {
+bool slot_has_publishable_content_locked(const Slot& slot) {
     return slot_flag(slot, SLOT_HAS_VALUE) || slot_flag(slot, SLOT_BOUNDS_DIRTY);
 }
 
 }  // namespace
 
+void unbindWorkingSet() { g_slots = nullptr; }
+
 void updateInt(const char* slug, int64_t value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
         slot_set_flag(*slot, SLOT_HAS_VALUE, true);
@@ -123,11 +128,14 @@ void updateInt(const char* slug, int64_t value) {
 }
 
 void updateDouble(const char* slug, double value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
         slot_set_flag(*slot, SLOT_HAS_VALUE, true);
@@ -137,11 +145,14 @@ void updateDouble(const char* slug, double value) {
 }
 
 void updateIntRanged(const char* slug, int64_t value, int64_t min_value, int64_t max_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
         slot_set_flag(*slot, SLOT_HAS_VALUE, true);
@@ -159,11 +170,14 @@ void updateIntRanged(const char* slug, int64_t value, int64_t min_value, int64_t
 }
 
 void updateDoubleRanged(const char* slug, double value, double min_value, double max_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
         slot_set_flag(*slot, SLOT_HAS_VALUE, true);
@@ -181,11 +195,14 @@ void updateDoubleRanged(const char* slug, double value, double min_value, double
 }
 
 void setIntMax(const char* slug, int64_t max_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
             slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
@@ -202,11 +219,14 @@ void setIntMax(const char* slug, int64_t max_value) {
 }
 
 void setIntMin(const char* slug, int64_t min_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
             slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
@@ -223,11 +243,14 @@ void setIntMin(const char* slug, int64_t min_value) {
 }
 
 void setDoubleMax(const char* slug, double max_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
             slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
@@ -244,11 +267,14 @@ void setDoubleMax(const char* slug, double max_value) {
 }
 
 void setDoubleMin(const char* slug, double min_value) {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
     }
-    ParamSlot* slot = find_or_create_slot_locked(slug);
+    Slot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
         if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
             slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
@@ -265,7 +291,7 @@ void setDoubleMin(const char* slug, double min_value) {
 }
 
 bool buildFlushPayload(char* out, size_t out_size) {
-    if (out == nullptr || out_size == 0) {
+    if (out == nullptr || out_size == 0 || !bindSlots()) {
         return false;
     }
 
@@ -295,7 +321,7 @@ bool buildFlushPayload(char* out, size_t out_size) {
                      static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS && pos < out_size; ++i) {
-        ParamSlot& slot = g_slots[i];
+        Slot& slot = g_slots[i];
         if (!slot_flag(slot, SLOT_IN_USE)) {
             continue;
         }
@@ -345,6 +371,9 @@ bool buildFlushPayload(char* out, size_t out_size) {
 }
 
 void acknowledgeBoundsSent() {
+    if (!bindSlots()) {
+        return;
+    }
     SemaphoreHandle_t mutex = get_or_create_mutex();
     if (mutex == nullptr || xSemaphoreTake(mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return;
@@ -352,7 +381,7 @@ void acknowledgeBoundsSent() {
 
     const TickType_t now = xTaskGetTickCount();
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        ParamSlot& slot = g_slots[i];
+        Slot& slot = g_slots[i];
         if (!slot_flag(slot, SLOT_IN_USE) || !slot_flag(slot, SLOT_BOUNDS_DIRTY)) {
             continue;
         }

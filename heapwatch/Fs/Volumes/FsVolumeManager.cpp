@@ -19,6 +19,7 @@
 #endif
 
 #include "heapwatch/Helpers/DynamicParameterSegment.h"
+#include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 #include "heapwatch/Fs/HeapwatchFsPartition.h"
 #include "heapwatch.h"
 #include "heapwatch_config.h"
@@ -32,20 +33,32 @@ namespace {
 
 constexpr char TAG[] = "HwFs";
 
-struct HostMapping {
-    char label[LABEL_MAX] = {};
-    char mount_path[MOUNT_PATH_MAX] = {};
-    bool used = false;
-};
-
-HostMapping g_host_map[MAX_FLASH_VOLUMES] = {};
-HostMapping g_sd_map[MAX_SD_VOLUMES] = {};
-Volume g_volumes[MAX_VOLUMES] = {};
+HostMapping* g_host_map = nullptr;
+HostMapping* g_sd_map = nullptr;
+Volume* g_volumes = nullptr;
 size_t g_volume_count = 0;
 bool g_mount_all_done = false;
 SemaphoreHandle_t g_mutex = nullptr;
 
+void bindVolumeTables() {
+    if (g_volumes != nullptr) {
+        return;
+    }
+    Heapwatch::Helpers::MemoryManager::init();
+    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    if (ws == nullptr) {
+        return;
+    }
+    g_host_map = ws->fs_host_map;
+    g_sd_map = ws->fs_sd_map;
+    g_volumes = ws->fs_volumes;
+    for (size_t i = 0; i < MAX_VOLUMES; ++i) {
+        g_volumes[i] = Volume{};
+    }
+}
+
 SemaphoreHandle_t mutexHandle() {
+    bindVolumeTables();
     if (g_mutex == nullptr) {
         g_mutex = xSemaphoreCreateMutex();
     }
@@ -129,7 +142,7 @@ bool dirExists(const char* path) {
 }
 
 const HostMapping* findHostMapping(const char* label) {
-    if (label == nullptr) {
+    if (label == nullptr || g_host_map == nullptr) {
         return nullptr;
     }
     for (size_t i = 0; i < MAX_FLASH_VOLUMES; ++i) {
@@ -142,6 +155,9 @@ const HostMapping* findHostMapping(const char* label) {
 
 /** Reserve or reuse a slot for `label`; nullptr when the table is full. */
 HostMapping* claimMappingSlot(HostMapping* table, size_t table_len, const char* label) {
+    if (table == nullptr || label == nullptr) {
+        return nullptr;
+    }
     HostMapping* empty = nullptr;
     for (size_t i = 0; i < table_len; ++i) {
         if (table[i].used && strcmp(table[i].label, label) == 0) {
@@ -155,7 +171,7 @@ HostMapping* claimMappingSlot(HostMapping* table, size_t table_len, const char* 
 }
 
 Volume* findVolumeByLabelLocked(const char* label) {
-    if (label == nullptr) {
+    if (label == nullptr || g_volumes == nullptr) {
         return nullptr;
     }
     for (size_t i = 0; i < g_volume_count; ++i) {
@@ -580,6 +596,14 @@ void tryAdoptPendingLocked() {
 }
 
 }  // namespace
+
+void unbindWorkingSet() {
+    g_host_map = nullptr;
+    g_sd_map = nullptr;
+    g_volumes = nullptr;
+    g_volume_count = 0;
+    g_mount_all_done = false;
+}
 
 esp_err_t registerVolume(const char* partition_label, const char* mount_path) {
     if (!validLabel(partition_label) || !validMountPath(mount_path)) {

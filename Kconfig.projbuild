@@ -362,8 +362,7 @@ menu "Heapwatch Connector"
             default 160
             range 32 1024
             help
-                Log lines longer than this are truncated before being queued for MQTT
-                delivery. Lower values reduce worst-case RAM use of the log pipeline.
+                Maximum size of one log line to be sent out. Longer lines are truncated.
 
         config HEAPWATCH_TINY_QUEUE_LEN
             int "Tiny MQTT Queue Depth (PARAMETER/EVENT)"
@@ -405,8 +404,7 @@ menu "Heapwatch Connector"
             default 10240
             range 8192 32768
             help
-                Stack for hw_going_dark (restart, sleep, shutdown, Wi-Fi reconnect).
-                Was hard-coded 6 KiB; overflows on GPS during shutdown/sleep paths.
+                Stack for hw_going_dark.
 
         config HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
             bool "Put as much data as possible in PSRAM (Recommended)"

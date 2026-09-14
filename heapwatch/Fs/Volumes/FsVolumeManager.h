@@ -33,6 +33,15 @@ struct Volume {
     wl_handle_t fat_wl = WL_INVALID_HANDLE;
 };
 
+struct HostMapping {
+    char label[LABEL_MAX] = {};
+    char mount_path[MOUNT_PATH_MAX] = {};
+    bool used = false;
+};
+
+/** Drop working-set pointers after MemoryManager::deinit(). */
+void unbindWorkingSet();
+
 /**
  * Map a flash partition label to a VFS path. Safe before or after heapwatch_initialize().
  * After mountAll(), the volume is adopted immediately (or on the next fs command if the

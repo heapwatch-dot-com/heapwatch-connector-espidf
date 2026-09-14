@@ -24,39 +24,19 @@
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
 #include "heapwatch/Mqtt/HeapwatchConnector.h"
 #include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 
 namespace Heapwatch::Ota {
 
 namespace {
 
-constexpr size_t URL_MAX = 512;
-constexpr size_t SHA_HEX_MAX = 65;
 constexpr size_t DOWNLOAD_CHUNK = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
 constexpr uint32_t OTA_TASK_STACK_BYTES = 8192;
-// BSS — keeps download chunk RAM off the hw_ota task stack.
+// BSS — keeps download chunk RAM off the hw_ota task stack. Flash I/O: stay in DRAM.
 uint8_t g_ota_io_buf[DOWNLOAD_CHUNK] = {};
-constexpr size_t MAX_DATA_PARTITIONS = 4;
-constexpr size_t PARTITION_NAME_MAX = 32;
 constexpr size_t MQTT_YIELD_EVERY_BYTES = DOWNLOAD_CHUNK;
 constexpr size_t PROGRESS_EVERY_BYTES = 128 * 1024;
 constexpr int32_t HTTP_TIMEOUT_MS = 15000;
-
-struct DataPartitionJob {
-    char name[PARTITION_NAME_MAX] = {};
-    char download_url[URL_MAX] = {};
-    char sha256[SHA_HEX_MAX] = {};
-    int64_t size = 0;
-};
-
-struct OtaJob {
-    int64_t ota_session_id = 0;
-    char code_download_url[URL_MAX] = {};
-    char code_checksum[SHA_HEX_MAX] = {};
-    int64_t code_size = 0;
-    bool include_data = false;
-    size_t data_count = 0;
-    DataPartitionJob data[MAX_DATA_PARTITIONS] = {};
-};
 
 enum class Phase : uint8_t {
     Idle = 0,
@@ -70,7 +50,7 @@ volatile bool g_abort_requested = false;
 volatile bool g_stop_requested = false;
 volatile bool g_task_exited = true;
 volatile Phase g_phase = Phase::Idle;
-OtaJob g_job = {};
+OtaJob* g_job = nullptr;
 
 void log_phase(int64_t session_id, const char* phase, const char* detail = nullptr) {
     if (detail != nullptr && detail[0] != '\0') {
@@ -553,11 +533,11 @@ void otaWorkerTask(void* /*arg*/) {
         if (g_stop_requested) {
             break;
         }
-        if (g_phase != Phase::Running) {
+        if (g_phase != Phase::Running || g_job == nullptr) {
             continue;
         }
 
-        OtaJob job = g_job;
+        OtaJob job = *g_job;
         runOtaJob(job);
     }
     g_task_exited = true;
@@ -629,7 +609,7 @@ bool handle_start(const char* command_id, const char* payload, size_t payload_le
         }
     }
 
-    if (g_mutex == nullptr || g_ota_task == nullptr) {
+    if (g_mutex == nullptr || g_ota_task == nullptr || g_job == nullptr) {
         Heapwatch::DeviceCommand::publishCommandResponse("ota/start", command_id, false, "other",
                                                           "OTA service not initialized");
         return true;
@@ -648,7 +628,7 @@ bool handle_start(const char* command_id, const char* payload, size_t payload_le
         return true;
     }
 
-    g_job = job;
+    *g_job = job;
     g_abort_requested = false;
     g_phase = Phase::Running;
     xSemaphoreGive(g_mutex);
@@ -781,6 +761,12 @@ bool handle_rollback(const char* command_id) {
 }  // namespace
 
 void init() {
+    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    if (ws != nullptr) {
+        g_job = &ws->ota_job;
+        *g_job = OtaJob{};
+    }
+
     if (g_mutex == nullptr) {
         g_mutex = xSemaphoreCreateMutex();
     }
@@ -823,6 +809,7 @@ void shutdown() {
     }
 
     g_ota_task = nullptr;
+    g_job = nullptr;
     g_phase = Phase::Idle;
     g_abort_requested = false;
 }

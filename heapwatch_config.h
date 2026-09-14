@@ -87,10 +87,8 @@
 #endif
 
 /**
- * Log lines longer than this are truncated before being queued (K7). Doesn't
- * yet back a dedicated smaller queue tier — that's the M1 tiered-queue work
- * (Phase 2b) — but bounds worst-case log payload size today independent of
- * HEAPWATCH_MAX_PAYLOAD_SIZE.
+ * Capture-ring slot text length and MQTT/stream truncate. The vprintf hook
+ * cuts lines here before they enter the 16-slot DRAM ring.
  */
 #ifdef CONFIG_HEAPWATCH_MAX_LOG_LINE_LEN
 #define HEAPWATCH_MAX_LOG_LINE_LEN       CONFIG_HEAPWATCH_MAX_LOG_LINE_LEN
