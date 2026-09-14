@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#include <cinttypes>
 
 #include "esp_flash.h"
 #include "esp_flash_partitions.h"
@@ -34,9 +35,9 @@ constexpr uint32_t PARTITION_TABLE_SECTOR_BYTES = 0x1000;
 /** Secure Boot V1 digest at flash offset 0 (one sector). */
 constexpr uint32_t SECURE_BOOT_DIGEST_BYTES = 0x1000;
 /** ESP-IDF partition types (esp_partition_type_t) — stable since IDF 5.x CSV tooling. */
-constexpr int PARTITION_TYPE_BOOTLOADER = 0x02;
-constexpr int PARTITION_TYPE_PARTITION_TABLE = 0x03;
-constexpr int PARTITION_SUBTYPE_PRIMARY = 0x00;
+constexpr int32_t PARTITION_TYPE_BOOTLOADER = 0x02;
+constexpr int32_t PARTITION_TYPE_PARTITION_TABLE = 0x03;
+constexpr int32_t PARTITION_SUBTYPE_PRIMARY = 0x00;
 
 constexpr size_t DOWNLOAD_CHUNK_BYTES = 4096;
 constexpr size_t READ_LINE_BUF = 512;
@@ -92,7 +93,7 @@ void cleanupOrphanUploadTemps(const char* mount) {
         return;
     }
 
-    int removed = 0;
+    int32_t removed = 0;
     while (dirent* entry = readdir(dir)) {
         if (entry->d_name[0] == '\0') {
             continue;
@@ -109,7 +110,7 @@ void cleanupOrphanUploadTemps(const char* mount) {
         }
 
         char full[FS_PATH_MAX] = {};
-        const int written = snprintf(full, sizeof(full), "%s/%s", mount, entry->d_name);
+        const int32_t written = snprintf(full, sizeof(full), "%s/%s", mount, entry->d_name);
         if (written <= 0 || static_cast<size_t>(written) >= sizeof(full)) {
             continue;
         }
@@ -121,7 +122,7 @@ void cleanupOrphanUploadTemps(const char* mount) {
     closedir(dir);
 
     if (removed > 0) {
-        ESP_LOGW(TAG, "Cleaned %d orphan upload temp(s) under %s", removed, mount);
+        ESP_LOGW(TAG, "Cleaned %" PRId32 " orphan upload temp(s) under %s", removed, mount);
     }
 }
 
@@ -159,8 +160,8 @@ bool volumeHasSpaceForUpload(const char* path, int64_t needed, FsError* error) {
             error->code = "no_space";
             error->message = "Not enough free space on the volume for this upload.";
         }
-        ESP_LOGW(TAG, "Upload rejected: need %lld bytes, free %lld",
-                 static_cast<long long>(needed), static_cast<long long>(free_bytes));
+        ESP_LOGW(TAG, "Upload rejected: need %" PRId64 " bytes, free %" PRId64,
+                 static_cast<int64_t>(needed), static_cast<int64_t>(free_bytes));
         return false;
     }
 
@@ -201,7 +202,7 @@ bool hexEncodeSha256(const uint8_t digest[32], char* out, size_t out_len) {
     }
 
     static const char* HEX_DIGITS = "0123456789abcdef";
-    for (int i = 0; i < 32; i++) {
+    for (int32_t i = 0; i < 32; i++) {
         out[i * 2] = HEX_DIGITS[(digest[i] >> 4) & 0x0f];
         out[i * 2 + 1] = HEX_DIGITS[digest[i] & 0x0f];
     }
@@ -284,9 +285,9 @@ void finalizeUpload() {
     }
 
     if (strcasecmp(actual_sha256, g_upload.expected_sha256) != 0) {
-        ESP_LOGE(TAG, "checksum mismatch path=%s expected=%s actual=%s size=%lld", temp_path,
+        ESP_LOGE(TAG, "checksum mismatch path=%s expected=%s actual=%s size=%" PRId64, temp_path,
                  g_upload.expected_sha256, actual_sha256,
-                 static_cast<long long>(actual_size));
+                 static_cast<int64_t>(actual_size));
         FsError err = {"checksum_mismatch", "SHA256 checksum mismatch on uploaded file."};
         unlink(temp_path);
         resetUploadState();
@@ -492,8 +493,8 @@ bool formatOtaSubtypeName(esp_partition_type_t type, esp_partition_subtype_t sub
     if (subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MIN || subtype > ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
         return false;
     }
-    const int slot = static_cast<int>(subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN);
-    snprintf(buf, buflen, "ota_%d", slot);
+    const int32_t slot = static_cast<int32_t>(subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN);
+    snprintf(buf, buflen, "ota_%" PRId32, slot);
     return true;
 }
 
@@ -533,7 +534,7 @@ uint32_t bootloaderFlashOffset() {
 }
 
 cJSON* buildSyntheticPartitionObject(const char* id, const char* label, const char* type,
-                                     const char* subtype, int type_id, int subtype_id,
+                                     const char* subtype, int32_t type_id, int32_t subtype_id,
                                      uint32_t address, uint32_t size_bytes) {
     cJSON* obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "id", id);
@@ -747,7 +748,7 @@ cJSON* buildStorageResult() {
     return result;
 }
 
-cJSON* buildListResult(const char* path, int page, int per_page, FsError* error) {
+cJSON* buildListResult(const char* path, int32_t page, int32_t per_page, FsError* error) {
     if (!isAllowedPath(path)) {
         if (error != nullptr) {
             error->code = "invalid_path";
@@ -780,7 +781,7 @@ cJSON* buildListResult(const char* path, int page, int per_page, FsError* error)
         }
 
         char child_path[FS_PATH_MAX] = {};
-        const int path_written = snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
+        const int32_t path_written = snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
         if (path_written <= 0 || static_cast<size_t>(path_written) >= sizeof(child_path)) {
             continue;
         }
@@ -809,13 +810,13 @@ cJSON* buildListResult(const char* path, int page, int per_page, FsError* error)
     std::sort(entries.begin(), entries.end(),
               [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
 
-    const int total = static_cast<int>(entries.size());
-    const int start = (page - 1) * per_page;
-    const int end = std::min(start + per_page, total);
+    const int32_t total = static_cast<int32_t>(entries.size());
+    const int32_t start = (page - 1) * per_page;
+    const int32_t end = std::min(start + per_page, total);
 
     cJSON* entry_array = cJSON_CreateArray();
     if (start < total) {
-        for (int i = start; i < end; i++) {
+        for (int32_t i = start; i < end; i++) {
             const DirEntry& row = entries[static_cast<size_t>(i)];
             cJSON* item = cJSON_CreateObject();
             cJSON_AddStringToObject(item, "name", row.name.c_str());
@@ -851,8 +852,8 @@ size_t jsonEscapedSize(const char* text) {
     }
 
     size_t escaped = 0;
-    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p != '\0'; ++p) {
-        const unsigned char c = *p;
+    for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p != '\0'; ++p) {
+        const uint8_t c = *p;
         if (c == '"' || c == '\\' || c == '\b' || c == '\f' || c == '\n' || c == '\r' || c == '\t') {
             escaped += 2;
         } else if (c < 0x20) {
@@ -864,7 +865,7 @@ size_t jsonEscapedSize(const char* text) {
     return escaped;
 }
 
-cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* error) {
+cJSON* buildReadResult(const char* path, int32_t from_line, int32_t to_line, FsError* error) {
     if (!isAllowedPath(path)) {
         if (error != nullptr) {
             error->code = "invalid_path";
@@ -902,9 +903,9 @@ cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* er
 
     std::string content;
     size_t escaped_bytes = 0;
-    int current_line = 0;
-    int first_emitted = 0;
-    int last_emitted = 0;
+    int32_t current_line = 0;
+    int32_t first_emitted = 0;
+    int32_t last_emitted = 0;
     char line[READ_LINE_BUF] = {};
 
     while (fgets(line, sizeof(line), fp) != nullptr) {
@@ -1198,16 +1199,16 @@ bool beginUploadJob(const char* command_id, const char* path, const char* temp_p
     g_upload.received_size = 0;
     g_upload.file = fp;
 
-    ESP_LOGI(TAG, "Upload job armed command_id=%s temp=%s size=%lld", command_id, temp_path,
-             static_cast<long long>(expected_size));
+    ESP_LOGI(TAG, "Upload job armed command_id=%s temp=%s size=%" PRId64, command_id, temp_path,
+             static_cast<int64_t>(expected_size));
     return true;
 }
 
 void handleUploadChunk(const uint8_t* data, size_t len) {
     if (!g_upload.active || g_upload.file == nullptr || data == nullptr || len == 0) {
         if (!g_logged_inactive_upload_drop) {
-            ESP_LOGW(TAG, "Dropping upload chunk (%u bytes) — no active upload armed",
-                     static_cast<unsigned>(len));
+            ESP_LOGW(TAG, "Dropping upload chunk (%" PRIu32 " bytes) — no active upload armed",
+                     static_cast<uint32_t>(len));
             g_logged_inactive_upload_drop = true;
         }
         return;

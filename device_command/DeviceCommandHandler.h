@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "cJSON.h"
 #include "esp_err.h"
@@ -14,7 +15,7 @@ namespace heapwatch::device_command {
  * mqtt_retain: MQTT retain flag from the broker (retained messages are ignored).
  */
 void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
-                        size_t payload_len, int mqtt_retain);
+                        size_t payload_len, int32_t mqtt_retain);
 
 /**
  * CMD1: client-defined custom inbound remote command handler.

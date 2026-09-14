@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <strings.h>
+#include <cinttypes>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -53,10 +54,10 @@ constexpr char TAG[] = "HwLife";
 
 constexpr EventBits_t WIFI_CONNECTED_EVENT_BIT = BIT0;
 constexpr EventBits_t WIFI_FAIL_EVENT_BIT = BIT1;
-constexpr int WIFI_CONNECT_MAX_RETRY = 10;
+constexpr int32_t WIFI_CONNECT_MAX_RETRY = 10;
 
 EventGroupHandle_t g_wifi_event_group = nullptr;
-int g_wifi_retry = 0;
+int32_t g_wifi_retry = 0;
 uint32_t g_wifi_reconnects_total = 0;
 volatile bool g_wifi_permanently_failed = false;
 volatile bool g_command_wifi_reconnect_active = false;
@@ -66,6 +67,7 @@ esp_event_handler_instance_t g_wifi_handler_instance = nullptr;
 
 namespace {
 
+#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
 constexpr uint32_t LOG_FORWARD_INTERVAL_MS = 100;
 constexpr uint32_t LOG_ASSEMBLY_FLUSH_TIMEOUT_MS = 250;
 constexpr size_t LOG_LINE_MAX_LEN = 256;
@@ -80,7 +82,7 @@ struct RawLogLine {
     char text[LOG_LINE_MAX_LEN];
     char task_name[configMAX_TASK_NAME_LEN];
     char tag[LOG_TAG_MAX_LEN];
-    int core;
+    int32_t core;
 };
 
 RawLogLine g_log_ring[LOG_RING_CAPACITY] = {};
@@ -92,7 +94,7 @@ portMUX_TYPE g_log_ring_lock = portMUX_INITIALIZER_UNLOCKED;
 char g_log_line_assembly[LOG_LINE_MAX_LEN] = {};
 size_t g_log_line_assembly_len = 0;
 char g_log_line_task_name[configMAX_TASK_NAME_LEN] = {};
-int g_log_line_core = -1;
+int32_t g_log_line_core = -1;
 portMUX_TYPE g_log_assembly_lock = portMUX_INITIALIZER_UNLOCKED;
 TickType_t g_log_line_assembly_last_update = 0;
 volatile bool g_log_stop_requested = false;
@@ -273,7 +275,7 @@ void captureLogLineContextLocked() {
     } else {
         g_log_line_task_name[0] = '\0';
     }
-    g_log_line_core = static_cast<int>(xPortGetCoreID());
+    g_log_line_core = static_cast<int32_t>(xPortGetCoreID());
 }
 
 void flushAssembledLogLine() {
@@ -358,7 +360,6 @@ void ingestLogTextChunk(const char* text) {
     taskEXIT_CRITICAL(&g_log_assembly_lock);
 }
 
-#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
 int mqttLogVprintfHook(const char* fmt, va_list args) {
     va_list copy_for_stdout;
     va_copy(copy_for_stdout, args);
@@ -454,14 +455,14 @@ void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
         if (g_wifi_retry < WIFI_CONNECT_MAX_RETRY) {
             g_wifi_retry++;
             esp_wifi_connect();
-            ESP_LOGW(TAG, "Wi-Fi reconnect attempt %d/%d", g_wifi_retry, WIFI_CONNECT_MAX_RETRY);
+            ESP_LOGW(TAG, "Wi-Fi reconnect attempt %" PRId32 "/%" PRId32, g_wifi_retry, WIFI_CONNECT_MAX_RETRY);
         } else {
             xEventGroupSetBits(g_wifi_event_group, WIFI_FAIL_EVENT_BIT);
             g_wifi_permanently_failed = true;
             heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
             heapwatch::device_enrollment::setIndicatorPhase(
                 heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
-            ESP_LOGE(TAG, "Wi-Fi connect failed after %d retries", WIFI_CONNECT_MAX_RETRY);
+            ESP_LOGE(TAG, "Wi-Fi connect failed after %" PRId32 " retries", WIFI_CONNECT_MAX_RETRY);
         }
     }
 }
@@ -562,7 +563,7 @@ bool requestWifiReconnect(uint32_t duration_s) {
         ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
         return false;
     }
-    ESP_LOGI(TAG, "Wi-Fi reconnect requested (duration_s=%u)", static_cast<unsigned>(duration_s));
+    ESP_LOGI(TAG, "Wi-Fi reconnect requested (duration_s=%" PRIu32 ")", static_cast<uint32_t>(duration_s));
     return true;
 #else
     (void)duration_s;
@@ -636,18 +637,18 @@ void syncTimeIfManaged() {
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
 
-    constexpr int MAX_CHECKS = 20;
+    constexpr int32_t MAX_CHECKS = 20;
     constexpr time_t MIN_VALID_UNIX = 1700000000;
-    int checks = 0;
+    int32_t checks = 0;
 
     while (checks < MAX_CHECKS) {
         const time_t now = time(nullptr);
         if (now >= MIN_VALID_UNIX) {
-            ESP_LOGI(TAG, "System time synced: %lld", static_cast<long long>(now));
+            ESP_LOGI(TAG, "System time synced: %" PRId64, static_cast<int64_t>(now));
             return;
         }
         checks++;
-        ESP_LOGI(TAG, "Waiting for SNTP sync... (%d/%d)", checks, MAX_CHECKS);
+        ESP_LOGI(TAG, "Waiting for SNTP sync... (%" PRId32 "/%" PRId32 ")", checks, MAX_CHECKS);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
@@ -714,8 +715,20 @@ void stopTimeSyncIfManaged() {
 }
 
 uint32_t getWifiReconnectsTotal() { return g_wifi_reconnects_total; }
-uint32_t getLogLinesDroppedTotal() { return g_log_lines_dropped_total; }
-uint32_t getLogMqttDroppedTotal() { return g_log_mqtt_dropped_total; }
+uint32_t getLogLinesDroppedTotal() {
+#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
+    return g_log_lines_dropped_total;
+#else
+    return 0;
+#endif
+}
+uint32_t getLogMqttDroppedTotal() {
+#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
+    return g_log_mqtt_dropped_total;
+#else
+    return 0;
+#endif
+}
 
 void syncClaimedIdentitiesIfProvisioned() {
     heapwatch::device_enrollment::requestClaimedIdentitiesBootPostNow();

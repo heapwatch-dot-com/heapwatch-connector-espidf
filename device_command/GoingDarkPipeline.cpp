@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "esp_sleep.h"
@@ -80,7 +81,7 @@ void waitOutboxDrained(uint32_t timeout_ms) {
         const TickType_t elapsed_ms =
             static_cast<uint32_t>((xTaskGetTickCount() - start) * portTICK_PERIOD_MS);
         if (elapsed_ms >= timeout_ms) {
-            ESP_LOGW(TAG, "Outbox drain timeout (%u ms)", static_cast<unsigned>(timeout_ms));
+            ESP_LOGW(TAG, "Outbox drain timeout (%" PRIu32 " ms)", static_cast<uint32_t>(timeout_ms));
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -171,8 +172,8 @@ void runSleepPipeline(GoingDarkRequest request) {
 
     if (request.sleep_kind == SleepKind::Light) {
         const int64_t sleep_started_us = esp_timer_get_time();
-        ESP_LOGI(TAG, "Entering light sleep (duration_s=%u)",
-                 static_cast<unsigned>(request.duration_s));
+        ESP_LOGI(TAG, "Entering light sleep (duration_s=%" PRIu32 ")",
+                 static_cast<uint32_t>(request.duration_s));
         esp_light_sleep_start();
 
         heapwatch_dispatcher_disarm_shutdown();
@@ -185,7 +186,7 @@ void runSleepPipeline(GoingDarkRequest request) {
         return;
     }
 
-    ESP_LOGI(TAG, "Entering deep sleep (duration_s=%u)", static_cast<unsigned>(request.duration_s));
+    ESP_LOGI(TAG, "Entering deep sleep (duration_s=%" PRIu32 ")", static_cast<uint32_t>(request.duration_s));
     heapwatch_sleep_tracking_mark_entering_deep_sleep();
     esp_deep_sleep_start();
 }

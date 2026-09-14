@@ -1,6 +1,7 @@
 #pragma once
 
 #include "heapwatch_build_metadata.h"
+#include "sdkconfig.h"
 
 namespace heapwatch::device_command {
 
@@ -104,8 +105,9 @@ static const char BUILTIN_COMMAND_CATALOG_JSON[] =
     "\"builtin\":true,\"panel_visible\":false,\"args\":[]},"
     "{\"slug\":\"fs/create\",\"name\":\"fs/create\",\"description\":\"Filesystem browser "
     "command.\",\"risk\":\"medium\",\"session\":\"non_terminal\",\"returns_payload\":false,"
-    "\"builtin\":true,\"panel_visible\":false,\"args\":[]},"
-    "{\"slug\":\"ota/start\",\"name\":\"OTA start\",\"description\":\"Download and flash a "
+    "\"builtin\":true,\"panel_visible\":false,\"args\":[]}"
+#if CONFIG_HEAPWATCH_ENABLE_OTA
+    ",{\"slug\":\"ota/start\",\"name\":\"OTA start\",\"description\":\"Download and flash a "
     "firmware build.\",\"risk\":\"high\",\"session\":\"non_terminal\",\"returns_payload\":false,"
     "\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":3600,\"args\":[]},"
     "{\"slug\":\"ota/abort\",\"name\":\"OTA abort\",\"description\":\"Abort the running OTA "
@@ -117,6 +119,7 @@ static const char BUILTIN_COMMAND_CATALOG_JSON[] =
     "{\"slug\":\"ota/rollback\",\"name\":\"OTA rollback\",\"description\":\"Rollback to the "
     "previous firmware.\",\"risk\":\"high\",\"session\":\"terminal\",\"returns_payload\":false,"
     "\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":60,\"args\":[]}"
+#endif
     "]}";
 
 }  // namespace heapwatch::device_command

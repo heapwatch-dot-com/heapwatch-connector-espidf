@@ -14,14 +14,14 @@ namespace heapwatch::stream_ingress::mux {
 namespace {
 
 void writeU64BE(uint8_t* out, uint64_t value) {
-    for (int i = 0; i < 8; i++) {
-        out[7 - i] = static_cast<uint8_t>((value >> (static_cast<unsigned>(i) * 8)) & 0xffU);
+    for (int32_t i = 0; i < 8; i++) {
+        out[7 - i] = static_cast<uint8_t>((value >> (static_cast<uint32_t>(i) * 8)) & 0xffU);
     }
 }
 
 uint64_t readU64BE(const uint8_t* in) {
     uint64_t value = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int32_t i = 0; i < 8; i++) {
         value = (value << 8) | static_cast<uint64_t>(in[i]);
     }
     return value;

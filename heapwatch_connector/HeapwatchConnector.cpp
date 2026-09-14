@@ -19,10 +19,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <cinttypes>
 
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #include "esp_core_dump.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#endif
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_partition.h"
@@ -44,11 +47,14 @@
 #include "../device_enrollment/ClaimedIdentitiesBootSync.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
 #include "../device_fs/FsVolumeManager.h"
+#if CONFIG_HEAPWATCH_ENABLE_OTA
 #include "../device_ota/OtaService.h"
+#endif
 #include "../stream_ingress/StreamIngressClient.h"
 #include "ParameterStore.h"
 #include "heapwatch_connector_timing.h"
 #include "heapwatch_freertos_alloc.h"
+#include "../memory_manager/HeapwatchMemoryManager.h"
 
 namespace {
 static constexpr char TAG[] = "HwMqtt";
@@ -59,7 +65,9 @@ static constexpr TickType_t BOOT_CRITICAL_QUEUE_WAIT = pdMS_TO_TICKS(250);
 QueueHandle_t g_tiny_queue = nullptr;
 QueueHandle_t g_small_queue = nullptr;
 QueueHandle_t g_large_queue = nullptr;
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
 QueueHandle_t g_coredump_queue = nullptr;
+#endif
 SemaphoreHandle_t g_publish_mutex = nullptr;
 SemaphoreHandle_t g_outbound_sem = nullptr;
 bool g_initialized = false;
@@ -77,44 +85,41 @@ char g_device_uid[64] = {0};
 char g_tenant_slug[64] = {0};
 char g_broker_uri[128] = "mqtts://192.168.50.210:8883";
 char g_broker_password[128] = {0};
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
 char g_coredump_upload_url[256] = {0};
+#endif
 char g_coredump_auth_token[256] = {0};
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
 char g_coredump_build_identifier[128] = {0};
+#endif
 uint32_t g_boot_cycle = 0;
 uint32_t g_crash_boot_cycle = 0;
 
-// Scratch buffers shared by the queue*() publish helpers below. Allocated in
-// ensureInfrastructure (PSRAM when the data option is on).
-struct PublishScratch {
-    TinyMqttMessage tiny;
-    SmallMqttMessage small;
-    LargeMqttMessage large;
-    char specs_body[HEAPWATCH_LARGE_PAYLOAD_SIZE - 96];
-    char raw_log_line[HEAPWATCH_MAX_LOG_LINE_LEN + 1];
-    char escaped_message[HEAPWATCH_MAX_LOG_LINE_LEN * 2 + 1];
-    char escaped_task[64];
-    char escaped_tag[64];
-    char optional[192];
-};
-PublishScratch* g_scratch = nullptr;
+heapwatch::PublishScratch* g_scratch = nullptr;
 
-void destroy_message_queues() {
-    if (g_outbound_sem != nullptr) {
-        vSemaphoreDelete(g_outbound_sem);
-        g_outbound_sem = nullptr;
-    }
-    if (g_tiny_queue != nullptr) {
-        heapwatch_queue_delete(g_tiny_queue);
-        g_tiny_queue = nullptr;
-    }
-    if (g_small_queue != nullptr) {
-        heapwatch_queue_delete(g_small_queue);
-        g_small_queue = nullptr;
-    }
-    if (g_large_queue != nullptr) {
-        heapwatch_queue_delete(g_large_queue);
-        g_large_queue = nullptr;
-    }
+void bind_working_set_aliases() {
+    heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+    g_scratch = &ws->publish;
+    g_tiny_queue = ws->tiny_queue;
+    g_small_queue = ws->small_queue;
+    g_large_queue = ws->large_queue;
+    g_publish_mutex = ws->publish_mutex;
+    g_outbound_sem = ws->outbound_sem;
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
+    g_coredump_queue = ws->coredump_queue;
+#endif
+}
+
+void clear_working_set_aliases() {
+    g_scratch = nullptr;
+    g_tiny_queue = nullptr;
+    g_small_queue = nullptr;
+    g_large_queue = nullptr;
+    g_publish_mutex = nullptr;
+    g_outbound_sem = nullptr;
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
+    g_coredump_queue = nullptr;
+#endif
 }
 
 // RAII guard around g_publish_mutex with a bounded wait: publishing helpers run on
@@ -149,7 +154,9 @@ void initConnectorSubsystemsOnce() {
     heapwatch::connector_settings::init();
     heapwatch::going_dark::init();
     heapwatch::device_command::initCommandWorker();
+#if CONFIG_HEAPWATCH_ENABLE_OTA
     heapwatch::device_ota::init();
+#endif
     heapwatch::stream_ingress::init();
     heapwatch::device_fs::init();
 }
@@ -181,56 +188,9 @@ bool HeapwatchConnector::ensureInfrastructure() {
         return true;
     }
 
-    if (g_scratch == nullptr) {
-        g_scratch = static_cast<PublishScratch*>(heapwatch_data_alloc(sizeof(PublishScratch)));
-    }
-
-    g_tiny_queue = heapwatch_queue_create(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage));
-    g_small_queue = heapwatch_queue_create(HEAPWATCH_SMALL_QUEUE_LEN, sizeof(SmallMqttMessage));
-    g_large_queue = heapwatch_queue_create(HEAPWATCH_LARGE_QUEUE_LEN, sizeof(LargeMqttMessage));
-    if (g_tiny_queue == nullptr || g_small_queue == nullptr || g_large_queue == nullptr) {
-        ESP_LOGE(TAG,
-                 "Failed to create message queues (psram=%d, free_heap=%u, largest_block=%u)",
-                 HEAPWATCH_ALLOCATE_DATA_IN_PSRAM,
-                 static_cast<unsigned>(esp_get_free_heap_size()),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)));
-        destroy_message_queues();
-        return false;
-    }
-
-    g_outbound_sem = xSemaphoreCreateCounting(
-        HEAPWATCH_TINY_QUEUE_LEN + HEAPWATCH_SMALL_QUEUE_LEN + HEAPWATCH_LARGE_QUEUE_LEN, 0);
-    if (g_outbound_sem == nullptr) {
-        ESP_LOGE(TAG, "Failed to create outbound semaphore");
-        destroy_message_queues();
-        return false;
-    }
-
-    g_coredump_queue =
-        heapwatch_queue_create(HEAPWATCH_COREDUMP_QUEUE_LEN, sizeof(CoreDumpPayload*));
-    if (g_coredump_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create core dump queue");
-        destroy_message_queues();
-        return false;
-    }
-
-    if (g_publish_mutex == nullptr) {
-        g_publish_mutex = xSemaphoreCreateMutex();
-        if (g_publish_mutex == nullptr) {
-            ESP_LOGE(TAG, "Failed to create publish mutex");
-            destroy_message_queues();
-            heapwatch_queue_delete(g_coredump_queue);
-            g_coredump_queue = nullptr;
-            return false;
-        }
-    }
-
+    heapwatch::memory_manager::init();
+    bind_working_set_aliases();
     g_infrastructure_ready = true;
-#if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
-    ESP_LOGI(TAG, "connector data in PSRAM (internal free=%u largest=%u)",
-             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
-#endif
     return true;
 }
 
@@ -285,7 +245,9 @@ void HeapwatchConnector::deinitialize() {
     heapwatch_dispatcher_shutdown();
     heapwatch::going_dark::shutdown();
     heapwatch::device_command::shutdownCommandWorker();
+#if CONFIG_HEAPWATCH_ENABLE_OTA
     heapwatch::device_ota::shutdown();
+#endif
     heapwatch::stream_ingress::shutdown();
     heapwatch::device_radio::stop();
     heapwatch::device_command::resetCommandCatalogBootFlags();
@@ -295,24 +257,19 @@ void HeapwatchConnector::deinitialize() {
     heapwatch::device_enrollment::resetClaimedIdentitiesBootSync();
     g_subsystems_initialized = false;
 
-    // Freeing the queues while a producer/consumer is still alive would be a
-    // use-after-free, so keep them (and the ready flag, so a re-init reuses them
+    // Freeing the working set while a producer/consumer is still alive would be a
+    // use-after-free, so keep it (and the ready flag, so a re-init reuses it
     // instead of leaking a second set) when a task overran its stop deadline.
-    if (dispatcher_gone && collector_gone) {
-        destroy_message_queues();
-        heapwatch_data_free(g_scratch);
-        g_scratch = nullptr;
-        if (g_coredump_queue != nullptr) {
-            CoreDumpPayload* pending_payload = nullptr;
-            while (xQueueReceive(g_coredump_queue, &pending_payload, 0) == pdTRUE) {
-                free(pending_payload);
-            }
-            heapwatch_queue_delete(g_coredump_queue);
-            g_coredump_queue = nullptr;
-        }
+    const bool command_gone = heapwatch::device_command::commandWorkerExited();
+    const bool stream_gone = heapwatch::stream_ingress::workerExited();
+    if (dispatcher_gone && collector_gone && command_gone && stream_gone) {
+        heapwatch::memory_manager::deinit();
+        clear_working_set_aliases();
         g_infrastructure_ready = false;
     } else {
-        ESP_LOGE(TAG, "hw_dispatcher/hw_metrics did not stop in time — keeping queues allocated");
+        ESP_LOGE(TAG,
+                 "hw_dispatcher/hw_metrics/hw_command/hw_streaming did not stop in time — "
+                 "keeping working set allocated");
     }
 
     g_initialized = false;
@@ -346,11 +303,15 @@ void HeapwatchConnector::setMqttPassword(const char* password) {
 }
 
 void HeapwatchConnector::setCoreDumpUploadUrl(const char* url) {
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     if (url == nullptr) {
         g_coredump_upload_url[0] = '\0';
         return;
     }
     snprintf(g_coredump_upload_url, sizeof(g_coredump_upload_url), "%s", url);
+#else
+    (void)url;
+#endif
 }
 
 void HeapwatchConnector::setRestApiAuthToken(const char* token) {
@@ -362,12 +323,16 @@ void HeapwatchConnector::setRestApiAuthToken(const char* token) {
 }
 
 void HeapwatchConnector::setCoreDumpBuildIdentifier(const char* build_identifier) {
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     if (build_identifier == nullptr) {
         g_coredump_build_identifier[0] = '\0';
         return;
     }
     snprintf(g_coredump_build_identifier, sizeof(g_coredump_build_identifier), "%s",
              build_identifier);
+#else
+    (void)build_identifier;
+#endif
 }
 
 void HeapwatchConnector::setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
@@ -382,6 +347,7 @@ void HeapwatchConnector::setBootCycleContext(uint32_t boot_cycle, uint32_t crash
     }
 }
 
+#if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
 static const char* severity_to_string(HeapwatchConnectorSeverity severity) {
     switch (severity) {
         case HEAPWATCH_SEVERITY_DEBUG: return "debug";
@@ -400,7 +366,7 @@ static void json_escape_string(const char* input, char* output, size_t output_le
 
     size_t out_idx = 0;
     for (size_t i = 0; input[i] != '\0' && out_idx + 1 < output_len; ++i) {
-        const unsigned char c = static_cast<unsigned char>(input[i]);
+        const uint8_t c = static_cast<uint8_t>(input[i]);
         if ((c == '\\' || c == '"') && out_idx + 2 < output_len) {
             output[out_idx++] = '\\';
             output[out_idx++] = static_cast<char>(c);
@@ -419,6 +385,7 @@ static void json_escape_string(const char* input, char* output, size_t output_le
     }
     output[out_idx] = '\0';
 }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 
 bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
                                            const char* message,
@@ -473,14 +440,14 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
     }
     if (has_core) {
         optional_json_len += snprintf(g_scratch->optional + optional_json_len,
-                                      sizeof(g_scratch->optional) - optional_json_len, ",\"core\":%d",
+                                      sizeof(g_scratch->optional) - optional_json_len, ",\"core\":%" PRId32,
                                       context->core);
     }
 
-    const int written = snprintf(
+    const int32_t written = snprintf(
         out, out_len,
-        "{\"tsms\":%llu,\"utms\":%llu%s,\"severity\":\"%s\",\"message\":\"%s\"}",
-        static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
+        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "%s,\"severity\":\"%s\",\"message\":\"%s\"}",
+        static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
         g_scratch->optional, severity_to_string(severity), g_scratch->escaped_message);
 
     return written > 0 && static_cast<size_t>(written) < out_len;
@@ -532,17 +499,19 @@ bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payloa
         return false;
     }
 
-    CoreDumpPayload* payload = static_cast<CoreDumpPayload*>(calloc(1, sizeof(CoreDumpPayload)));
-    if (payload == nullptr) {
+    heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+    if (ws == nullptr || ws->coredump_busy) {
         return false;
     }
 
-    payload->payload_len = payload_len;
-    memcpy(payload->payload, base64_payload, payload_len);
-    payload->payload[payload_len] = '\0';
+    ws->coredump.payload_len = payload_len;
+    memcpy(ws->coredump.payload, base64_payload, payload_len);
+    ws->coredump.payload[payload_len] = '\0';
+    ws->coredump_busy = true;
+    CoreDumpPayload* payload = &ws->coredump;
 
     if (xQueueSend(g_coredump_queue, &payload, 0) != pdTRUE) {
-        free(payload);
+        ws->coredump_busy = false;
         return false;
     }
     return true;
@@ -584,10 +553,10 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     constexpr size_t MIN_HEAP_FOR_STREAMING_UPLOAD = 12 * 1024;
     if (largest_block < 4096 || free_heap < MIN_HEAP_FOR_STREAMING_UPLOAD) {
         ESP_LOGW(TAG,
-                 "Skipping coredump upload at boot: dump=%u bytes, free_heap=%u, largest_block=%u "
+                 "Skipping coredump upload at boot: dump=%" PRIu32 " bytes, free_heap=%" PRIu32 ", largest_block=%" PRIu32 " "
                  "(not enough headroom for TLS streaming)",
-                 static_cast<unsigned>(dump_size), static_cast<unsigned>(free_heap),
-                 static_cast<unsigned>(largest_block));
+                 static_cast<uint32_t>(dump_size), static_cast<uint32_t>(free_heap),
+                 static_cast<uint32_t>(largest_block));
         return false;
     }
 
@@ -622,8 +591,8 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     }
 
     char timestamp_header[32] = {};
-    snprintf(timestamp_header, sizeof(timestamp_header), "%lld",
-             static_cast<long long>(time(nullptr)));
+    snprintf(timestamp_header, sizeof(timestamp_header), "%" PRId64,
+             static_cast<int64_t>(time(nullptr)));
 
     esp_http_client_set_method(http_client, HTTP_METHOD_POST);
     esp_http_client_set_header(http_client, "Content-Type", "application/octet-stream");
@@ -633,14 +602,14 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     esp_http_client_set_header(http_client, "Authorization", g_coredump_auth_token);
 
     char boot_cycle_header[16] = {};
-    snprintf(boot_cycle_header, sizeof(boot_cycle_header), "%lu",
-             static_cast<unsigned long>(g_boot_cycle));
+    snprintf(boot_cycle_header, sizeof(boot_cycle_header), "%" PRIu32,
+             static_cast<uint32_t>(g_boot_cycle));
     esp_http_client_set_header(http_client, "X-Boot-Cycle", boot_cycle_header);
 
     if (g_crash_boot_cycle > 0) {
         char crash_boot_cycle_header[16] = {};
-        snprintf(crash_boot_cycle_header, sizeof(crash_boot_cycle_header), "%lu",
-                 static_cast<unsigned long>(g_crash_boot_cycle));
+        snprintf(crash_boot_cycle_header, sizeof(crash_boot_cycle_header), "%" PRIu32,
+                 static_cast<uint32_t>(g_crash_boot_cycle));
         esp_http_client_set_header(http_client, "X-Crash-Boot-Cycle", crash_boot_cycle_header);
     }
 
@@ -662,18 +631,18 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
         const esp_err_t read_result =
             esp_partition_read(coredump_partition, partition_offset + sent, chunk, to_read);
         if (read_result != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to read core dump chunk at +%u: %s", static_cast<unsigned>(sent),
+            ESP_LOGE(TAG, "Failed to read core dump chunk at +%" PRIu32 ": %s", static_cast<uint32_t>(sent),
                      esp_err_to_name(read_result));
             esp_http_client_close(http_client);
             esp_http_client_cleanup(http_client);
             return false;
         }
 
-        const int written = esp_http_client_write(http_client, reinterpret_cast<const char*>(chunk),
+        const int32_t written = esp_http_client_write(http_client, reinterpret_cast<const char*>(chunk),
                                                     static_cast<int>(to_read));
         if (written < 0 || static_cast<size_t>(written) != to_read) {
-            ESP_LOGW(TAG, "Core dump HTTP write failed at +%u (wrote %d of %u). Caller will retry.",
-                     static_cast<unsigned>(sent), written, static_cast<unsigned>(to_read));
+            ESP_LOGW(TAG, "Core dump HTTP write failed at +%" PRIu32 " (wrote %" PRId32 " of %" PRIu32 "). Caller will retry.",
+                     static_cast<uint32_t>(sent), written, static_cast<uint32_t>(to_read));
             esp_http_client_close(http_client);
             esp_http_client_cleanup(http_client);
             return false;
@@ -681,24 +650,24 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
         sent += to_read;
     }
 
-    const int content_length = esp_http_client_fetch_headers(http_client);
-    const int status_code = esp_http_client_get_status_code(http_client);
+    const int32_t content_length = esp_http_client_fetch_headers(http_client);
+    const int32_t status_code = esp_http_client_get_status_code(http_client);
     char response_preview[128] = {};
-    const int response_size =
+    const int32_t response_size =
         esp_http_client_read(http_client, response_preview, sizeof(response_preview) - 1);
     if (response_size > 0) {
         response_preview[response_size] = '\0';
-        ESP_LOGI(TAG, "Core dump upload success: status=%d len=%d body='%s'", status_code,
+        ESP_LOGI(TAG, "Core dump upload success: status=%" PRId32 " len=%" PRId32 " body='%s'", status_code,
                  content_length, response_preview);
     } else {
-        ESP_LOGI(TAG, "Core dump upload success: status=%d len=%d", status_code, content_length);
+        ESP_LOGI(TAG, "Core dump upload success: status=%" PRId32 " len=%" PRId32, status_code, content_length);
     }
 
     esp_http_client_close(http_client);
     esp_http_client_cleanup(http_client);
 
     if (status_code < 200 || status_code >= 300) {
-        ESP_LOGW(TAG, "Core dump upload got non-2xx status %d. Caller will retry.", status_code);
+        ESP_LOGW(TAG, "Core dump upload got non-2xx status %" PRId32 ". Caller will retry.", status_code);
         return false;
     }
 
@@ -720,8 +689,8 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
         g_crash_boot_cycle = 0;
     }
 
-    ESP_LOGI(TAG, "Core dump upload completed (%u bytes raw, streamed) and coredump was erased from flash.",
-             static_cast<unsigned>(dump_size));
+    ESP_LOGI(TAG, "Core dump upload completed (%" PRIu32 " bytes raw, streamed) and coredump was erased from flash.",
+             static_cast<uint32_t>(dump_size));
     return true;
 #endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 }
@@ -741,14 +710,14 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,\"%s\":%lld}",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name,
-             static_cast<long long>(value));
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%" PRId64 "}",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
+             static_cast<int64_t>(value));
 #else
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "tsms=%llu|utms=%llu|%s=%lld",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name,
-             static_cast<long long>(value));
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%" PRId64,
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
+             static_cast<int64_t>(value));
 #endif
 
     heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
@@ -769,18 +738,18 @@ void HeapwatchConnector::queueParameter(const char* name, double value) {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,\"%s\":%.6f}",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%.6f}",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
 #else
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "tsms=%llu|utms=%llu|%s=%.6f",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms), name, value);
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%.6f",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
 #endif
 
     heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
 }
 
-void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
+void HeapwatchConnector::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
 #if !CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
     (void)eventTypeId;
     (void)boot_cycle;
@@ -803,14 +772,14 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,\"event_type_id\":%d,\"boot_cycle\":%ld}",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             eventTypeId, static_cast<long>(boot_cycle));
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"event_type_id\":%" PRId32 ",\"boot_cycle\":%" PRId32 "}",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             eventTypeId, static_cast<int32_t>(boot_cycle));
 #else
     snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
-             "tsms=%llu|utms=%llu|event_type_id=%d|boot_cycle=%ld",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             eventTypeId, static_cast<long>(boot_cycle));
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|event_type_id=%" PRId32 "|boot_cycle=%" PRId32,
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             eventTypeId, static_cast<int32_t>(boot_cycle));
 #endif
 
     const bool fw_ota_event =
@@ -823,6 +792,12 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
 
 void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* phase, int64_t bytes,
                                           int64_t total) {
+#if !CONFIG_HEAPWATCH_ENABLE_OTA
+    (void)ota_session_id;
+    (void)phase;
+    (void)bytes;
+    (void)total;
+#else
     if (!g_infrastructure_ready || g_small_queue == nullptr || phase == nullptr || phase[0] == '\0') {
         return;
     }
@@ -839,20 +814,21 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,\"ota_session_id\":%lld,\"phase\":\"%s\",\"bytes\":%lld,"
-             "\"total\":%lld}",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             static_cast<long long>(ota_session_id), phase, static_cast<long long>(bytes),
-             static_cast<long long>(total));
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"ota_session_id\":%" PRId64 ",\"phase\":\"%s\",\"bytes\":%" PRId64 ","
+             "\"total\":%" PRId64 "}",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
+             static_cast<int64_t>(total));
 #else
     snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
-             "tsms=%llu|utms=%llu|ota_session_id=%lld|phase=%s|bytes=%lld|total=%lld",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             static_cast<long long>(ota_session_id), phase, static_cast<long long>(bytes),
-             static_cast<long long>(total));
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|ota_session_id=%" PRId64 "|phase=%s|bytes=%" PRId64 "|total=%" PRId64,
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
+             static_cast<int64_t>(total));
 #endif
 
     heapwatch_outbound_send(g_small_queue, &g_scratch->small, OTA_MQTT_QUEUE_WAIT);
+#endif  /* CONFIG_HEAPWATCH_ENABLE_OTA */
 }
 
 void HeapwatchConnector::queueSpecs() {
@@ -878,13 +854,13 @@ void HeapwatchConnector::queueSpecs() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,\"boot_cycle\":%lu,%s",
-             static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms),
-             static_cast<unsigned long>(g_boot_cycle), g_scratch->specs_body + 1);
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s",
+             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             static_cast<uint32_t>(g_boot_cycle), g_scratch->specs_body + 1);
 #else
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "tsms=%llu|utms=%llu|boot_cycle=%lu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), static_cast<unsigned long>(g_boot_cycle),
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", static_cast<uint64_t>(tsms),
+             static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
              g_scratch->specs_body + 1);
 #endif
 
@@ -914,12 +890,12 @@ void HeapwatchConnector::queueNetwork() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
+             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
 #else
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "tsms=%llu|utms=%llu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
+             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
 #endif
 
     heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
@@ -948,12 +924,12 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "{\"tsms\":%llu,\"utms\":%llu,%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
+             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
+             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
 #else
     snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
-             "tsms=%llu|utms=%llu|%s", static_cast<unsigned long long>(tsms),
-             static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
+             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
+             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
 #endif
 
     heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
@@ -1032,9 +1008,13 @@ HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {
         g_small_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_small_queue)) : 0;
     status.large_queue_depth =
         g_large_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_large_queue)) : 0;
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     status.coredump_queue_depth =
         g_coredump_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_coredump_queue))
                                     : 0;
+#else
+    status.coredump_queue_depth = 0;
+#endif
     return status;
 }
 
@@ -1100,7 +1080,11 @@ void heapwatch_outbound_wait_for_work() {
     xSemaphoreGive(g_outbound_sem);
 }
 
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
 QueueHandle_t heapwatch_get_coredump_queue() { return g_coredump_queue; }
+#else
+QueueHandle_t heapwatch_get_coredump_queue() { return nullptr; }
+#endif
 const char* heapwatch_get_device_uid() { return g_device_uid; }
 const char* heapwatch_get_tenant_slug() { return g_tenant_slug; }
 const char* heapwatch_get_broker_uri() { return g_broker_uri; }

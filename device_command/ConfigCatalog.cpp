@@ -1,6 +1,7 @@
 #include "ConfigCatalog.h"
 
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -74,7 +75,7 @@ void uploadConfigCatalog(bool force) {
     cJSON_free(body);
 
     g_uploaded_this_boot = true;
-    ESP_LOGI(TAG, "Config catalog streamed (%u bytes)", static_cast<unsigned>(body_len));
+    ESP_LOGI(TAG, "Config catalog streamed (%" PRIu32 " bytes)", static_cast<uint32_t>(body_len));
 }
 
 void requestConfigCatalogUpload(bool force) {

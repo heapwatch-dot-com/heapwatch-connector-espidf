@@ -139,8 +139,9 @@ void hook_esp_netif(esp_netif_t* netif) {
         lwip->linkoutput = &hook_linkoutput;
     }
     slot->hooked = true;
-    ESP_LOGI(TAG, "hooked if_key=%s input=%d linkoutput=%d", key, slot->orig_input != nullptr,
-             slot->orig_linkoutput != nullptr);
+    ESP_LOGI(TAG, "hooked if_key=%s input=%" PRId32 " linkoutput=%" PRId32, key,
+             static_cast<int32_t>(slot->orig_input != nullptr),
+             static_cast<int32_t>(slot->orig_linkoutput != nullptr));
 }
 
 void hook_known_netifs() {
@@ -161,7 +162,7 @@ void start() {
     }
     g_started = true;
     hook_known_netifs();
-    ESP_LOGI(TAG, "start: input/linkoutput hooks (slots=%u)", static_cast<unsigned>(g_slot_count));
+    ESP_LOGI(TAG, "start: input/linkoutput hooks (slots=%" PRIu32 ")", static_cast<uint32_t>(g_slot_count));
 #else
     ESP_LOGI(TAG, "start: NETIF_TRAFFIC compiled OUT");
     (void)g_started;
@@ -193,7 +194,7 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
         if (!heapwatch::normalizeDynamicSegment(slot.key, slug_seg, sizeof(slug_seg))) {
             continue;
         }
-        int written = 0;
+        int32_t written = 0;
         if (json) {
             written = snprintf(out + pos, out_len - pos,
                                ",\"dynamic.net.%s.rx_bytes\":%" PRIu64 ",\"dynamic.net.%s.tx_bytes\":%" PRIu64,
@@ -232,7 +233,7 @@ bool appendRxTxJsonFields(char* out, size_t out_len, size_t* offset, const char*
     if (*offset >= out_len) {
         return false;
     }
-    const int written =
+    const int32_t written =
         snprintf(out + *offset, out_len - *offset, ",\"rx_bytes\":%" PRIu64 ",\"tx_bytes\":%" PRIu64,
                  rx, tx);
     if (written < 0 || static_cast<size_t>(written) >= out_len - *offset) {

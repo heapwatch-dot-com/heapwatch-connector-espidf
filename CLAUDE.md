@@ -76,9 +76,20 @@ Workspace context: `heapwatch-firmware/CLAUDE.md` (Lysos `ws`/`rws`, build rules
 - you MUST keep in SYNC an .md file called PUBLIC_API.md - which contains a TABLE of every single
 function if the public API and its description
 
+### Types
+
+- never use old school C types that have no size specification that also vary between architectures like
+"unsigned", "long" - you have no idea how this will switch between devices and architectures
+- ALWAYS use fixed size types like "uint8_t" or "int64_t" etc. UNLESS a third-party (not our code) consumer
+already expects these old-school types - in that case we MUST match it to be compatible
+
 ### Consts
 
 - any const or constexpr MUST be named as FOOBAR_THINGY (uppercase)
+
+### Namespaces
+
+- namespaces MUST use naming like this "Heapwatch", "Heapwatch::Connectors", "Heapwatch::Connectors::BluetoothLe" etc.
 
 ### ESP-IDF Log Tags
 

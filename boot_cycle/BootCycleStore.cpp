@@ -1,6 +1,7 @@
 #include "BootCycleStore.h"
 
 #include <cstdint>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -35,8 +36,8 @@ bool onBoot(State* out) {
 
     if (esp_reset_reason() == ESP_RST_PANIC && last_crash_boot_cycle == 0) {
         last_crash_boot_cycle = boot_cycle;
-        ESP_LOGW(TAG, "PANIC boot: attributed crash to boot_cycle=%lu",
-                 static_cast<unsigned long>(boot_cycle));
+        ESP_LOGW(TAG, "PANIC boot: attributed crash to boot_cycle=%" PRIu32,
+                 static_cast<uint32_t>(boot_cycle));
     }
 
     boot_cycle++;
@@ -59,9 +60,9 @@ bool onBoot(State* out) {
     out->boot_cycle = boot_cycle;
     out->last_crash_boot_cycle = last_crash_boot_cycle;
 
-    ESP_LOGI(TAG, "boot_cycle=%lu last_crash_boot_cycle=%lu",
-             static_cast<unsigned long>(out->boot_cycle),
-             static_cast<unsigned long>(out->last_crash_boot_cycle));
+    ESP_LOGI(TAG, "boot_cycle=%" PRIu32 " last_crash_boot_cycle=%" PRIu32,
+             static_cast<uint32_t>(out->boot_cycle),
+             static_cast<uint32_t>(out->last_crash_boot_cycle));
     return true;
 }
 
@@ -119,9 +120,9 @@ bool resumeFromServerLast(uint32_t server_last_boot_cycle, State* in_out) {
         return false;
     }
 
-    ESP_LOGW(TAG, "Resumed boot_cycle from server last=%lu -> %lu",
-             static_cast<unsigned long>(server_last_boot_cycle),
-             static_cast<unsigned long>(resumed));
+    ESP_LOGW(TAG, "Resumed boot_cycle from server last=%" PRIu32 " -> %" PRIu32,
+             static_cast<uint32_t>(server_last_boot_cycle),
+             static_cast<uint32_t>(resumed));
     in_out->boot_cycle = resumed;
     return true;
 }

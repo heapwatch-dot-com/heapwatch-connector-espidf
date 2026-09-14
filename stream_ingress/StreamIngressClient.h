@@ -17,6 +17,9 @@ void init();
 
 void shutdown();
 
+/** True when hw_streaming is not running (never started, or stopped). */
+bool workerExited();
+
 /** Request opening a mux TCP stream to backend-stream-ingress (async). Enables log capture. */
 void requestOpen();
 

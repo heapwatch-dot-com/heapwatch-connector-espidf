@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -12,6 +13,7 @@
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "../heapwatch_connector/heapwatch_freertos_alloc.h"
+#include "../memory_manager/HeapwatchMemoryManager.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
 #include "../heapwatch_endpoints.h"
 #include "DeviceCommandHandler.h"
@@ -21,28 +23,13 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "HwCmd";
-constexpr size_t INBOUND_QUEUE_DEPTH = 8;
-constexpr size_t TOPIC_MAX = 160;
-/** Matches CONFIG_MQTT_BUFFER_SIZE on client firmware projects. */
-constexpr size_t PAYLOAD_MAX = 1024;
 constexpr uint32_t WORKER_STACK_BYTES = 10240;
 
-enum class InboundKind : uint8_t {
-    MqttCommand = 0,
-    CredentialRotation = 1,
-    Stop = 2,
-};
+QueueHandle_t commandQueue() {
+    heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+    return ws != nullptr ? ws->command_inbound_queue : nullptr;
+}
 
-struct CommandInboundMessage {
-    InboundKind kind = InboundKind::MqttCommand;
-    uint8_t mqtt_retain = 0;
-    uint16_t topic_len = 0;
-    uint16_t payload_len = 0;
-    char topic[TOPIC_MAX] = {};
-    char payload[PAYLOAD_MAX] = {};
-};
-
-QueueHandle_t g_inbound_queue = nullptr;
 volatile bool g_worker_exited = true;
 
 void executeCredentialRotation() {
@@ -82,7 +69,7 @@ void executeCredentialRotation() {
 void commandWorkerTask(void* /*arg*/) {
     while (true) {
         CommandInboundMessage msg = {};
-        if (xQueueReceive(g_inbound_queue, &msg, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(commandQueue(), &msg, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
@@ -104,13 +91,11 @@ void commandWorkerTask(void* /*arg*/) {
 }  // namespace
 
 void initCommandWorker() {
-    if (g_inbound_queue != nullptr) {
+    if (!g_worker_exited) {
         return;
     }
-
-    g_inbound_queue = heapwatch_queue_create(INBOUND_QUEUE_DEPTH, sizeof(CommandInboundMessage));
-    if (g_inbound_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create inbound command queue");
+    if (commandQueue() == nullptr) {
+        ESP_LOGE(TAG, "Command inbound queue missing (working set not inited)");
         return;
     }
 
@@ -118,20 +103,19 @@ void initCommandWorker() {
     if (heapwatch_task_create_dram(commandWorkerTask, "hw_command", WORKER_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
                                   nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hw_command task");
-        heapwatch_queue_delete(g_inbound_queue);
-        g_inbound_queue = nullptr;
         g_worker_exited = true;
     }
 }
 
 void shutdownCommandWorker() {
-    if (g_inbound_queue == nullptr) {
+    QueueHandle_t queue = commandQueue();
+    if (queue == nullptr || g_worker_exited) {
         return;
     }
 
     CommandInboundMessage msg = {};
     msg.kind = InboundKind::Stop;
-    (void)xQueueSend(g_inbound_queue, &msg, pdMS_TO_TICKS(200));
+    (void)xQueueSend(queue, &msg, pdMS_TO_TICKS(200));
 
     // Generous: a queued command may still be doing HTTP (credential rotation).
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
@@ -140,21 +124,21 @@ void shutdownCommandWorker() {
     }
     if (!g_worker_exited) {
         ESP_LOGE(TAG, "hw_command did not stop in time — leaving it running");
-        return;
     }
-
-    heapwatch_queue_delete(g_inbound_queue);
-    g_inbound_queue = nullptr;
 }
 
+bool commandWorkerExited() { return g_worker_exited; }
+
 bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload, size_t payload_len,
-                        int mqtt_retain) {
-    if (g_inbound_queue == nullptr || topic == nullptr || payload == nullptr) {
+                        int32_t mqtt_retain) {
+    QueueHandle_t queue = commandQueue();
+    if (queue == nullptr || topic == nullptr || payload == nullptr) {
         return false;
     }
-    if (topic_len == 0 || topic_len >= TOPIC_MAX || payload_len >= PAYLOAD_MAX) {
-        ESP_LOGW(TAG, "Dropping oversize MQTT command (topic_len=%u payload_len=%u)",
-                 static_cast<unsigned>(topic_len), static_cast<unsigned>(payload_len));
+    if (topic_len == 0 || topic_len >= HEAPWATCH_COMMAND_TOPIC_MAX ||
+        payload_len >= HEAPWATCH_COMMAND_PAYLOAD_MAX) {
+        ESP_LOGW(TAG, "Dropping oversize MQTT command (topic_len=%" PRIu32 " payload_len=%" PRIu32 ")",
+                 static_cast<uint32_t>(topic_len), static_cast<uint32_t>(payload_len));
         return false;
     }
 
@@ -168,7 +152,7 @@ bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload
     std::memcpy(msg.payload, payload, payload_len);
     msg.payload[payload_len] = '\0';
 
-    if (xQueueSend(g_inbound_queue, &msg, 0) != pdTRUE) {
+    if (xQueueSend(queue, &msg, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Inbound command queue full — dropping command");
         return false;
     }
@@ -177,13 +161,14 @@ bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload
 }
 
 bool enqueueCredentialRotation() {
-    if (g_inbound_queue == nullptr) {
+    QueueHandle_t queue = commandQueue();
+    if (queue == nullptr) {
         return false;
     }
 
     CommandInboundMessage msg = {};
     msg.kind = InboundKind::CredentialRotation;
-    if (xQueueSend(g_inbound_queue, &msg, 0) != pdTRUE) {
+    if (xQueueSend(queue, &msg, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Inbound command queue full — dropping credential rotation");
         return false;
     }

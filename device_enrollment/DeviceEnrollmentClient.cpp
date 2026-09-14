@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -84,7 +85,7 @@ bool http_request(const char* url, esp_http_client_method_t method, const char* 
     }
 
     const esp_err_t err = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
+    const int32_t status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
@@ -93,7 +94,7 @@ bool http_request(const char* url, esp_http_client_method_t method, const char* 
     }
 
     if (status < 200 || status >= 300) {
-        ESP_LOGE(TAG, "HTTP status %d body=%s", status, response->data);
+        ESP_LOGE(TAG, "HTTP status %" PRId32 " body=%s", status, response->data);
         return false;
     }
 
@@ -321,8 +322,8 @@ bool enroll(const char* api_base, const char* enrollment_key, const char* claime
     cJSON_Delete(parsed);
 
     if (ok) {
-        ESP_LOGI(TAG, "Enrolled device %s status=%d", device_uid_out,
-                 status_out != nullptr ? static_cast<int>(*status_out) : -1);
+        ESP_LOGI(TAG, "Enrolled device %s status=%" PRId32, device_uid_out,
+                 status_out != nullptr ? static_cast<int32_t>(*status_out) : -1);
     }
 
     return ok;
@@ -485,9 +486,9 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                     updateIndicatorForEnrollmentStatus(enroll_status);
 
                     if (is_terminal_failure(enroll_status)) {
-                        ESP_LOGE(TAG, "Enrollment terminal status %d for %s, retrying in %u ms",
-                                 static_cast<int>(enroll_status), device_uid,
-                                 static_cast<unsigned>(poll_interval_ms));
+                        ESP_LOGE(TAG, "Enrollment terminal status %" PRId32 " for %s, retrying in %" PRIu32 " ms",
+                                 static_cast<int32_t>(enroll_status), device_uid,
+                                 static_cast<uint32_t>(poll_interval_ms));
                         vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
                         continue;
                     }
@@ -498,8 +499,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                     break;
                 }
 
-                ESP_LOGW(TAG, "Enrollment submit failed, retrying in %u ms",
-                         static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGW(TAG, "Enrollment submit failed, retrying in %" PRIu32 " ms",
+                         static_cast<uint32_t>(poll_interval_ms));
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
                 setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
 #endif
@@ -520,9 +521,9 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 break;
             }
             if (is_terminal_failure(status)) {
-                ESP_LOGE(TAG, "Enrollment terminal status %d for %s, retrying in %u ms",
-                         static_cast<int>(status), device_uid,
-                         static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGE(TAG, "Enrollment terminal status %" PRId32 " for %s, retrying in %" PRIu32 " ms",
+                         static_cast<int32_t>(status), device_uid,
+                         static_cast<uint32_t>(poll_interval_ms));
                 heapwatch::device_credentials::clearPendingDeviceUid();
                 vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
                 break;
@@ -533,22 +534,22 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 if (fetchAndSaveProvisioning(api_base, enrollment_key, device_uid, out)) {
                     return true;
                 }
-                ESP_LOGW(TAG, "Provisioning fetch failed for provisioned %s, retrying in %u ms",
-                         device_uid, static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGW(TAG, "Provisioning fetch failed for provisioned %s, retrying in %" PRIu32 " ms",
+                         device_uid, static_cast<uint32_t>(poll_interval_ms));
                 vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
                 continue;
             }
             if (status == Status::kError) {
-                ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying in %u ms", device_uid,
-                         static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying in %" PRIu32 " ms", device_uid,
+                         static_cast<uint32_t>(poll_interval_ms));
             } else if (is_waiting_for_operator(status)) {
-                ESP_LOGI(TAG, "Enrollment awaiting operator for %s (%d), waiting %u ms",
-                         device_uid, static_cast<int>(status),
-                         static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGI(TAG, "Enrollment awaiting operator for %s (%" PRId32 "), waiting %" PRIu32 " ms",
+                         device_uid, static_cast<int32_t>(status),
+                         static_cast<uint32_t>(poll_interval_ms));
             } else {
-                ESP_LOGI(TAG, "Enrollment status %d for %s, waiting %u ms",
-                         static_cast<int>(status), device_uid,
-                         static_cast<unsigned>(poll_interval_ms));
+                ESP_LOGI(TAG, "Enrollment status %" PRId32 " for %s, waiting %" PRIu32 " ms",
+                         static_cast<int32_t>(status), device_uid,
+                         static_cast<uint32_t>(poll_interval_ms));
             }
 
             vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
@@ -563,8 +564,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 return true;
             }
 
-            ESP_LOGW(TAG, "Provisioning fetch/save/confirm failed for %s, retrying in %u ms",
-                     device_uid, static_cast<unsigned>(poll_interval_ms));
+            ESP_LOGW(TAG, "Provisioning fetch/save/confirm failed for %s, retrying in %" PRIu32 " ms",
+                     device_uid, static_cast<uint32_t>(poll_interval_ms));
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
             setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
 #endif

@@ -20,7 +20,7 @@ void publishFullSync();
 bool buildPayload(char* out, size_t out_len);
 
 /** Queue a BLE lifecycle event and mirror to ble_events stream when active. */
-void emitBleEvent(int event_id, const char* detail, const char* peer_addr);
+void emitBleEvent(int32_t event_id, const char* detail, const char* peer_addr);
 
 /**
  * Run bluetooth/scan: ensure TCP, stream peers to ble_scan, publish completion marker.

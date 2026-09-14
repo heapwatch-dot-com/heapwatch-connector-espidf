@@ -15,8 +15,8 @@ struct FieldSchema {
     bool secret;
     bool patchable;
     const char* unit;
-    int min_value;
-    int max_value;
+    int32_t min_value;
+    int32_t max_value;
 };
 
 /** Load NVS-backed connector settings and apply runtime defaults. Call after nvs_flash_init. */

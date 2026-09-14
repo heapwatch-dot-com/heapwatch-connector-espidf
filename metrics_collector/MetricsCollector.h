@@ -15,6 +15,12 @@
 
 #pragma once
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "sdkconfig.h"
+
+#include <cstdint>
+
 /**
  * @brief Metrics Collector Module
  *
@@ -27,6 +33,22 @@
  */
 
 namespace heapwatch::metrics_collector {
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+struct TaskStats {
+    char name[20];
+    TaskHandle_t handle;
+    const uint8_t* stack_lowest;
+    const uint8_t* stack_highest;
+    uint32_t stack_total_bytes;
+    uint32_t stack_current_bytes;
+    uint32_t stack_min_bytes;
+    uint32_t stack_max_bytes;
+    uint32_t stack_peak_bytes;
+    uint64_t runtime;
+    bool stack_range_seeded;
+};
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
 void init();
 

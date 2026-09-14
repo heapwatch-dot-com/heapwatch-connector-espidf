@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -71,7 +72,7 @@ bool authorized_post(const char* url,
     esp_http_client_set_post_field(client, "{}", 2);
 
     const esp_err_t err = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
+    const int32_t status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
@@ -80,7 +81,7 @@ bool authorized_post(const char* url,
     }
 
     if (status < 200 || status >= 300) {
-        ESP_LOGE(TAG, "HTTP status %d body=%s", status, response->data);
+        ESP_LOGE(TAG, "HTTP status %" PRId32 " body=%s", status, response->data);
         return false;
     }
 

@@ -2,6 +2,7 @@
 
 #include "DynamicParameterSegment.h"
 
+#include <cstdint>
 #include <cstring>
 
 namespace heapwatch {
@@ -19,9 +20,9 @@ bool normalizeDynamicSegment(const char* in, char* out, size_t out_size) {
     bool last_us = false;
 
     for (size_t i = 0; in[i] != '\0' && t + 1 < sizeof(tmp); ++i) {
-        unsigned char c = static_cast<unsigned char>(in[i]);
+        uint8_t c = static_cast<uint8_t>(in[i]);
         if (c >= 'A' && c <= 'Z') {
-            c = static_cast<unsigned char>(c - 'A' + 'a');
+            c = static_cast<uint8_t>(c - 'A' + 'a');
         }
 
         const bool alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');

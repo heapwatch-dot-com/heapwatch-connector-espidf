@@ -71,7 +71,7 @@ void heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction action);
 void heapwatch_dispatcher_disarm_shutdown(void);
 
 /** Bytes waiting in the esp-mqtt outbox (0 when disconnected). */
-int heapwatch_dispatcher_get_outbox_size(void);
+int32_t heapwatch_dispatcher_get_outbox_size(void);
 
 /**
  * @brief Arm shutdown: block new publishes and reboot once the outbox is empty.

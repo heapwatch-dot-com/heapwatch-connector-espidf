@@ -14,6 +14,7 @@
 //
 
 #include "MetricsCollector.h"
+
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -29,6 +30,7 @@
 #include "freertos/task.h"
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "../heapwatch_connector/heapwatch_freertos_alloc.h"
+#include "../memory_manager/HeapwatchMemoryManager.h"
 #include "../heapwatch_connector/DynamicParameterSegment.h"
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
 #include "../heapwatch_dispatcher/HeapwatchDispatcher.h"
@@ -46,24 +48,6 @@ uint64_t g_start_time_us = 0;
 char* g_payload_buf = nullptr;
 MqttMessage* g_mqtt_enqueue_msg = nullptr;
 
-constexpr size_t MAX_TASK_ROWS = 48;
-
-// One row per task name, carried across telemetry cycles.
-struct TaskStats {
-    char name[20];
-    TaskHandle_t handle;
-    const uint8_t* stack_lowest;
-    const uint8_t* stack_highest;
-    uint32_t stack_total_bytes;
-    uint32_t stack_current_bytes;
-    uint32_t stack_min_bytes;
-    uint32_t stack_max_bytes;
-    uint32_t stack_peak_bytes;
-    uint64_t runtime;
-    bool stack_range_seeded;
-};
-
-
 constexpr size_t MAX_CORES_SUPPORTED = 4;
 
 struct CpuUsageState {
@@ -71,13 +55,13 @@ struct CpuUsageState {
     uint64_t prev_idle_runtime[MAX_CORES_SUPPORTED] = {};
     bool initialized = false;
 };
+CpuUsageState g_cpu_usage_state;
 
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
 TaskStats* g_task_stats = nullptr;
 size_t g_task_stats_count = 0;
 bool g_task_table_full_logged = false;
-CpuUsageState g_cpu_usage_state;
-
-uint8_t g_dirty_task_stack_idx[MAX_TASK_ROWS];
+uint8_t g_dirty_task_stack_idx[HEAPWATCH_MAX_TASK_ROWS];
 uint8_t g_dirty_task_stack_max_count = 0;
 
 struct TaskStackSample {
@@ -153,10 +137,10 @@ TaskStats* acquire_task_row(const char* task_name) {
         }
     }
 
-    if (g_task_stats_count >= MAX_TASK_ROWS) {
+    if (g_task_stats_count >= HEAPWATCH_MAX_TASK_ROWS) {
         if (!g_task_table_full_logged) {
-            ESP_LOGW(TAG, "task stats table full (%u rows) — '%s' is not reported",
-                     static_cast<unsigned>(MAX_TASK_ROWS), name);
+            ESP_LOGW(TAG, "task stats table full (%" PRIu32 " rows) — '%s' is not reported",
+                     static_cast<uint32_t>(HEAPWATCH_MAX_TASK_ROWS), name);
             g_task_table_full_logged = true;
         }
         return nullptr;
@@ -167,6 +151,7 @@ TaskStats* acquire_task_row(const char* task_name) {
     strncpy(row.name, name, sizeof(row.name) - 1);
     return &row;
 }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
 void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     g_mqtt_enqueue_msg->type = type;
@@ -187,14 +172,14 @@ static_assert(HEAPWATCH_MAX_PAYLOAD_SIZE >= HEAPWATCH_LARGE_PAYLOAD_SIZE,
 // LargeMqttMessage.payload is HEAPWATCH_LARGE_PAYLOAD_SIZE and is filled with snprintf,
 // so the JSON string (including the closer) must be at most that size minus the NUL.
 constexpr size_t LARGE_JSON_MAX = HEAPWATCH_LARGE_PAYLOAD_SIZE - 1;
-constexpr int PARAMETER_JSON_CLOSE_LEN = 1;   // }
+constexpr int32_t PARAMETER_JSON_CLOSE_LEN = 1;   // }
 
-bool append_json_chunk(int* payload_len, const char* chunk, int chunk_len, int close_len) {
+bool append_json_chunk(int32_t* payload_len, const char* chunk, int32_t chunk_len, int32_t close_len) {
     if (payload_len == nullptr || chunk == nullptr || chunk_len <= 0) {
         return false;
     }
     if (*payload_len < 0
-        || *payload_len + chunk_len + close_len > static_cast<int>(LARGE_JSON_MAX)) {
+        || *payload_len + chunk_len + close_len > static_cast<int32_t>(LARGE_JSON_MAX)) {
         return false;
     }
     memcpy(g_payload_buf + *payload_len, chunk, static_cast<size_t>(chunk_len));
@@ -203,7 +188,7 @@ bool append_json_chunk(int* payload_len, const char* chunk, int chunk_len, int c
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-constexpr int TASKS_JSON_CLOSE_LEN = 2;       // ]}
+constexpr int32_t TASKS_JSON_CLOSE_LEN = 2;       // ]}
 
 constexpr size_t TASKS_JSON_HEADER_MAX =
     sizeof("{\"tsms\":18446744073709551615,\"utms\":18446744073709551615,\"tasks\":[") - 1;
@@ -225,7 +210,7 @@ static_assert(MAX_TASKS_PER_PUBLISH >= 1, "large MQTT slot cannot hold a single 
 
 constexpr size_t TASK_JSON_ROW_BUF = TASK_JSON_ROW_MAX + 8;
 
-int start_tasks_payload(uint64_t tsms, uint64_t utms) {
+int32_t start_tasks_payload(uint64_t tsms, uint64_t utms) {
     return snprintf(
         g_payload_buf,
         HEAPWATCH_LARGE_PAYLOAD_SIZE,
@@ -234,12 +219,12 @@ int start_tasks_payload(uint64_t tsms, uint64_t utms) {
         utms);
 }
 
-void close_and_enqueue_tasks(int* payload_len) {
+void close_and_enqueue_tasks(int32_t* payload_len) {
     if (payload_len == nullptr || *payload_len <= 0) {
         return;
     }
 
-    if (*payload_len + TASKS_JSON_CLOSE_LEN <= static_cast<int>(LARGE_JSON_MAX)) {
+    if (*payload_len + TASKS_JSON_CLOSE_LEN <= static_cast<int32_t>(LARGE_JSON_MAX)) {
         *payload_len += snprintf(
             g_payload_buf + *payload_len,
             HEAPWATCH_LARGE_PAYLOAD_SIZE - static_cast<size_t>(*payload_len),
@@ -250,7 +235,7 @@ void close_and_enqueue_tasks(int* payload_len) {
     enqueue_mqtt_message(MQTT_MESSAGE_TYPE_TASKS, g_payload_buf);
 }
 
-int format_task_json_row(
+int32_t format_task_json_row(
     char* out,
     size_t out_len,
     bool leading_comma,
@@ -280,7 +265,7 @@ int format_task_json_row(
 struct TasksPublish {
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    int len = 0;
+    int32_t len = 0;
     size_t rows = 0;
 };
 
@@ -312,14 +297,14 @@ void tasks_publish_append(
     char row[TASK_JSON_ROW_BUF];
     const bool slot_full =
         pub->rows > 0
-        && pub->len + static_cast<int>(TASK_JSON_ROW_MAX) + TASKS_JSON_CLOSE_LEN
-            > static_cast<int>(LARGE_JSON_MAX);
+        && pub->len + static_cast<int32_t>(TASK_JSON_ROW_MAX) + TASKS_JSON_CLOSE_LEN
+            > static_cast<int32_t>(LARGE_JSON_MAX);
     if (slot_full) {
         tasks_publish_close(pub);
         tasks_publish_begin(pub, pub->tsms, pub->utms);
     }
 
-    int row_len = format_task_json_row(
+    int32_t row_len = format_task_json_row(
         row,
         sizeof(row),
         pub->rows > 0,
@@ -330,7 +315,7 @@ void tasks_publish_append(
         max_bytes,
         peak,
         cpu_pct);
-    if (row_len <= 0 || row_len >= static_cast<int>(sizeof(row))) {
+    if (row_len <= 0 || row_len >= static_cast<int32_t>(sizeof(row))) {
         return;
     }
 
@@ -353,7 +338,7 @@ void tasks_publish_append(
             peak,
             cpu_pct);
         if (row_len <= 0
-            || row_len >= static_cast<int>(sizeof(row))
+            || row_len >= static_cast<int32_t>(sizeof(row))
             || !append_json_chunk(&pub->len, row, row_len, TASKS_JSON_CLOSE_LEN)) {
             ESP_LOGW(TAG, "task '%s' does not fit one TASKS slot", task_name);
             return;
@@ -365,6 +350,7 @@ void tasks_publish_append(
 
 void refresh_connector_gauge_limits(size_t core_count) {
     auto& connector = HeapwatchConnector::getInstance();
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
     const int64_t internal_total =
         static_cast<int64_t>(heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
     const int64_t psram_total =
@@ -378,19 +364,24 @@ void refresh_connector_gauge_limits(size_t core_count) {
     connector.setParameterIntMax("heap.internal.largest_free_block_bytes", internal_total);
     connector.setParameterIntMin("heap.psram.largest_free_block_bytes", 0);
     connector.setParameterIntMax("heap.psram.largest_free_block_bytes", psram_total);
-
+#endif
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
     for (size_t core = 0; core < core_count; ++core) {
         char slug[32] = {};
-        snprintf(slug, sizeof(slug), "cpu.%u.usage_pct", static_cast<unsigned>(core));
+        snprintf(slug, sizeof(slug), "cpu.%" PRIu32 ".usage_pct", static_cast<uint32_t>(core));
         connector.setParameterIntMin(slug, 0);
         connector.setParameterIntMax(slug, 100);
     }
+#else
+    (void)core_count;
+#endif
 
     connector.setParameterIntMin("wifi.rssi_dbm", -100);
     connector.setParameterIntMax("wifi.rssi_dbm", -20);
 }
 
 /** Record the task's configured depth and queue a limits publish when it changed. */
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
 void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
     if (row.stack_total_bytes == stack_total_bytes) {
         return;
@@ -398,12 +389,13 @@ void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
     row.stack_total_bytes = stack_total_bytes;
 
     const size_t idx = static_cast<size_t>(&row - g_task_stats);
-    if (g_dirty_task_stack_max_count < MAX_TASK_ROWS) {
+    if (g_dirty_task_stack_max_count < HEAPWATCH_MAX_TASK_ROWS) {
         g_dirty_task_stack_idx[g_dirty_task_stack_max_count++] = static_cast<uint8_t>(idx);
     }
 }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
-int start_parameter_payload(uint64_t tsms, uint64_t utms) {
+int32_t start_parameter_payload(uint64_t tsms, uint64_t utms) {
     return snprintf(
         g_payload_buf,
         HEAPWATCH_LARGE_PAYLOAD_SIZE,
@@ -412,12 +404,12 @@ int start_parameter_payload(uint64_t tsms, uint64_t utms) {
         utms);
 }
 
-void close_and_enqueue_parameter(int* payload_len) {
+void close_and_enqueue_parameter(int32_t* payload_len) {
     if (payload_len == nullptr || *payload_len <= 0) {
         return;
     }
 
-    if (*payload_len + PARAMETER_JSON_CLOSE_LEN <= static_cast<int>(LARGE_JSON_MAX)) {
+    if (*payload_len + PARAMETER_JSON_CLOSE_LEN <= static_cast<int32_t>(LARGE_JSON_MAX)) {
         g_payload_buf[(*payload_len)++] = '}';
         g_payload_buf[*payload_len] = '\0';
     } else {
@@ -426,13 +418,14 @@ void close_and_enqueue_parameter(int* payload_len) {
     enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
 }
 
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
 void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
     if (g_dirty_task_stack_max_count == 0) {
         return;
     }
 
-    int pos = start_parameter_payload(tsms, utms);
-    int header_len = pos;
+    int32_t pos = start_parameter_payload(tsms, utms);
+    int32_t header_len = pos;
     for (size_t i = 0; i < g_dirty_task_stack_max_count; ++i) {
         const TaskStats& row = g_task_stats[g_dirty_task_stack_idx[i]];
         char slug_seg[32];
@@ -441,7 +434,7 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
         }
 
         char chunk[256];
-        const int chunk_len = snprintf(
+        const int32_t chunk_len = snprintf(
             chunk,
             sizeof(chunk),
             ",\"dynamic.task.%s.stack_current_bytes_max\":%" PRIu32
@@ -452,7 +445,7 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
             slug_seg, row.stack_total_bytes,
             slug_seg, row.stack_total_bytes,
             slug_seg, row.stack_total_bytes);
-        if (chunk_len <= 0 || chunk_len >= static_cast<int>(sizeof(chunk))) {
+        if (chunk_len <= 0 || chunk_len >= static_cast<int32_t>(sizeof(chunk))) {
             continue;
         }
 
@@ -473,6 +466,7 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
     }
     g_dirty_task_stack_max_count = 0;
 }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 }  // namespace
 
 void refreshConnectorGaugeLimits() {
@@ -483,25 +477,14 @@ void refreshConnectorGaugeLimits() {
 
 void init() {
     g_start_time_us = static_cast<uint64_t>(esp_timer_get_time());
-    if (g_payload_buf == nullptr) {
-        g_payload_buf = static_cast<char*>(heapwatch_data_alloc(HEAPWATCH_MAX_PAYLOAD_SIZE));
-    }
-    if (g_mqtt_enqueue_msg == nullptr) {
-        g_mqtt_enqueue_msg = static_cast<MqttMessage*>(heapwatch_data_alloc(sizeof(MqttMessage)));
-    }
-    if (g_task_stats == nullptr) {
-        g_task_stats = static_cast<TaskStats*>(heapwatch_data_alloc(sizeof(TaskStats) * MAX_TASK_ROWS));
-    }
+    heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+    g_payload_buf = ws->metrics_payload;
+    g_mqtt_enqueue_msg = &ws->metrics_enqueue;
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+    g_task_stats = ws->task_stats;
+#endif
 }
 
-// NOTE (Phase 2 scope): the periodic PARAMETER message below bundles heap,
-// Wi-Fi, and FreeRTOS-count fields into one hand-rolled JSON/flat payload, so
-// HEAPWATCH_ENABLE_HEAP_SNAPSHOTS can't yet exclude just the heap fields
-// without restructuring this into the generic per-slug parameter map (PARAM1,
-// Phase 5c) — at that point each field becomes independently omittable for
-// free. Until then this whole message is unconditionally sent; only the
-// clearly separable TASKS message (above) and CPU-usage fields are gated
-// today.
 void collectTask(void* arg) {
     (void)arg;
 
@@ -544,8 +527,11 @@ void collectTask(void* arg) {
         uint64_t tsms = 0;
         uint64_t utms = 0;
         heapwatch_get_ingress_timing_ms(&tsms, &utms);
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
         g_dirty_task_stack_max_count = 0;
+#endif
 
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
         const uint32_t internal_heap_free_bytes =
             static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         const uint32_t internal_heap_total_bytes =
@@ -562,6 +548,7 @@ void collectTask(void* arg) {
             (psram_total_bytes > psram_free_bytes) ? (psram_total_bytes - psram_free_bytes) : 0;
         const uint32_t psram_largest_free_block_bytes =
             static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+#endif
 
         int16_t wifi_rssi_dbm = 0;
         wifi_ap_record_t ap_info = {};
@@ -573,7 +560,9 @@ void collectTask(void* arg) {
         // CPU1: one entry per actual core (portNUM_PROCESSORS), not a fixed cpu0/cpu1 pair.
         const size_t core_count =
             (portNUM_PROCESSORS <= MAX_CORES_SUPPORTED) ? portNUM_PROCESSORS : MAX_CORES_SUPPORTED;
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
         float cpu_usage_pct[MAX_CORES_SUPPORTED] = {};
+#endif
         refresh_connector_gauge_limits(core_count);
 
         // Ready-task count, task stack maxes, TASKS snapshots, and CPU-usage share
@@ -581,10 +570,13 @@ void collectTask(void* arg) {
         // scan itself always runs when trace facility is on so ready-count and
         // stack limits stay current.
 #if (configUSE_TRACE_FACILITY == 1)
-        const UBaseType_t task_table_len =
+        heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+        UBaseType_t task_table_len =
             static_cast<UBaseType_t>(uxTaskGetNumberOfTasks()) + 4U;
-        TaskStatus_t* task_status =
-            static_cast<TaskStatus_t*>(pvPortMalloc(sizeof(TaskStatus_t) * task_table_len));
+        if (task_table_len > HEAPWATCH_MAX_TASK_STATUS_SCAN) {
+            task_table_len = HEAPWATCH_MAX_TASK_STATUS_SCAN;
+        }
+        TaskStatus_t* task_status = (ws != nullptr) ? ws->task_status_scan : nullptr;
         if (task_status != nullptr) {
             uint32_t total_runtime = 0;
             const UBaseType_t task_count =
@@ -593,8 +585,8 @@ void collectTask(void* arg) {
                 uint64_t idle_runtime[MAX_CORES_SUPPORTED] = {};
                 char idle_task_name[MAX_CORES_SUPPORTED][8];
                 for (size_t core = 0; core < core_count; ++core) {
-                    snprintf(idle_task_name[core], sizeof(idle_task_name[core]), "IDLE%u",
-                             static_cast<unsigned>(core));
+                    snprintf(idle_task_name[core], sizeof(idle_task_name[core]), "IDLE%" PRIu32,
+                             static_cast<uint32_t>(core));
                 }
                 const uint64_t total_runtime_u64 = static_cast<uint64_t>(total_runtime);
                 // Denominator for per-task CPU % must be the FreeRTOS run-time counter
@@ -627,6 +619,7 @@ void collectTask(void* arg) {
                         }
                     }
 
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
                     TaskStats* row = acquire_task_row(task.pcTaskName);
                     if (row == nullptr) {
                         continue;
@@ -700,7 +693,6 @@ void collectTask(void* arg) {
                         continue;
                     }
 
-#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
                     tasks_publish_append(
                         &tasks_pub,
                         task.pcTaskName != nullptr ? task.pcTaskName : "?",
@@ -710,8 +702,6 @@ void collectTask(void* arg) {
                         row->stack_max_bytes,
                         stack.peak,
                         task_cpu_pct);
-#else
-                    (void)task_cpu_pct;
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
                 }
 
@@ -745,11 +735,11 @@ void collectTask(void* arg) {
                 tasks_publish_close(&tasks_pub);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
             }
-            vPortFree(task_status);
         }
 #endif
 
         // CPU1: emit one array entry per actual core rather than fixed cpu0/cpu1 fields.
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
         char cpu_usage_array[MAX_CORES_SUPPORTED * 8 + 2] = {};
         {
             size_t pos = 0;
@@ -760,48 +750,65 @@ void collectTask(void* arg) {
             }
             snprintf(cpu_usage_array + pos, sizeof(cpu_usage_array) - pos, "]");
         }
+#endif
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
         snprintf(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE,
                  "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64
                  ",\"device.uptime_s\":%" PRIu32
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  ",\"heap.internal.used_bytes\":%" PRIu32
                  ",\"heap.psram.used_bytes\":%" PRIu32
                  ",\"heap.internal.largest_free_block_bytes\":%" PRIu32
                  ",\"heap.psram.largest_free_block_bytes\":%" PRIu32
+#endif
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
                  ",\"cpu_usage_pct\":%s"
-                 ",\"wifi.rssi_dbm\":%d"
+#endif
+                 ",\"wifi.rssi_dbm\":%" PRId32
                  ",\"freertos.ready_tasks_count\":%" PRIu16 "}",
                  tsms,
                  utms,
                  uptime_s,
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  internal_heap_used_bytes,
                  psram_used_bytes,
                  internal_largest_free_block_bytes,
                  psram_largest_free_block_bytes,
+#endif
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
                  cpu_usage_array,
-                 static_cast<int>(wifi_rssi_dbm),
+#endif
+                 static_cast<int32_t>(wifi_rssi_dbm),
                  freertos_ready_tasks_count);
 #else
         snprintf(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE,
                  "tsms=%" PRIu64 "|utms=%" PRIu64
                  "|device.uptime_s=%" PRIu32
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  "%sheap.internal.used_bytes=%" PRIu32
                  "%sheap.psram.used_bytes=%" PRIu32
                  "%sheap.internal.largest_free_block_bytes=%" PRIu32
                  "%sheap.psram.largest_free_block_bytes=%" PRIu32
+#endif
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
                  "%scpu_usage_pct=%s"
-                 "%swifi.rssi_dbm=%d"
+#endif
+                 "%swifi.rssi_dbm=%" PRId32
                  "%sfreertos.ready_tasks_count=%" PRIu16,
                  tsms,
                  utms,
                  uptime_s,
+#if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  HEAPWATCH_FLAT_DELIMITER, internal_heap_used_bytes,
                  HEAPWATCH_FLAT_DELIMITER, psram_used_bytes,
                  HEAPWATCH_FLAT_DELIMITER, internal_largest_free_block_bytes,
                  HEAPWATCH_FLAT_DELIMITER, psram_largest_free_block_bytes,
+#endif
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
                  HEAPWATCH_FLAT_DELIMITER, cpu_usage_array,
-                 HEAPWATCH_FLAT_DELIMITER, static_cast<int>(wifi_rssi_dbm),
+#endif
+                 HEAPWATCH_FLAT_DELIMITER, static_cast<int32_t>(wifi_rssi_dbm),
                  HEAPWATCH_FLAT_DELIMITER, freertos_ready_tasks_count);
 #endif
 
@@ -834,7 +841,9 @@ void collectTask(void* arg) {
         }
 
         enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
         enqueue_dirty_task_stack_maxes(tsms, utms);
+#endif
 
         // PARAM1 (Phase 5c): flush the generic slug->value parameter map (POW1
         // power API, CELL1 cellular signal, connector gauge limits, any other

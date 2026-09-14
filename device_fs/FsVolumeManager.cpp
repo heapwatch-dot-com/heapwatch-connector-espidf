@@ -842,7 +842,7 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
         if (!heapwatch::normalizeDynamicSegment(vol.label, slug_seg, sizeof(slug_seg))) {
             continue;
         }
-        int written = 0;
+        int32_t written = 0;
         if (json) {
             written = snprintf(out + pos, out_len - pos,
                                ",\"dynamic.fs.%s.used_bytes\":%" PRIu64

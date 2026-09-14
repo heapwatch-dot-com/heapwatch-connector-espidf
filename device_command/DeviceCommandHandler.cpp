@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_err.h"
@@ -12,7 +13,9 @@
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "../heapwatch_connector/heapwatch_connector_timing.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
+#if CONFIG_HEAPWATCH_ENABLE_OTA
 #include "../device_ota/OtaService.h"
+#endif
 #include "../device_radio/BluetoothReporter.h"
 #include "../stream_ingress/StreamIngressClient.h"
 #include "heapwatch/radio/BleDelegate.h"
@@ -161,7 +164,7 @@ bool extract_command_suffix(const char* topic, size_t topic_len, char* suffix_ou
     const char* uid = heapwatch_get_device_uid();
     const char* tenant = heapwatch_get_tenant_slug();
     char prefix[128];
-    const int prefix_len = snprintf(prefix, sizeof(prefix), "%s/command/device/%s/", tenant, uid);
+    const int32_t prefix_len = snprintf(prefix, sizeof(prefix), "%s/command/device/%s/", tenant, uid);
     if (prefix_len <= 0 || topic_len < static_cast<size_t>(prefix_len)) {
         return false;
     }
@@ -362,8 +365,8 @@ esp_err_t registerCommand(const char* name, CommandHandler handler, void* user_c
         }
     }
 
-    ESP_LOGE(TAG, "Cannot register command '%s': registration table full (max %u)", name,
-             static_cast<unsigned>(MAX_REGISTERED_COMMANDS));
+    ESP_LOGE(TAG, "Cannot register command '%s': registration table full (max %" PRIu32 ")", name,
+             static_cast<uint32_t>(MAX_REGISTERED_COMMANDS));
     return ESP_ERR_NO_MEM;
 }
 
@@ -382,7 +385,7 @@ bool publishCommandResponseWithResult(const char* suffix, const char* command_id
 }
 
 void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
-                        size_t payload_len, int mqtt_retain) {
+                        size_t payload_len, int32_t mqtt_retain) {
     if (mqtt_retain != 0) {
         ESP_LOGW(TAG, "Ignoring retained command MQTT message");
         return;
@@ -426,6 +429,7 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
     // While HTTPS OTA is running, only ota/start + ota/abort may proceed.
     // ota/confirm and ota/rollback are rejected inside OtaService with busy.
     // Non-ota commands must not interrupt the flash pipeline.
+#if CONFIG_HEAPWATCH_ENABLE_OTA
     if (heapwatch::device_ota::isInProgress() && strncmp(suffix, "ota/", 4) != 0) {
         ESP_LOGW(TAG, "Rejecting command '%s' — OTA in progress", suffix);
         publish_response(suffix, command_id, false, "busy",
@@ -433,6 +437,7 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
         free(command_id);
         return;
     }
+#endif
 
     if (strcmp(suffix, "ping") == 0) {
         handle_ping(suffix, command_id);
@@ -524,10 +529,12 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
         return;
     }
 
+#if CONFIG_HEAPWATCH_ENABLE_OTA
     if (heapwatch::device_ota::handleMqttCommand(suffix, command_id, payload, payload_len)) {
         free(command_id);
         return;
     }
+#endif
 
     if (const CommandRegistration* registration = find_registered_command(suffix)) {
         registration->handler(suffix, command_id, registration->user_ctx);

@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
@@ -187,8 +188,8 @@ bool append_ota_capability(char* output, size_t output_len) {
 
     size_t offset = strlen(output);
     offset += snprintf(output + offset, output_len - offset,
-                       ",\"has_ota_partitions\":%s,\"ota_app_slot_bytes\":%lu,\"partitions_csv\":\"",
-                       has_ota ? "true" : "false", static_cast<unsigned long>(slot_bytes));
+                       ",\"has_ota_partitions\":%s,\"ota_app_slot_bytes\":%" PRIu32 ",\"partitions_csv\":\"",
+                       has_ota ? "true" : "false", static_cast<uint32_t>(slot_bytes));
 
     bool first = true;
     it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
@@ -202,8 +203,8 @@ bool append_ota_capability(char* output, size_t output_len) {
             offset += snprintf(output + offset, output_len - offset, "%s, %s, %s, 0x%lx, 0x%lx,",
                                part->label, partition_type_name(part->type),
                                partition_subtype_name(part->type, part->subtype),
-                               static_cast<unsigned long>(part->address),
-                               static_cast<unsigned long>(part->size));
+                               static_cast<uint32_t>(part->address),
+                               static_cast<uint32_t>(part->size));
             if (offset + 8 >= output_len) {
                 esp_partition_iterator_release(it);
                 return false;
@@ -275,25 +276,25 @@ bool buildPayload(char* output, size_t output_len) {
         snprintf(build_date, sizeof(build_date), "%s %s", app_desc->date, app_desc->time);
     }
 
-    const int written = snprintf(
+    const int32_t written = snprintf(
         output,
         output_len,
-        "{\"idf_target\":\"%s\",\"chip_model\":\"%s\",\"chip_revision\":%u,\"chip_cores\":%u,"
-        "\"flash_size_bytes\":%lu,\"psram_size_bytes\":%lu,\"heap_total_bytes\":%lu,"
-        "\"heap_internal_total_bytes\":%lu,\"min_free_heap_bytes\":%lu,"
+        "{\"idf_target\":\"%s\",\"chip_model\":\"%s\",\"chip_revision\":%" PRIu32 ",\"chip_cores\":%" PRIu32 ","
+        "\"flash_size_bytes\":%" PRIu32 ",\"psram_size_bytes\":%" PRIu32 ",\"heap_total_bytes\":%" PRIu32 ","
+        "\"heap_internal_total_bytes\":%" PRIu32 ",\"min_free_heap_bytes\":%" PRIu32 ","
         "\"sdk_version\":\"%s\",\"app_version\":\"%s\",\"connector_source_version\":\"%s\","
         "\"build_identifier\":\"%s\","
-        "\"build_date\":\"%s\",\"cpu_freq_mhz\":%u,\"reset_reason\":\"%s\","
+        "\"build_date\":\"%s\",\"cpu_freq_mhz\":%" PRIu32 ",\"reset_reason\":\"%s\","
         "\"secure_boot_enabled\":%s,\"flash_encryption_enabled\":%s",
         CONFIG_IDF_TARGET,
         chip_model_name(chip_info.model),
-        chip_info.revision,
-        chip_info.cores,
-        static_cast<unsigned long>(flash_size),
-        static_cast<unsigned long>(psram_total),
-        static_cast<unsigned long>(heap_total),
-        static_cast<unsigned long>(internal_heap_total),
-        static_cast<unsigned long>(min_free_heap),
+        static_cast<uint32_t>(chip_info.revision),
+        static_cast<uint32_t>(chip_info.cores),
+        static_cast<uint32_t>(flash_size),
+        static_cast<uint32_t>(psram_total),
+        static_cast<uint32_t>(heap_total),
+        static_cast<uint32_t>(internal_heap_total),
+        static_cast<uint32_t>(min_free_heap),
         esp_get_idf_version(),
         (heapwatch_get_app_source_version()[0] != '\0')
             ? heapwatch_get_app_source_version()
@@ -301,7 +302,7 @@ bool buildPayload(char* output, size_t output_len) {
         heapwatch_get_connector_source_version(),
         heapwatch_get_build_identifier(),
         build_date,
-        CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+        static_cast<uint32_t>(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ),
         reset_reason_name(esp_reset_reason()),
 #if CONFIG_SECURE_BOOT
         "true",

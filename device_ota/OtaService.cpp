@@ -1,7 +1,11 @@
 #include "OtaService.h"
+#include "sdkconfig.h"
+
+#if CONFIG_HEAPWATCH_ENABLE_OTA
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -14,7 +18,6 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/sha256.h"
-#include "sdkconfig.h"
 
 #include "../device_command/DeviceCommandHandler.h"
 #include "../heapwatch_config.h"
@@ -28,11 +31,7 @@ namespace {
 
 constexpr size_t URL_MAX = 512;
 constexpr size_t SHA_HEX_MAX = 65;
-#if CONFIG_HEAPWATCH_ENABLE_OTA
 constexpr size_t DOWNLOAD_CHUNK = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
-#else
-constexpr size_t DOWNLOAD_CHUNK = 256;
-#endif
 constexpr uint32_t OTA_TASK_STACK_BYTES = 8192;
 // BSS — keeps download chunk RAM off the hw_ota task stack.
 uint8_t g_ota_io_buf[DOWNLOAD_CHUNK] = {};
@@ -40,7 +39,7 @@ constexpr size_t MAX_DATA_PARTITIONS = 4;
 constexpr size_t PARTITION_NAME_MAX = 32;
 constexpr size_t MQTT_YIELD_EVERY_BYTES = DOWNLOAD_CHUNK;
 constexpr size_t PROGRESS_EVERY_BYTES = 128 * 1024;
-constexpr int HTTP_TIMEOUT_MS = 15000;
+constexpr int32_t HTTP_TIMEOUT_MS = 15000;
 
 struct DataPartitionJob {
     char name[PARTITION_NAME_MAX] = {};
@@ -75,14 +74,14 @@ OtaJob g_job = {};
 
 void log_phase(int64_t session_id, const char* phase, const char* detail = nullptr) {
     if (detail != nullptr && detail[0] != '\0') {
-        ESP_LOGI(TAG, "OTA session=%lld phase=%s %s", static_cast<long long>(session_id), phase,
+        ESP_LOGI(TAG, "OTA session=%" PRId64 " phase=%s %s", static_cast<int64_t>(session_id), phase,
                  detail);
     } else {
-        ESP_LOGI(TAG, "OTA session=%lld phase=%s", static_cast<long long>(session_id), phase);
+        ESP_LOGI(TAG, "OTA session=%" PRId64 " phase=%s", static_cast<int64_t>(session_id), phase);
     }
 }
 
-void emit_event(int event_type_id) {
+void emit_event(int32_t event_type_id) {
     HeapwatchConnector::getInstance().queueEvent(event_type_id);
 }
 
@@ -236,7 +235,7 @@ bool flash_data_partition(const DataPartitionJob& part, int64_t session_id) {
     }
 
     (void)esp_http_client_fetch_headers(client);
-    const int status = esp_http_client_get_status_code(client);
+    const int32_t status = esp_http_client_get_status_code(client);
     if (status < 200 || status >= 300) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
@@ -259,7 +258,7 @@ bool flash_data_partition(const DataPartitionJob& part, int64_t session_id) {
             return false;
         }
 
-        const int n =
+        const int32_t n =
             esp_http_client_read(client, reinterpret_cast<char*>(g_ota_io_buf), DOWNLOAD_CHUNK);
         if (n < 0) {
             mbedtls_sha256_free(&sha_ctx);
@@ -326,8 +325,8 @@ bool stream_flash_app(const OtaJob& job) {
     }
 
     char slot_detail[64];
-    snprintf(slot_detail, sizeof(slot_detail), "slot=%s size=%lu", update->label,
-             static_cast<unsigned long>(update->size));
+    snprintf(slot_detail, sizeof(slot_detail), "slot=%s size=%" PRIu32, update->label,
+             static_cast<uint32_t>(update->size));
     log_phase(job.ota_session_id, "flash", slot_detail);
 
     emit_event(HEAPWATCH_EVENT_FW_UPDATE_DOWNLOADING);
@@ -360,7 +359,7 @@ bool stream_flash_app(const OtaJob& job) {
     }
 
     (void)esp_http_client_fetch_headers(client);
-    const int status = esp_http_client_get_status_code(client);
+    const int32_t status = esp_http_client_get_status_code(client);
     if (status < 200 || status >= 300) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
@@ -400,7 +399,7 @@ bool stream_flash_app(const OtaJob& job) {
             return false;
         }
 
-        const int n =
+        const int32_t n =
             esp_http_client_read(client, reinterpret_cast<char*>(g_ota_io_buf), DOWNLOAD_CHUNK);
         if (n < 0) {
             esp_ota_abort(ota_handle);
@@ -429,7 +428,7 @@ bool stream_flash_app(const OtaJob& job) {
         if (total - last_progress_bytes >= PROGRESS_EVERY_BYTES) {
             last_progress_bytes = total;
             char progress[64];
-            snprintf(progress, sizeof(progress), "bytes=%u", static_cast<unsigned>(total));
+            snprintf(progress, sizeof(progress), "bytes=%" PRIu32, static_cast<uint32_t>(total));
             log_phase(job.ota_session_id, "download", progress);
             emit_progress(job.ota_session_id, "downloading", static_cast<int64_t>(total),
                           expected_total);
@@ -587,8 +586,8 @@ bool parse_start_payload(const char* payload, size_t payload_len, OtaJob* job) {
 
     const cJSON* data = cJSON_GetObjectItem(root, "data_partitions");
     if (job->include_data && cJSON_IsArray(data)) {
-        const int count = cJSON_GetArraySize(data);
-        for (int i = 0; i < count && job->data_count < MAX_DATA_PARTITIONS; ++i) {
+        const int32_t count = cJSON_GetArraySize(data);
+        for (int32_t i = 0; i < count && job->data_count < MAX_DATA_PARTITIONS; ++i) {
             const cJSON* entry = cJSON_GetArrayItem(data, i);
             if (!cJSON_IsObject(entry)) {
                 continue;
@@ -782,10 +781,6 @@ bool handle_rollback(const char* command_id) {
 }  // namespace
 
 void init() {
-#if !CONFIG_HEAPWATCH_ENABLE_OTA
-    ESP_LOGI(TAG, "Heapwatch OTA disabled (CONFIG_HEAPWATCH_ENABLE_OTA=n)");
-    return;
-#endif
     if (g_mutex == nullptr) {
         g_mutex = xSemaphoreCreateMutex();
     }
@@ -805,17 +800,14 @@ void init() {
     if (g_ota_task == nullptr) {
         ESP_LOGE(TAG, "OTA worker not running — Heapwatch OTA commands will not execute");
     } else if (next != nullptr) {
-        ESP_LOGI(TAG, "OTA worker running (next slot=%s size=%lu chunk=%u B)", next->label,
-                 static_cast<unsigned long>(next->size), static_cast<unsigned>(DOWNLOAD_CHUNK));
+        ESP_LOGI(TAG, "OTA worker running (next slot=%s size=%" PRIu32 " chunk=%" PRIu32 " B)", next->label,
+                 static_cast<uint32_t>(next->size), static_cast<uint32_t>(DOWNLOAD_CHUNK));
     } else {
         ESP_LOGW(TAG, "OTA worker running but no next OTA partition (factory-only layout?)");
     }
 }
 
 void shutdown() {
-#if !CONFIG_HEAPWATCH_ENABLE_OTA
-    return;
-#else
     g_stop_requested = true;
     g_abort_requested = true;
     if (g_ota_task != nullptr) {
@@ -833,15 +825,10 @@ void shutdown() {
     g_ota_task = nullptr;
     g_phase = Phase::Idle;
     g_abort_requested = false;
-#endif
 }
 
 bool isInProgress() {
-#if !CONFIG_HEAPWATCH_ENABLE_OTA
-    return false;
-#else
     return g_phase == Phase::Running;
-#endif
 }
 
 bool handleMqttCommand(const char* suffix, const char* command_id, const char* payload,
@@ -850,14 +837,6 @@ bool handleMqttCommand(const char* suffix, const char* command_id, const char* p
         return false;
     }
 
-#if !CONFIG_HEAPWATCH_ENABLE_OTA
-    (void)payload;
-    (void)payload_len;
-    heapwatch::device_command::publishCommandResponse(
-        suffix, command_id, false, "feature_disabled",
-        "Heapwatch OTA is disabled on this device");
-    return true;
-#else
     if (strcmp(suffix, "ota/start") == 0) {
         return handle_start(command_id, payload, payload_len);
     }
@@ -881,7 +860,26 @@ bool handleMqttCommand(const char* suffix, const char* command_id, const char* p
     heapwatch::device_command::publishCommandResponse(suffix, command_id, false, "unsupported",
                                                       "Unknown OTA command");
     return true;
-#endif
 }
 
 }  // namespace heapwatch::device_ota
+
+#else  // !CONFIG_HEAPWATCH_ENABLE_OTA
+
+namespace heapwatch::device_ota {
+
+void init() {}
+void shutdown() {}
+bool isInProgress() { return false; }
+bool handleMqttCommand(const char* suffix, const char* command_id, const char* payload,
+                       size_t payload_len) {
+    (void)suffix;
+    (void)command_id;
+    (void)payload;
+    (void)payload_len;
+    return false;
+}
+
+}  // namespace heapwatch::device_ota
+
+#endif  // CONFIG_HEAPWATCH_ENABLE_OTA

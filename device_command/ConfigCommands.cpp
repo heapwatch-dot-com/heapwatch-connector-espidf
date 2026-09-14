@@ -136,8 +136,8 @@ void handleConfigPersist(const char* suffix, char* command_id, const char* paylo
                                                                      sizeof(persist_err));
         } else if (cJSON_IsArray(keys)) {
             cJSON* key_map = cJSON_CreateObject();
-            const int count = cJSON_GetArraySize(keys);
-            for (int i = 0; i < count; ++i) {
+            const int32_t count = cJSON_GetArraySize(keys);
+            for (int32_t i = 0; i < count; ++i) {
                 const cJSON* item = cJSON_GetArrayItem(keys, i);
                 if (cJSON_IsString(item) && item->valuestring != nullptr) {
                     cJSON_AddTrueToObject(key_map, item->valuestring);

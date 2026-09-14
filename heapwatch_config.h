@@ -332,6 +332,35 @@ typedef enum {
 #define HEAPWATCH_SMALL_PAYLOAD_SIZE     (HEAPWATCH_MAX_LOG_LINE_LEN * 2 + 320)
 #define HEAPWATCH_LARGE_PAYLOAD_SIZE     HEAPWATCH_MAX_PAYLOAD_SIZE
 
+/** Rows in the metrics task-stats table (name → stack min/max/peak). */
+#ifndef HEAPWATCH_MAX_TASK_ROWS
+#define HEAPWATCH_MAX_TASK_ROWS 48
+#endif
+
+/** uxTaskGetSystemState() scratch; must be ≥ HEAPWATCH_MAX_TASK_ROWS. */
+#ifndef HEAPWATCH_MAX_TASK_STATUS_SCAN
+#define HEAPWATCH_MAX_TASK_STATUS_SCAN 64
+#endif
+#if HEAPWATCH_MAX_TASK_STATUS_SCAN < HEAPWATCH_MAX_TASK_ROWS
+#error "HEAPWATCH_MAX_TASK_STATUS_SCAN must be >= HEAPWATCH_MAX_TASK_ROWS"
+#endif
+
+#ifdef CONFIG_HEAPWATCH_MEM_SCRATCH_BYTES
+#define HEAPWATCH_MEM_SCRATCH_BYTES CONFIG_HEAPWATCH_MEM_SCRATCH_BYTES
+#else
+#define HEAPWATCH_MEM_SCRATCH_BYTES 8192
+#endif
+
+#define HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH 8
+#define HEAPWATCH_COMMAND_TOPIC_MAX           160
+#define HEAPWATCH_COMMAND_PAYLOAD_MAX         1024
+
+#if defined(CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING) && CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
+#define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 2
+#else
+#define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 4
+#endif
+
 /* ============================================================================
    Generic Parameter Mechanism (PARAM1, Phase 5c)
    =========================================================================== */

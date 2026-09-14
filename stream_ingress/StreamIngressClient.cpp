@@ -8,6 +8,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <cinttypes>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -17,6 +18,7 @@
 
 #include "../heapwatch_connector/HeapwatchConnector.h"
 #include "../heapwatch_connector/heapwatch_freertos_alloc.h"
+#include "../memory_manager/HeapwatchMemoryManager.h"
 #include "../device_credentials/DeviceCredentialsStore.h"
 #include "../heapwatch_endpoints.h"
 #include "../device_fs/DeviceFsCommandHandler.h"
@@ -40,30 +42,11 @@ constexpr char CHANNEL_FS_DOWNLOAD[] = "fs_download";
 constexpr char CHANNEL_FS_UPLOAD[] = "fs_upload";
 
 constexpr size_t HANDSHAKE_MAX = 512;
-constexpr size_t ENCODE_MAX = mux::MAX_PAYLOAD_LEN + 128;
 constexpr size_t STDIN_PAYLOAD_MAX = 512;
-constexpr size_t INBOUND_PAYLOAD_MAX = mux::MAX_PAYLOAD_LEN;
 constexpr uint32_t COALESCE_FLUSH_MS = 100;
 constexpr uint32_t WORKER_POLL_MS = 100;
 constexpr uint32_t RECONNECT_DELAY_MS = 2000;
-// Depth >1 so a file_browser result is not dropped while a download chunk is still queued.
-// BLE + WiFi on ESP32 is tight on internal DRAM; trim slots when the radio stack is on.
-#if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
-constexpr size_t OUTBOUND_QUEUE_DEPTH = 2;
-#else
-constexpr size_t OUTBOUND_QUEUE_DEPTH = 4;
-#endif
-constexpr size_t MAX_OUTBOUND_BYTES = mux::MAX_PAYLOAD_LEN;
-// FS finalize/hash + cJSON run on this task; keep headroom above idle MQTT-era 6KiB.
 constexpr uint32_t WORKER_STACK_BYTES = 10240;
-
-struct OutboundSlot {
-    char channel_id[mux::MAX_CHANNEL_ID_LEN + 1] = {};
-    size_t len = 0;
-    bool busy = false;
-    uint8_t frame_type = mux::FRAME_TYPE_DATA;
-    uint8_t data[MAX_OUTBOUND_BYTES] = {};
-};
 
 struct OutboundQueued {
     uint8_t slot_index = 0;
@@ -89,25 +72,30 @@ size_t g_coalesce_len = 0;
 uint64_t g_coalesce_uptime_ms = 0;
 
 /** Single-threaded stream_ingress worker owns these — no malloc on the hot path. */
-OutboundSlot* g_outbound_slots = nullptr;
+mux::OutboundSlot* g_outbound_slots = nullptr;
 uint8_t* g_encode_buf = nullptr;
 uint8_t* g_inbound_buf = nullptr;
 
-void ensureStreamDataAllocated() {
-    if (g_encode_buf != nullptr) {
+void bindStreamWorkingSet() {
+#if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
+    static_assert(sizeof(OutboundQueued) == sizeof(heapwatch::HeapwatchWorkingSet::StreamOutboundQueued),
+                  "stream outbound queue item size must match the working set");
+    heapwatch::HeapwatchWorkingSet* ws = heapwatch::memory_manager::get();
+    if (ws == nullptr) {
         return;
     }
-    g_coalesce_buf = static_cast<char*>(heapwatch_data_alloc(mux::COALESCE_MAX_BYTES));
-    g_outbound_slots = static_cast<OutboundSlot*>(heapwatch_data_alloc(sizeof(OutboundSlot) * OUTBOUND_QUEUE_DEPTH));
-    g_encode_buf = static_cast<uint8_t*>(heapwatch_data_alloc(ENCODE_MAX));
-    g_inbound_buf = static_cast<uint8_t*>(heapwatch_data_alloc(INBOUND_PAYLOAD_MAX));
+    g_mutex = ws->stream_mutex;
+    g_outbound_queue = ws->stream_outbound_queue;
+    g_coalesce_buf = ws->stream_coalesce_buf;
+    g_outbound_slots = ws->stream_outbound_slots;
+    g_encode_buf = ws->stream_encode_buf;
+    g_inbound_buf = ws->stream_inbound_buf;
+#endif
 }
 
-void freeStreamData() {
-    heapwatch_data_free(g_coalesce_buf);
-    heapwatch_data_free(g_outbound_slots);
-    heapwatch_data_free(g_encode_buf);
-    heapwatch_data_free(g_inbound_buf);
+void unbindStreamWorkingSet() {
+    g_mutex = nullptr;
+    g_outbound_queue = nullptr;
     g_coalesce_buf = nullptr;
     g_outbound_slots = nullptr;
     g_encode_buf = nullptr;
@@ -152,7 +140,7 @@ void closeSocket() {
     if (g_outbound_queue != nullptr) {
         OutboundQueued queued = {};
         while (xQueueReceive(g_outbound_queue, &queued, 0) == pdTRUE) {
-            if (queued.slot_index < OUTBOUND_QUEUE_DEPTH) {
+            if (queued.slot_index < HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH) {
                 g_outbound_slots[queued.slot_index].busy = false;
                 g_outbound_slots[queued.slot_index].len = 0;
             }
@@ -200,10 +188,10 @@ bool sendHandshake(int socket_fd) {
     const uint32_t boot_cycle = heapwatch_get_boot_cycle();
 
     char handshake[HANDSHAKE_MAX] = {};
-    const int written = snprintf(
+    const int32_t written = snprintf(
         handshake, sizeof(handshake),
-        "{\"stream_api_key\":\"%s\",\"tenant_slug\":\"%s\",\"device_uid\":\"%s\",\"boot_cycle\":%lu}\n",
-        stream_key, tenant, device_uid, static_cast<unsigned long>(boot_cycle));
+        "{\"stream_api_key\":\"%s\",\"tenant_slug\":\"%s\",\"device_uid\":\"%s\",\"boot_cycle\":%" PRIu32 "}\n",
+        stream_key, tenant, device_uid, static_cast<uint32_t>(boot_cycle));
     if (written <= 0 || static_cast<size_t>(written) >= sizeof(handshake)) {
         return false;
     }
@@ -228,8 +216,8 @@ bool connectTcp() {
     }
 
     if (connect(socket_fd, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) != 0) {
-        ESP_LOGE(TAG, "connect(%s:%d) failed: errno=%d", HEAPWATCH_STREAM_INGRESS_HOST,
-                 HEAPWATCH_STREAM_INGRESS_TCP_PORT, errno);
+        ESP_LOGE(TAG, "connect(%s:%" PRId32 ") failed: errno=%d", HEAPWATCH_STREAM_INGRESS_HOST,
+                 static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT), errno);
         close(socket_fd);
         return false;
     }
@@ -258,8 +246,8 @@ bool connectTcp() {
     g_connected = true;
     unlock();
 
-    ESP_LOGI(TAG, "Stream ingress TCP connected to %s:%d", HEAPWATCH_STREAM_INGRESS_HOST,
-             HEAPWATCH_STREAM_INGRESS_TCP_PORT);
+    ESP_LOGI(TAG, "Stream ingress TCP connected to %s:%" PRId32, HEAPWATCH_STREAM_INGRESS_HOST,
+             static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT));
     return true;
 }
 
@@ -273,14 +261,14 @@ bool enqueueOutbound(const char* channel_id, uint8_t frame_type, const uint8_t* 
         if (payload_len != 0) {
             return false;
         }
-    } else if (payload == nullptr || payload_len == 0 || payload_len > MAX_OUTBOUND_BYTES) {
+    } else if (payload == nullptr || payload_len == 0 || payload_len > mux::MAX_PAYLOAD_LEN) {
         return false;
     }
 
-    int free_slot = -1;
-    for (size_t i = 0; i < OUTBOUND_QUEUE_DEPTH; ++i) {
+    int32_t free_slot = -1;
+    for (size_t i = 0; i < HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH; ++i) {
         if (!g_outbound_slots[i].busy) {
-            free_slot = static_cast<int>(i);
+            free_slot = static_cast<int32_t>(i);
             break;
         }
     }
@@ -288,7 +276,7 @@ bool enqueueOutbound(const char* channel_id, uint8_t frame_type, const uint8_t* 
         return false;
     }
 
-    OutboundSlot& slot = g_outbound_slots[free_slot];
+    mux::OutboundSlot& slot = g_outbound_slots[free_slot];
     snprintf(slot.channel_id, sizeof(slot.channel_id), "%s", channel_id);
     slot.frame_type = frame_type;
     if (payload_len > 0 && payload != nullptr) {
@@ -315,11 +303,11 @@ void drainOutboundLocked() {
 
     OutboundQueued queued = {};
     while (xQueueReceive(g_outbound_queue, &queued, 0) == pdTRUE) {
-        if (queued.slot_index >= OUTBOUND_QUEUE_DEPTH) {
+        if (queued.slot_index >= HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH) {
             continue;
         }
 
-        OutboundSlot& slot = g_outbound_slots[queued.slot_index];
+        mux::OutboundSlot& slot = g_outbound_slots[queued.slot_index];
         if (!slot.busy) {
             slot.busy = false;
             continue;
@@ -339,7 +327,7 @@ void drainOutboundLocked() {
         frame.payload = slot.len > 0 ? slot.data : nullptr;
         frame.payload_len = slot.len;
 
-        if (!mux::encode(frame, g_encode_buf, ENCODE_MAX, &encoded_len)) {
+        if (!mux::encode(frame, g_encode_buf, mux::ENCODE_MAX, &encoded_len)) {
             ESP_LOGW(TAG, "Failed to encode mux frame on channel %s", slot.channel_id);
             slot.busy = false;
             slot.len = 0;
@@ -420,8 +408,8 @@ bool flushCoalesceLocked() {
     frame.payload = reinterpret_cast<const uint8_t*>(g_coalesce_buf);
     frame.payload_len = g_coalesce_len;
 
-    if (!mux::encode(frame, g_encode_buf, ENCODE_MAX, &encoded_len)) {
-        ESP_LOGW(TAG, "Failed to encode coalesced log frame (%u bytes)", static_cast<unsigned>(g_coalesce_len));
+    if (!mux::encode(frame, g_encode_buf, mux::ENCODE_MAX, &encoded_len)) {
+        ESP_LOGW(TAG, "Failed to encode coalesced log frame (%" PRIu32 " bytes)", static_cast<uint32_t>(g_coalesce_len));
         g_coalesce_len = 0;
         return false;
     }
@@ -449,14 +437,14 @@ bool tryReadInbound() {
     timeout.tv_sec = 0;
     timeout.tv_usec = 0;
 
-    const int ready = select(g_socket_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+    const int32_t ready = select(g_socket_fd + 1, &read_fds, nullptr, nullptr, &timeout);
     if (ready <= 0) {
         return ready == 0;
     }
 
     mux::Frame frame = {};
     const bool decoded =
-        mux::decodeFromSocket(g_socket_fd, frame, g_inbound_buf, INBOUND_PAYLOAD_MAX);
+        mux::decodeFromSocket(g_socket_fd, frame, g_inbound_buf, mux::MAX_PAYLOAD_LEN);
     if (decoded) {
         handleInboundFrame(frame);
     }
@@ -597,13 +585,7 @@ static void ensureWorkerStarted() {
     if (!streamIngressEnabled()) {
         return;
     }
-    if (g_mutex == nullptr) {
-        g_mutex = xSemaphoreCreateMutex();
-    }
-    if (g_outbound_queue == nullptr) {
-        g_outbound_queue = heapwatch_queue_create(OUTBOUND_QUEUE_DEPTH, sizeof(OutboundQueued));
-    }
-    ensureStreamDataAllocated();
+    bindStreamWorkingSet();
     if (g_worker_task == nullptr) {
         g_stop_requested = false;
         g_worker_exited = false;
@@ -623,15 +605,9 @@ void init() {
         return;
     }
 
-    // Mutex/queue only — worker task is deferred until ensureTcpSession/requestOpen
+    // Worker task is deferred until ensureTcpSession/requestOpen
     // so boot heap stays large enough for the MQTT client task.
-    if (g_mutex == nullptr) {
-        g_mutex = xSemaphoreCreateMutex();
-    }
-    if (g_outbound_queue == nullptr) {
-        g_outbound_queue = heapwatch_queue_create(OUTBOUND_QUEUE_DEPTH, sizeof(OutboundQueued));
-    }
-    ensureStreamDataAllocated();
+    bindStreamWorkingSet();
     ESP_LOGI(TAG, "Stream ingress ready (worker deferred until TCP needed)");
 }
 
@@ -679,12 +655,10 @@ void shutdown() {
     g_close_requested = false;
     g_boot_stream_upload_requested = false;
     g_stop_requested = false;
-    if (g_outbound_queue != nullptr) {
-        heapwatch_queue_delete(g_outbound_queue);
-        g_outbound_queue = nullptr;
-    }
-    freeStreamData();
+    unbindStreamWorkingSet();
 }
+
+bool workerExited() { return g_worker_exited; }
 
 bool isShuttingDown() { return g_stop_requested; }
 

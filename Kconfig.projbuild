@@ -112,7 +112,8 @@ menu "Heapwatch Connector"
             default y
             help
                 Collects ESP-IDF log messages. Disabling excludes the
-                log-capture/relay pipeline from the build entirely.
+                log-capture/relay pipeline (ring, hook, hw_log_forward) from
+                the firmware image entirely.
 
         choice HEAPWATCH_MIN_LOG_SEVERITY
             prompt "Minimum Log Severity"
@@ -140,12 +141,13 @@ menu "Heapwatch Connector"
             default y
             help
                 Collects tasks CPU usage and stack used and total memory. A must for stack overflow prevention.
+                Disabling omits the TASKS MQTT payload, the per-task stats table, and stack-max parameters.
 
         config HEAPWATCH_ENABLE_CPU_SNAPSHOTS
             bool "Collect Per-Core CPU Usage"
             default y
             help
-                Collects per-core CPU usage.
+                Collects per-core CPU usage. Disabling omits cpu_usage_pct from metrics (the key is not sent).
 
         config HEAPWATCH_NEEDS_FREERTOS_RUNTIME_STATS
             bool
@@ -160,7 +162,8 @@ menu "Heapwatch Connector"
             default y
             help
                 Collects internal RAM and external PSRAM usages and largest free block intel
-                for fantastic memory and heap fragmentation intelligence.
+                for fantastic memory and heap fragmentation intelligence. Disabling omits those
+                fields from the metrics payload and does not walk the heap for them.
 
         config HEAPWATCH_ENABLE_FS_VOLUME_STATS
             bool "Collect per-volume filesystem used/total"
@@ -184,6 +187,8 @@ menu "Heapwatch Connector"
             select BOOTLOADER_APP_ROLLBACK_ENABLE
             help
                 Enable Heapwatch OTA (MQTT ota/* + HTTPS flash) from the Heapwatch UI or MCP.
+                Disabling omits OTA from the firmware image (no hw_ota task, no download buffer)
+                and does not advertise ota/* in the command catalog.
 
                 Automatically enables CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE so a newly
                 flashed app boots in ESP_OTA_IMG_PENDING_VERIFY until confirmed via the
@@ -224,14 +229,15 @@ menu "Heapwatch Connector"
             help
                 Automatically checks for a core dump present in the flash on each boot
                 and uploads it to Heapwatch for fantastic crash analytics. A coredump
-                partition is REQUIRED in partitions.csv for this to work!
+                partition is REQUIRED in partitions.csv for this to work! Disabling omits
+                the HTTPS upload path and coredump queue from the firmware image.
 
         config HEAPWATCH_ENABLE_STANDARD_EVENTS
             bool "Collect Events"
             default y
             help
                 Collects few dozen lifecycle events like starting up, started up, mqtt connected/disconnected,
-                internet up/down, etc.
+                internet up/down, etc. Disabling compiles queueEvent into a no-op (no EVENT MQTT).
 
         config HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
             bool "Proactive Heap Integrity Check (Heavy Load)"
@@ -414,6 +420,19 @@ menu "Heapwatch Connector"
 
                 Great for storing lots of pending telemetry during intermittent modem connection disconnects.
                 Recommended for modem applications that face constant signal interruptions.
+
+                The connector working set (MQTT queues, command/stream buffers, metrics
+                scratch, optional coredump slot) is one allocation. This option chooses
+                PSRAM vs internal DRAM for that block.
+
+        config HEAPWATCH_MEM_SCRATCH_BYTES
+            int "Connector JSON/FS scratch arena (bytes)"
+            default 8192
+            range 2048 65536
+            help
+                Resettable bump buffer inside the connector working set. Reserved at
+                init for cJSON/FS/OTA serialization so those paths do not need extra
+                heap churn. Unused by call sites until they opt in.
 
         config HEAPWATCH_STACKS_IN_PSRAM
             bool "Allocate Heapwatch Connector stacks in PSRAM (Recommended)"

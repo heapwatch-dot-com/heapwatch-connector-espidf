@@ -20,9 +20,12 @@
 #include <cstring>
 #include <string>
 #include <sys/time.h>
+#include <cinttypes>
 
 #include "esp_crt_bundle.h"
+#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #include "esp_core_dump.h"
+#endif
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -84,13 +87,13 @@ static void mark_publish_success() {
         static_cast<int64_t>(now.tv_sec) * 1000 + static_cast<int64_t>(now.tv_usec) / 1000;
 }
 
-static bool mqtt_try_publish(const char* topic, const char* payload, int payload_len, int qos,
+static bool mqtt_try_publish(const char* topic, const char* payload, int32_t payload_len, int32_t qos,
                              bool store) {
     if (g_mqtt_shutting_down || g_mqtt_client == nullptr) {
         return false;
     }
 
-    const int result =
+    const int32_t result =
         esp_mqtt_client_enqueue(g_mqtt_client, topic, payload, payload_len, qos, 0, store);
     if (result >= 0) {
         mark_publish_success();
@@ -117,7 +120,7 @@ static void try_publish_queue_head(QueueHandle_t queue) {
     }
 
     const char* topic = get_topic_for_message_type(msg.type);
-    const int payload_len = static_cast<int>(strlen(msg.payload));
+    const int32_t payload_len = static_cast<int32_t>(strlen(msg.payload));
     if (!mqtt_try_publish(topic, msg.payload, payload_len, 0, true)) {
         g_publish_blocked_queue = queue;
         return;
@@ -348,11 +351,11 @@ void heapwatch_dispatch_task(void* arg) {
         
         if (!g_mqtt_client) {
             ESP_LOGI(TAG,
-                     "heap before mqtt start: free=%u largest=%u internal_free=%u internal_largest=%u",
-                     static_cast<unsigned>(esp_get_free_heap_size()),
-                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)),
-                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+                     "heap before mqtt start: free=%" PRIu32 " largest=%" PRIu32 " internal_free=%" PRIu32 " internal_largest=%" PRIu32,
+                     static_cast<uint32_t>(esp_get_free_heap_size()),
+                     static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)),
+                     static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
 
             // Create MQTT client
             esp_mqtt_client_config_t config = {};
@@ -418,7 +421,7 @@ void heapwatch_dispatch_task(void* arg) {
         dispatcher_prev_mqtt_connected = true;
 
         if (g_mqtt_shutting_down) {
-            const int outbox_bytes = esp_mqtt_client_get_outbox_size(g_mqtt_client);
+            const int32_t outbox_bytes = esp_mqtt_client_get_outbox_size(g_mqtt_client);
             if (outbox_bytes <= 0) {
                 if (g_shutdown_action == HeapwatchShutdownAction::Restart) {
                     ESP_LOGI(TAG, "MQTT outbox drained — restarting");
@@ -445,18 +448,18 @@ void heapwatch_dispatch_task(void* arg) {
                 continue;
             }
             const char* coredump_topic = get_coredump_topic();
-            const int result = esp_mqtt_client_publish(g_mqtt_client, coredump_topic,
+            const int32_t result = esp_mqtt_client_publish(g_mqtt_client, coredump_topic,
                                                        core_dump_payload->payload,
                                                        core_dump_payload->payload_len, 0, 0);
             if (result < 0) {
-                ESP_LOGE(TAG, "Failed to publish core dump payload: %d", result);
+                ESP_LOGE(TAG, "Failed to publish core dump payload: %" PRId32, result);
                 if (xQueueSendToFront(coredump_queue, &core_dump_payload, 0) != pdTRUE) {
                     free(core_dump_payload);
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
             } else {
-                ESP_LOGI(TAG, "Published core dump payload (%u bytes)",
-                         static_cast<unsigned>(core_dump_payload->payload_len));
+                ESP_LOGI(TAG, "Published core dump payload (%" PRIu32 " bytes)",
+                         static_cast<uint32_t>(core_dump_payload->payload_len));
                 const esp_err_t erase_result = esp_core_dump_image_erase();
                 if (erase_result != ESP_OK) {
                     ESP_LOGW(TAG, "Failed to erase coredump after publish: %s",
@@ -478,17 +481,17 @@ void heapwatch_dispatch_task(void* arg) {
                 now - g_last_publish_blocked_log_tick >= pdMS_TO_TICKS(5000)) {
                 g_last_publish_blocked_log_tick = now;
                 ESP_LOGW(TAG,
-                         "publish backpressure: outbox=%d bytes tiny=%u small=%u large=%u",
-                         esp_mqtt_client_get_outbox_size(g_mqtt_client),
+                         "publish backpressure: outbox=%" PRId32 " bytes tiny=%" PRIu32 " small=%" PRIu32 " large=%" PRIu32,
+                         static_cast<int32_t>(esp_mqtt_client_get_outbox_size(g_mqtt_client)),
                          tiny_queue != nullptr
-                             ? static_cast<unsigned>(uxQueueMessagesWaiting(tiny_queue))
-                             : 0U,
+                             ? static_cast<uint32_t>(uxQueueMessagesWaiting(tiny_queue))
+                             : static_cast<uint32_t>(0),
                          small_queue != nullptr
-                             ? static_cast<unsigned>(uxQueueMessagesWaiting(small_queue))
-                             : 0U,
+                             ? static_cast<uint32_t>(uxQueueMessagesWaiting(small_queue))
+                             : static_cast<uint32_t>(0),
                          large_queue != nullptr
-                             ? static_cast<unsigned>(uxQueueMessagesWaiting(large_queue))
-                             : 0U);
+                             ? static_cast<uint32_t>(uxQueueMessagesWaiting(large_queue))
+                             : static_cast<uint32_t>(0));
             }
         }
 
@@ -554,8 +557,8 @@ void heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction action) {
 
     g_shutdown_action = action;
     g_mqtt_shutting_down = true;
-    ESP_LOGI(TAG, "Shutdown armed (action=%u) — blocking new MQTT publishes",
-             static_cast<unsigned>(action));
+    ESP_LOGI(TAG, "Shutdown armed (action=%" PRIu32 ") — blocking new MQTT publishes",
+             static_cast<uint32_t>(action));
 }
 
 void heapwatch_dispatcher_begin_shutdown(void) {
@@ -568,7 +571,7 @@ void heapwatch_dispatcher_disarm_shutdown(void) {
     ESP_LOGI(TAG, "Shutdown disarmed");
 }
 
-int heapwatch_dispatcher_get_outbox_size(void) {
+int32_t heapwatch_dispatcher_get_outbox_size(void) {
     if (g_mqtt_client == nullptr || !g_mqtt_connected) {
         return 0;
     }
@@ -585,8 +588,8 @@ bool heapwatch_dispatcher_publish_command_response(const char* suffix, const cha
     char topic[160];
     std::snprintf(topic, sizeof(topic), "%s/response/device/%s/%s", tenant, uid, suffix);
 
-    const int payload_len = static_cast<int>(strlen(json_payload));
-    const int result = esp_mqtt_client_enqueue(g_mqtt_client, topic, json_payload, payload_len, 1, 0,
+    const int32_t payload_len = static_cast<int32_t>(strlen(json_payload));
+    const int32_t result = esp_mqtt_client_enqueue(g_mqtt_client, topic, json_payload, payload_len, 1, 0,
                                                false);
     if (result >= 0) {
         mark_publish_success();

@@ -1,4 +1,5 @@
 #include "EnrollStateLedIndicator.h"
+#include <cinttypes>
 
 #include "DeviceEnrollmentClient.h"
 
@@ -29,7 +30,7 @@ void driveLed(bool logical_on) {
 #else
     const bool active_low = false;
 #endif
-    const int level = (logical_on != active_low) ? 1 : 0;
+    const uint32_t level = (logical_on != active_low) ? 1u : 0u;
     gpio_set_level(static_cast<gpio_num_t>(CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO), level);
 }
 
@@ -64,7 +65,7 @@ void blinkEqualOnOff(uint32_t on_ms, uint32_t off_ms, EnrollStateLedPhase phase)
 
 void runDoubleBlink(EnrollStateLedPhase phase) {
     while (samplePhaseMatches(phase)) {
-        for (int i = 0; i < 2; ++i) {
+        for (int32_t i = 0; i < 2; ++i) {
             driveLed(true);
             sleepMs(150);
             if (!samplePhaseMatches(phase)) {
@@ -83,7 +84,7 @@ void runDoubleBlink(EnrollStateLedPhase phase) {
 
 void runTripleBlink(EnrollStateLedPhase phase) {
     while (samplePhaseMatches(phase)) {
-        for (int i = 0; i < 3; ++i) {
+        for (int32_t i = 0; i < 3; ++i) {
             driveLed(true);
             sleepMs(120);
             if (!samplePhaseMatches(phase)) {
@@ -104,7 +105,7 @@ void runRejectedPattern(EnrollStateLedPhase phase) {
     while (samplePhaseMatches(phase)) {
         driveLed(false);
         sleepMs(1200);
-        for (int i = 0; i < 3; ++i) {
+        for (int32_t i = 0; i < 3; ++i) {
             if (!samplePhaseMatches(phase)) {
                 return;
             }
@@ -118,7 +119,7 @@ void runRejectedPattern(EnrollStateLedPhase phase) {
 
 void runSosPattern(EnrollStateLedPhase phase) {
     while (samplePhaseMatches(phase)) {
-        for (int i = 0; i < 3; ++i) {
+        for (int32_t i = 0; i < 3; ++i) {
             driveLed(true);
             sleepMs(120);
             driveLed(false);
@@ -129,7 +130,7 @@ void runSosPattern(EnrollStateLedPhase phase) {
         sleepMs(400);
         driveLed(false);
         sleepMs(200);
-        for (int i = 0; i < 3; ++i) {
+        for (int32_t i = 0; i < 3; ++i) {
             driveLed(true);
             sleepMs(120);
             driveLed(false);
@@ -223,12 +224,12 @@ void startIndicator() {
     }
 
     g_started = true;
-    ESP_LOGI(TAG, "Enroll state LED on GPIO %d (active_low=%d)",
-             CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO,
+    ESP_LOGI(TAG, "Enroll state LED on GPIO %" PRId32 " (active_low=%" PRId32 ")",
+             static_cast<int32_t>(CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO),
 #if defined(CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW) && CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
-             1);
+             static_cast<int32_t>(1));
 #else
-             0);
+             static_cast<int32_t>(0));
 #endif
 }
 

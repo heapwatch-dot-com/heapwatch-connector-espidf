@@ -40,10 +40,10 @@ struct WorkItem {
     char path[FS_PATH_MAX] = {};
     char path2[FS_PATH_MAX] = {};
     char sha256[FS_SHA256_HEX_MAX] = {};
-    int page = 1;
-    int per_page = 25;
-    int from_line = 1;
-    int to_line = 1;
+    int32_t page = 1;
+    int32_t per_page = 25;
+    int32_t from_line = 1;
+    int32_t to_line = 1;
     bool replace = false;
     int64_t size = 0;
 };
@@ -62,7 +62,7 @@ bool readStringField(cJSON* root, const char* key, char* out, size_t out_len) {
     return true;
 }
 
-bool readIntField(cJSON* root, const char* key, int* out) {
+bool readIntField(cJSON* root, const char* key, int32_t* out) {
     const cJSON* item = cJSON_GetObjectItem(root, key);
     if (!cJSON_IsNumber(item)) {
         return false;
@@ -278,8 +278,8 @@ bool handleMqttCommand(const char* suffix, const char* command_id, const char* p
         work.kind = WorkKind::List;
         valid = readStringField(root, "path", work.path, sizeof(work.path));
         if (valid) {
-            int page = 1;
-            int per_page = 25;
+            int32_t page = 1;
+            int32_t per_page = 25;
             readIntField(root, "page", &page);
             readIntField(root, "per_page", &per_page);
             work.page = page;

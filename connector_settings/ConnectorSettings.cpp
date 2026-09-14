@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "nvs.h"
@@ -44,13 +45,13 @@ constexpr size_t MAX_CATALOG_FIELDS = 32;
 constexpr FieldSchema HEAPWATCH_FIELDS[] = {
     {KEY_TEL_INT_MS, "Telemetry interval",
      "Interval between automatic telemetry metric collection cycles.", "int", false, true, "ms",
-     static_cast<int>(MIN_TELEMETRY_MS), static_cast<int>(MAX_TELEMETRY_MS)},
+     static_cast<int32_t>(MIN_TELEMETRY_MS), static_cast<int32_t>(MAX_TELEMETRY_MS)},
     {KEY_LOG_LVL, "Log relay level",
      "Minimum ESP-IDF log severity relayed to Heapwatch over MQTT.", "enum", false, true,
      nullptr, HEAPWATCH_SEVERITY_DEBUG, HEAPWATCH_SEVERITY_CRITICAL},
     {KEY_OUT_DRAIN_MS, "Outbox drain timeout",
      "Maximum time to drain the MQTT outbox before terminal offline actions.", "int", false,
-     true, "ms", static_cast<int>(MIN_OUTBOX_DRAIN_MS), static_cast<int>(MAX_OUTBOX_DRAIN_MS)},
+     true, "ms", static_cast<int32_t>(MIN_OUTBOX_DRAIN_MS), static_cast<int32_t>(MAX_OUTBOX_DRAIN_MS)},
     {KEY_TENANT_SLUG, "Workspace slug",
      "Heapwatch workspace identifier for MQTT and API routing.", "string", false, false, nullptr, 0,
      0},
@@ -280,11 +281,11 @@ bool writeU8(nvs_handle_t handle, const char* key, uint8_t value) {
     return nvs_set_u8(handle, key, value) == ESP_OK;
 }
 
-bool validateIntField(const FieldSchema& field, const cJSON* value, int* parsed) {
+bool validateIntField(const FieldSchema& field, const cJSON* value, int32_t* parsed) {
     if (!cJSON_IsNumber(value)) {
         return false;
     }
-    const int as_int = static_cast<int>(value->valuedouble);
+    const int32_t as_int = static_cast<int32_t>(value->valuedouble);
     if (as_int < field.min_value || as_int > field.max_value) {
         return false;
     }
@@ -345,7 +346,7 @@ void addEnumOptions(cJSON* field_obj, const char* nvs_key) {
     cJSON* options = cJSON_CreateArray();
     cJSON_AddItemToObject(field_obj, "options", options);
     struct Option {
-        int value;
+        int32_t value;
         const char* label;
     };
     static const Option LOG_OPTIONS[] = {
@@ -358,7 +359,7 @@ void addEnumOptions(cJSON* field_obj, const char* nvs_key) {
     for (const auto& opt : LOG_OPTIONS) {
         cJSON* option = cJSON_CreateObject();
         char value_buf[16];
-        std::snprintf(value_buf, sizeof(value_buf), "%d", opt.value);
+        std::snprintf(value_buf, sizeof(value_buf), "%" PRId32, opt.value);
         cJSON_AddStringToObject(option, "value", value_buf);
         cJSON_AddStringToObject(option, "label", opt.label);
         cJSON_AddItemToArray(options, option);
@@ -427,7 +428,7 @@ void addCatalogFieldToJson(cJSON* values, nvs_handle_t handle, const FieldSchema
     }
 }
 
-bool applyParsedToCache(const char* nvs_key, int parsed) {
+bool applyParsedToCache(const char* nvs_key, int32_t parsed) {
     if (strcmp(nvs_key, KEY_LOG_LVL) == 0) {
         g_cache.min_relay_severity = static_cast<uint8_t>(parsed);
         return true;
@@ -601,7 +602,7 @@ bool writeJsonValueToNvs(nvs_handle_t handle, const char* key, const cJSON* valu
         return writeU8(handle, key, cJSON_IsTrue(value) ? 1 : 0);
     }
     if (cJSON_IsNumber(value)) {
-        const int as_int = static_cast<int>(value->valuedouble);
+        const int32_t as_int = static_cast<int32_t>(value->valuedouble);
         if (writeU32(handle, key, static_cast<uint32_t>(as_int))) {
             return true;
         }
@@ -619,10 +620,10 @@ void init() {
     registerManagedCatalog("heapwatch", "Heapwatch Connector", NVS_NAMESPACE, HEAPWATCH_FIELDS,
                            sizeof(HEAPWATCH_FIELDS) / sizeof(HEAPWATCH_FIELDS[0]));
     reloadFromNvs();
-    ESP_LOGI(TAG, "telemetry=%u ms log_lvl=%u outbox_drain=%u ms",
-             static_cast<unsigned>(g_cache.telemetry_interval_ms),
-             static_cast<unsigned>(g_cache.min_relay_severity),
-             static_cast<unsigned>(g_cache.outbox_drain_timeout_ms));
+    ESP_LOGI(TAG, "telemetry=%" PRIu32 " ms log_lvl=%" PRIu32 " outbox_drain=%" PRIu32 " ms",
+             static_cast<uint32_t>(g_cache.telemetry_interval_ms),
+             static_cast<uint32_t>(g_cache.min_relay_severity),
+             static_cast<uint32_t>(g_cache.outbox_drain_timeout_ms));
 }
 
 uint32_t telemetryIntervalMs() { return g_cache.telemetry_interval_ms; }
@@ -703,7 +704,7 @@ bool setValue(const char* nvs_namespace, const char* nvs_key, const cJSON* value
     }
 
     if (strcmp(field->type, "int") == 0 || strcmp(field->type, "enum") == 0) {
-        int parsed = 0;
+        int32_t parsed = 0;
         if (!validateIntField(*field, value, &parsed)) {
             if (error_out != nullptr && error_out_len > 0) {
                 snprintf(error_out, error_out_len, "invalid value for %s", nvs_key);
@@ -813,8 +814,8 @@ bool revertManagedValues(const char* nvs_namespace, const cJSON* keys, char* err
     }
 
     if (keys != nullptr && cJSON_IsArray(keys)) {
-        const int count = cJSON_GetArraySize(keys);
-        for (int i = 0; i < count; ++i) {
+        const int32_t count = cJSON_GetArraySize(keys);
+        for (int32_t i = 0; i < count; ++i) {
             const cJSON* item = cJSON_GetArrayItem(keys, i);
             if (!cJSON_IsString(item) || item->valuestring == nullptr) {
                 if (error_out != nullptr && error_out_len > 0) {

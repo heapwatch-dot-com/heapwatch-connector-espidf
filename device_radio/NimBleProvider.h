@@ -18,7 +18,7 @@ public:
     bool isScanning() const override;
 
     void onHostSync();
-    void onGapEvent(int event_type, void* event);
+    void onGapEvent(uint8_t event_type, void* event);
 
 private:
     void updateMacFromStack();

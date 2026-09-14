@@ -5,6 +5,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -20,7 +21,7 @@
 
 namespace heapwatch::device_radio {
 
-void emitBleEvent(int event_id, const char* detail, const char* peer_addr);
+void emitBleEvent(int32_t event_id, const char* detail, const char* peer_addr);
 
 namespace {
 
@@ -43,7 +44,7 @@ bool append(char* out, size_t out_len, size_t* offset, const char* fmt, ...) {
     }
     va_list args;
     va_start(args, fmt);
-    const int written = vsnprintf(out + *offset, out_len - *offset, fmt, args);
+    const int32_t written = vsnprintf(out + *offset, out_len - *offset, fmt, args);
     va_end(args);
     if (written < 0 || static_cast<size_t>(written) >= out_len - *offset) {
         return false;
@@ -59,8 +60,8 @@ bool append_json_string(char* out, size_t out_len, size_t* offset, const char* v
     if (!append(out, out_len, offset, "\"")) {
         return false;
     }
-    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(value); *p != '\0'; ++p) {
-        const unsigned char c = *p;
+    for (const uint8_t* p = reinterpret_cast<const uint8_t*>(value); *p != '\0'; ++p) {
+        const uint8_t c = *p;
         if (c == '"' || c == '\\') {
             if (!append(out, out_len, offset, "\\%c", c)) {
                 return false;
@@ -113,16 +114,16 @@ void onScanPeer(const ScanPeer& peer, void* /*ctx*/) {
     char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
-                 "{\"command_id\":\"%s\",\"addr\":\"%s\",\"rssi\":%d,\"name\":\"%s\","
-                 "\"tsms\":%llu,\"utms\":%llu}",
-                 g_scan_command_id, peer.addr, static_cast<int>(peer.rssi), peer.name,
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 "{\"command_id\":\"%s\",\"addr\":\"%s\",\"rssi\":%" PRId32 ",\"name\":\"%s\","
+                 "\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "}",
+                 g_scan_command_id, peer.addr, static_cast<int32_t>(peer.rssi), peer.name,
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"command_id\":null,\"addr\":\"%s\",\"rssi\":%d,\"name\":\"%s\",\"tsms\":%llu,"
-                 "\"utms\":%llu}",
-                 peer.addr, static_cast<int>(peer.rssi), peer.name,
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 "{\"command_id\":null,\"addr\":\"%s\",\"rssi\":%" PRId32 ",\"name\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "\"utms\":%" PRIu64 "}",
+                 peer.addr, static_cast<int32_t>(peer.rssi), peer.name,
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     }
 
     heapwatch::stream_ingress::sendBleScanJson(line);
@@ -137,15 +138,15 @@ void onScanComplete(bool success, const char* message, void* /*ctx*/) {
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"command_id\":\"%s\",\"done\":true,\"ok\":%s,\"message\":\"%s\","
-                 "\"tsms\":%llu,\"utms\":%llu}",
+                 "\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "}",
                  g_scan_command_id, success ? "true" : "false", message != nullptr ? message : "",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"command_id\":null,\"done\":true,\"ok\":%s,\"message\":\"%s\",\"tsms\":%llu,"
-                 "\"utms\":%llu}",
+                 "{\"command_id\":null,\"done\":true,\"ok\":%s,\"message\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "\"utms\":%" PRIu64 "}",
                  success ? "true" : "false", message != nullptr ? message : "",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     }
 
     heapwatch::stream_ingress::sendBleScanJson(line);
@@ -223,8 +224,8 @@ bool buildPayload(char* out, size_t out_len) {
         if (!append_json_string(out, out_len, &offset, conn.peer_addr)) {
             return false;
         }
-        if (!append(out, out_len, &offset, ",\"conn_handle\":%u,\"role\":\"%s\"}",
-                    static_cast<unsigned>(conn.conn_handle),
+        if (!append(out, out_len, &offset, ",\"conn_handle\":%" PRIu32 ",\"role\":\"%s\"}",
+                    static_cast<uint32_t>(conn.conn_handle),
                     conn.is_central ? "central" : "peripheral")) {
             return false;
         }
@@ -252,7 +253,7 @@ bool buildPayload(char* out, size_t out_len) {
     return true;
 }
 
-void emitBleEvent(int event_id, const char* detail, const char* peer_addr) {
+void emitBleEvent(int32_t event_id, const char* detail, const char* peer_addr) {
 #if CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
     HeapwatchConnector::getInstance().queueEvent(event_id);
 #endif
@@ -264,16 +265,16 @@ void emitBleEvent(int event_id, const char* detail, const char* peer_addr) {
     char line[JSON_LINE_MAX] = {};
     if (peer_addr != nullptr && peer_addr[0] != '\0') {
         snprintf(line, sizeof(line),
-                 "{\"event_id\":%d,\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%llu,"
-                 "\"utms\":%llu}",
+                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "\"utms\":%" PRIu64 "}",
                  event_id, detail != nullptr ? detail : "", peer_addr,
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"event_id\":%d,\"detail\":\"%s\",\"peer_addr\":null,\"tsms\":%llu,"
-                 "\"utms\":%llu}",
+                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":null,\"tsms\":%" PRIu64 ","
+                 "\"utms\":%" PRIu64 "}",
                  event_id, detail != nullptr ? detail : "",
-                 static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
     }
 
     heapwatch::stream_ingress::sendBleEventJson(line);

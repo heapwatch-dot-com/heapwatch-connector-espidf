@@ -27,7 +27,7 @@
 struct HeapwatchConnectorLogContext {
     const char* task;
     const char* tag;
-    int core;
+    int32_t core;
 };
 
 enum MqttMessageType : uint8_t {
@@ -129,7 +129,7 @@ public:
     bool uploadCoreDumpFromFlashIfPresent();
     void queueParameter(const char* name, int64_t value);
     void queueParameter(const char* name, double value);
-    void queueEvent(int eventTypeId, int32_t boot_cycle = -1);
+    void queueEvent(int32_t eventTypeId, int32_t boot_cycle = -1);
     /** Device → cloud OTA byte progress on `{tenant}/device/{uid}/ota/progress`. */
     void queueOtaProgress(int64_t ota_session_id, const char* phase, int64_t bytes, int64_t total);
     void queueSpecs();

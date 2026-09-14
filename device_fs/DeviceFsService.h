@@ -28,9 +28,9 @@ cJSON* buildVolumesResult();
 /** Partitions (flash table) + mounted VFS volumes. */
 cJSON* buildStorageResult();
 
-cJSON* buildListResult(const char* path, int page, int per_page, FsError* error);
+cJSON* buildListResult(const char* path, int32_t page, int32_t per_page, FsError* error);
 
-cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* error);
+cJSON* buildReadResult(const char* path, int32_t from_line, int32_t to_line, FsError* error);
 
 bool deleteEntry(const char* path, FsError* error);
 

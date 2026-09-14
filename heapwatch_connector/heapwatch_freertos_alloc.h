@@ -16,7 +16,9 @@
 #ifndef HEAPWATCH_FREERTOS_ALLOC_H
 #define HEAPWATCH_FREERTOS_ALLOC_H
 
+#include <cinttypes>
 #include <cstdlib>
+#include <cinttypes>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -45,8 +47,8 @@ inline QueueHandle_t heapwatch_queue_create(UBaseType_t uxQueueLength, UBaseType
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
     QueueHandle_t queue = xQueueCreateWithCaps(uxQueueLength, uxItemSize, HEAPWATCH_PSRAM_CAPS);
     if (queue == nullptr) {
-        ESP_LOGE("HwMem", "FATAL: PSRAM queue create failed (len=%u item=%u)",
-                 static_cast<unsigned>(uxQueueLength), static_cast<unsigned>(uxItemSize));
+        ESP_LOGE("HwMem", "FATAL: PSRAM queue create failed (len=%" PRIu32 " item=%" PRIu32 ")",
+                 static_cast<uint32_t>(uxQueueLength), static_cast<uint32_t>(uxItemSize));
         abort();
     }
     return queue;
@@ -66,14 +68,14 @@ inline void* heapwatch_data_alloc(size_t bytes) {
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
     void* p = heap_caps_calloc(1, bytes, HEAPWATCH_PSRAM_CAPS);
     if (p == nullptr) {
-        ESP_LOGE("HwMem", "FATAL: PSRAM data alloc %u bytes failed", static_cast<unsigned>(bytes));
+        ESP_LOGE("HwMem", "FATAL: PSRAM data alloc %" PRIu32 " bytes failed", static_cast<uint32_t>(bytes));
         abort();
     }
     return p;
 #else
     void* p = calloc(1, bytes);
     if (p == nullptr) {
-        ESP_LOGE("HwMem", "FATAL: DRAM data alloc %u bytes failed", static_cast<unsigned>(bytes));
+        ESP_LOGE("HwMem", "FATAL: DRAM data alloc %" PRIu32 " bytes failed", static_cast<uint32_t>(bytes));
         abort();
     }
     return p;
@@ -89,6 +91,30 @@ inline void heapwatch_data_free(void* p) {
 #else
     free(p);
 #endif
+}
+
+/**
+ * Static queue whose storage and control block already live in the working set.
+ * Always vQueueDelete (never WithCaps) — the blob owns the memory.
+ * Abort if create fails.
+ */
+inline QueueHandle_t heapwatch_queue_create_static(UBaseType_t uxQueueLength, UBaseType_t uxItemSize,
+                                                   uint8_t* storage, StaticQueue_t* control,
+                                                   const char* name) {
+    QueueHandle_t queue = xQueueCreateStatic(uxQueueLength, uxItemSize, storage, control);
+    if (queue == nullptr) {
+        ESP_LOGE("HwMem", "FATAL: static queue %s failed (len=%" PRIu32 " item=%" PRIu32 ")",
+                 name != nullptr ? name : "?", static_cast<uint32_t>(uxQueueLength),
+                 static_cast<uint32_t>(uxItemSize));
+        abort();
+    }
+    return queue;
+}
+
+inline void heapwatch_queue_delete_static(QueueHandle_t queue) {
+    if (queue != nullptr) {
+        vQueueDelete(queue);
+    }
 }
 
 /** Pair with heapwatch_queue_create — WithCaps queues must use vQueueDeleteWithCaps. */

@@ -16,6 +16,7 @@
 #include "sleep_tracking/SleepTracking.h"
 
 #include <cstring>
+#include <cinttypes>
 
 #include "esp_event.h"
 #include "esp_log.h"
@@ -162,14 +163,14 @@ void onNetIpEvent(void*, esp_event_base_t event_base, int32_t event_id, void*) {
         if (connector.getStatus().initialized) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_CONNECTED);
         }
-        ESP_LOGI(TAG, "Network IP acquired (event %ld)", static_cast<long>(event_id));
+        ESP_LOGI(TAG, "Network IP acquired (event %" PRId32 ")", static_cast<int32_t>(event_id));
         onRuntimeConnectivityChanged();
     } else if (event_id == IP_EVENT_STA_LOST_IP || event_id == IP_EVENT_ETH_LOST_IP) {
         connector.setNetworkReady(false);
         if (connector.getStatus().initialized) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
         }
-        ESP_LOGI(TAG, "Network IP lost (event %ld)", static_cast<long>(event_id));
+        ESP_LOGI(TAG, "Network IP lost (event %" PRId32 ")", static_cast<int32_t>(event_id));
         onRuntimeConnectivityChanged();
     }
 }

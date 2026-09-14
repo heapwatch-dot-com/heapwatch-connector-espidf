@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-14
+
+### Changed
+- Connector integers use fixed-width types (`int32_t`, `uint8_t`, `uint64_t`, …) instead of unsized `int` / `unsigned` / `long`. Public `heapwatch_queue_event`, log-context `core`, and config catalog min/max are `int32_t` (same 32-bit ABI on ESP32). Libc/IDF/NimBLE/POSIX signatures that require `int` (log vprintf hook, sockets, NimBLE callbacks) are unchanged.
+- Connector long-lived buffers, MQTT/command/stream queues, the coredump slot, and metrics task-scan scratch are one typed working set (`memory_manager/`), allocated once at init (PSRAM when `CONFIG_HEAPWATCH_ALLOCATE_DATA_IN_PSRAM` is on). Alloc failure still aborts. `heapwatch_deinit()` frees the block only after dispatcher, metrics, command, and stream workers have stopped; otherwise it leaks the block, same as the old queue policy. Metrics no longer `malloc`s a `TaskStatus_t` table every telemetry tick. Menuconfig **Connector JSON/FS scratch arena** (`CONFIG_HEAPWATCH_MEM_SCRATCH_BYTES`, default 8 KiB) reserves a resettable bump buffer in that working set.
+- Features-menu Kconfig `n` now **compiles the feature out** (`#if CONFIG_HEAPWATCH_ENABLE_*`): no log ring / `hw_log_forward`, no `hw_ota` or OTA download buffer, no coredump queue/HTTPS upload, no task-stats table, and heap/CPU keys are omitted from the metrics blob rather than sent as zeros. Command catalog omits `ota/*` when OTA is off. Default-on builds stay wire-identical.
+
 ## [0.14.1] - 2026-09-14
 
 ### Added

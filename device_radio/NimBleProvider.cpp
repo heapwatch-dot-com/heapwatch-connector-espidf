@@ -180,7 +180,7 @@ void NimBleProvider::stopScan() {
 
 bool NimBleProvider::isScanning() const { return g_scanning; }
 
-void NimBleProvider::onGapEvent(int event_type, void* event_ptr) {
+void NimBleProvider::onGapEvent(uint8_t event_type, void* event_ptr) {
     auto* event = static_cast<struct ble_gap_event*>(event_ptr);
 
     switch (event_type) {
@@ -252,7 +252,7 @@ bool NimBleProvider::startScan(bool, uint32_t, ScanPeerCallback, ScanCompleteCal
 void NimBleProvider::stopScan() {}
 bool NimBleProvider::isScanning() const { return false; }
 void NimBleProvider::onHostSync() {}
-void NimBleProvider::onGapEvent(int, void*) {}
+void NimBleProvider::onGapEvent(uint8_t, void*) {}
 
 }  // namespace heapwatch::device_radio
 

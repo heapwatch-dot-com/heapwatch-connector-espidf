@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -290,8 +291,8 @@ bool buildFlushPayload(char* out, size_t out_size) {
     }
 
     size_t pos = 0;
-    pos += snprintf(out + pos, out_size - pos, "{\"tsms\":%llu,\"utms\":%llu",
-                     static_cast<unsigned long long>(tsms), static_cast<unsigned long long>(utms));
+    pos += snprintf(out + pos, out_size - pos, "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64,
+                     static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS && pos < out_size; ++i) {
         ParamSlot& slot = g_slots[i];
@@ -303,8 +304,8 @@ bool buildFlushPayload(char* out, size_t out_size) {
             if (slot_flag(slot, SLOT_IS_DOUBLE)) {
                 pos += snprintf(out + pos, out_size - pos, ",\"%s\":%.6f", slot.slug, slot.double_value);
             } else {
-                pos += snprintf(out + pos, out_size - pos, ",\"%s\":%lld", slot.slug,
-                                 static_cast<long long>(slot.int_value));
+                pos += snprintf(out + pos, out_size - pos, ",\"%s\":%" PRId64, slot.slug,
+                                 static_cast<int64_t>(slot.int_value));
             }
         }
 
@@ -320,12 +321,12 @@ bool buildFlushPayload(char* out, size_t out_size) {
                 }
             } else {
                 if (slot_flag(slot, SLOT_HAS_MIN)) {
-                    pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%lld", slot.slug,
-                                     static_cast<long long>(slot.int_min));
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%" PRId64, slot.slug,
+                                     static_cast<int64_t>(slot.int_min));
                 }
                 if (slot_flag(slot, SLOT_HAS_MAX) && pos < out_size) {
-                    pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%lld", slot.slug,
-                                     static_cast<long long>(slot.int_max));
+                    pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%" PRId64, slot.slug,
+                                     static_cast<int64_t>(slot.int_max));
                 }
             }
         }

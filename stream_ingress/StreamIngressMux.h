@@ -14,6 +14,15 @@ constexpr size_t MAX_CHANNEL_ID_LEN = 64;
 /** Hard cap for one mux frame payload — light streaming chunk size. */
 constexpr size_t MAX_PAYLOAD_LEN = 4 * 1024;
 constexpr size_t COALESCE_MAX_BYTES = 4096;
+constexpr size_t ENCODE_MAX = MAX_PAYLOAD_LEN + 128;
+
+struct OutboundSlot {
+    char channel_id[MAX_CHANNEL_ID_LEN + 1] = {};
+    size_t len = 0;
+    bool busy = false;
+    uint8_t frame_type = FRAME_TYPE_DATA;
+    uint8_t data[MAX_PAYLOAD_LEN] = {};
+};
 
 struct Frame {
     char channel_id[MAX_CHANNEL_ID_LEN + 1];

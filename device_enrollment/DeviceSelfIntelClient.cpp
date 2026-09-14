@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "device_credentials/DeviceCredentialsStore.h"
@@ -74,7 +75,7 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
     esp_http_client_set_header(client, "Accept", "application/json");
 
     const esp_err_t err = esp_http_client_perform(client);
-    const int status = esp_http_client_get_status_code(client);
+    const int32_t status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
@@ -89,7 +90,7 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
                      "Heapwatch stack or a deleted device; re-enroll or erase NVS (namespace "
                      "'heapwatch')");
         } else {
-            ESP_LOGE(TAG, "HTTP status %d body=%s", status, response.data);
+            ESP_LOGE(TAG, "HTTP status %" PRId32 " body=%s", status, response.data);
         }
         return false;
     }
@@ -115,8 +116,8 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
     *last_boot_cycle_out = static_cast<uint32_t>(item->valuedouble);
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Self-intel last_boot_cycle=%lu",
-             static_cast<unsigned long>(*last_boot_cycle_out));
+    ESP_LOGI(TAG, "Self-intel last_boot_cycle=%" PRIu32,
+             static_cast<uint32_t>(*last_boot_cycle_out));
     return true;
 }
 

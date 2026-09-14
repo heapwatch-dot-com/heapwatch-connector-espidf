@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cinttypes>
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -84,7 +85,7 @@ void uploadConfigSnapshot(const char* nvs_namespace, bool force) {
         g_full_partition_uploaded_this_boot = true;
     }
 
-    ESP_LOGI(TAG, "Config snapshot streamed (%u bytes, ns=%s)", static_cast<unsigned>(body_len),
+    ESP_LOGI(TAG, "Config snapshot streamed (%" PRIu32 " bytes, ns=%s)", static_cast<uint32_t>(body_len),
              nvs_namespace);
 }
 

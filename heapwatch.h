@@ -98,7 +98,7 @@ typedef struct {
 typedef struct {
     const char* task;
     const char* tag;
-    int core;
+    int32_t core;
 } heapwatch_log_context_t;
 
 /** CMD1: custom inbound MQTT command handler (see heapwatch_register_command). */
@@ -158,7 +158,7 @@ bool heapwatch_keep_running(void);
  * Queue a standard event. Pass boot_cycle < 0 to use the connector’s current boot cycle.
  * The MQTT payload always includes boot_cycle.
  */
-esp_err_t heapwatch_queue_event(int event_type_id, int32_t boot_cycle);
+esp_err_t heapwatch_queue_event(int32_t event_type_id, int32_t boot_cycle);
 
 esp_err_t heapwatch_queue_log(HeapwatchConnectorSeverity severity, const char* message,
                               const heapwatch_log_context_t* context);
@@ -226,8 +226,8 @@ typedef struct {
     bool secret;
     bool patchable;
     const char* unit;
-    int min_value;
-    int max_value;
+    int32_t min_value;
+    int32_t max_value;
 } heapwatch_config_field_def_t;
 
 typedef struct {

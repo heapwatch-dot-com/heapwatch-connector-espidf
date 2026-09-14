@@ -36,8 +36,9 @@
 #include "connector_settings/ConnectorSettings.h"
 #include "device_command/ConfigCatalog.h"
 #include "device_fs/FsVolumeManager.h"
+#if CONFIG_HEAPWATCH_ENABLE_OTA
 #include "device_ota/OtaService.h"
-#include "device_ota/OtaService.h"
+#endif
 #include "../stream_ingress/StreamIngressClient.h"
 
 namespace {
@@ -106,10 +107,14 @@ void heapwatch_set_keep_running(bool keep_running) {
 }
 
 bool heapwatch_keep_running(void) {
+#if CONFIG_HEAPWATCH_ENABLE_OTA
     return g_host_keep_running || heapwatch::device_ota::isInProgress();
+#else
+    return g_host_keep_running;
+#endif
 }
 
-esp_err_t heapwatch_queue_event(int event_type_id, int32_t boot_cycle) {
+esp_err_t heapwatch_queue_event(int32_t event_type_id, int32_t boot_cycle) {
     const esp_err_t ready = require_queue_ready();
     if (ready != ESP_OK) {
         return ready;

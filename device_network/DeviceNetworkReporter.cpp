@@ -4,6 +4,7 @@
 #include "device_network/NetifTraffic.h"
 
 #include <cstdarg>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 
@@ -42,7 +43,7 @@ bool append(char* out, size_t out_len, size_t* offset, const char* fmt, ...) {
     }
     va_list args;
     va_start(args, fmt);
-    const int written = vsnprintf(out + *offset, out_len - *offset, fmt, args);
+    const int32_t written = vsnprintf(out + *offset, out_len - *offset, fmt, args);
     va_end(args);
     if (written < 0 || static_cast<size_t>(written) >= out_len - *offset) {
         return false;
@@ -59,8 +60,8 @@ bool append_json_string(char* out, size_t out_len, size_t* offset, const char* v
     if (!append(out, out_len, offset, "\"")) {
         return false;
     }
-    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(value); *p != '\0'; ++p) {
-        const unsigned char c = *p;
+    for (const uint8_t* p = reinterpret_cast<const uint8_t*>(value); *p != '\0'; ++p) {
+        const uint8_t c = *p;
         if (c == '"' || c == '\\') {
             if (!append(out, out_len, offset, "\\%c", c)) {
                 return false;
@@ -105,10 +106,10 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
         desc = "";
     }
 
-    const int flags = static_cast<int>(esp_netif_get_flags(netif));
+    const uint32_t flags = static_cast<uint32_t>(esp_netif_get_flags(netif));
     const bool up = esp_netif_is_netif_up(netif);
     const bool is_default = (default_netif != nullptr && netif == default_netif);
-    const int route_prio = esp_netif_get_route_prio(netif);
+    const int32_t route_prio = esp_netif_get_route_prio(netif);
 
     if (!append(out, out_len, offset, "%s{\"key\":", *first ? "" : ",")) {
         return false;
@@ -122,7 +123,7 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
     if (!append_json_string(out, out_len, offset, desc)) {
         return false;
     }
-    if (!append(out, out_len, offset, ",\"flags\":%d,\"up\":%s,\"is_default\":%s,\"route_prio\":%d",
+    if (!append(out, out_len, offset, ",\"flags\":%" PRIu32 ",\"up\":%s,\"is_default\":%s,\"route_prio\":%" PRId32,
                 flags, up ? "true" : "false", is_default ? "true" : "false", route_prio)) {
         return false;
     }
@@ -152,7 +153,7 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
 
 #if CONFIG_LWIP_IPV6
     esp_ip6_addr_t ip6[3];
-    int ip6_count = esp_netif_get_all_ip6(netif, ip6);
+    int32_t ip6_count = esp_netif_get_all_ip6(netif, ip6);
     if (ip6_count > 3) {
         ip6_count = 3;
     }
@@ -160,7 +161,7 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
         if (!append(out, out_len, offset, ",\"ip6\":[")) {
             return false;
         }
-        for (int i = 0; i < ip6_count; ++i) {
+        for (int32_t i = 0; i < ip6_count; ++i) {
             char ip6_str[48] = {};
             ip6addr_ntoa_r(reinterpret_cast<const ip6_addr_t*>(&ip6[i]), ip6_str, sizeof(ip6_str));
             if (!append(out, out_len, offset, "%s\"%s\"", i == 0 ? "" : ",", ip6_str)) {
@@ -194,8 +195,8 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
             if (!append_json_string(out, out_len, offset, reinterpret_cast<const char*>(ap.ssid))) {
                 return false;
             }
-            if (!append(out, out_len, offset, ",\"rssi_dbm\":%d,\"channel\":%u}",
-                        static_cast<int>(ap.rssi), static_cast<unsigned>(ap.primary))) {
+            if (!append(out, out_len, offset, ",\"rssi_dbm\":%" PRId32 ",\"channel\":%" PRIu32 "}",
+                        static_cast<int32_t>(ap.rssi), static_cast<uint32_t>(ap.primary))) {
                 return false;
             }
         }
@@ -335,7 +336,7 @@ bool buildPayload(char* out, size_t out_len) {
         return false;
     }
 
-    ESP_LOGI(TAG, "Built network payload with %u netif(s)", static_cast<unsigned>(netif_count));
+    ESP_LOGI(TAG, "Built network payload with %" PRIu32 " netif(s)", static_cast<uint32_t>(netif_count));
     return true;
 }
 
