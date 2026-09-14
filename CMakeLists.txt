@@ -1,23 +1,5 @@
 file(GLOB_RECURSE HEAPWATCH_CONNECTOR_SRCS
-    "${CMAKE_CURRENT_SOURCE_DIR}/boot_cycle/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/connector_boot_sync/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/connector_settings/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_command/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_credential_rotation/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_credentials/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_enrollment/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_fs/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_identity/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_network/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_ota/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_radio/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_specs/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_dispatcher/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/metrics_collector/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/memory_manager/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/sleep_tracking/SleepTracking.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/stream_ingress/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/*.cpp"
 )
 
 set(HEAPWATCH_REQUIRES spiffs fatfs wear_levelling joltwallet__littlefs)
@@ -34,7 +16,7 @@ set(HEAPWATCH_PRIV_REQUIRES
 
         idf_component_register(
     SRCS ${HEAPWATCH_CONNECTOR_SRCS}
-    INCLUDE_DIRS "." "heapwatch_connector"
+    INCLUDE_DIRS "."
     PRIV_REQUIRES ${HEAPWATCH_PRIV_REQUIRES}
     REQUIRES ${HEAPWATCH_REQUIRES}
     EMBED_TXTFILES "certs/heapwatch_local_ca.pem"
@@ -73,8 +55,8 @@ target_include_directories(${COMPONENT_LIB} PUBLIC "${HEAPWATCH_GENERATED_DIR}")
 
 # Post-link fingerprint refresh rewrites this header; force recompile of TUs that embed it.
 set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/heapwatch_c_api.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch_connector/ConnectorLifecycle.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/device_command/CommandCatalog.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/Lifecycle/heapwatch_c_api.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/Lifecycle/ConnectorLifecycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/DeviceCommand/CommandCatalog.cpp"
     PROPERTIES OBJECT_DEPENDS "${HEAPWATCH_METADATA_HEADER}"
 )

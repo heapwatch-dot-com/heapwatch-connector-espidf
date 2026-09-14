@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Log capture ring is **16** slots (was 64). Slot text length is `HEAPWATCH_MAX_LOG_LINE_LEN` (default 160, was a hardcoded 256). Lines are truncated at the ESP log hook, matching MQTT. At defaults this is about 3.3 KiB DRAM instead of 19.7 KiB; a burst larger than 16 lines in ~100 ms can drop (`g_log_lines_dropped_total`).
+
+## [0.16.0] - 2026-09-14
+
+### Changed
+- Internal C++ namespaces are PascalCase under root `Heapwatch`, nested by domain (`Heapwatch::Radio::BluetoothLe`, `Heapwatch::Helpers`, `Heapwatch::DeviceCommand`, …). Source lives under `heapwatch/<Domain>/…` (top-level folder lowercase). Public C API (`heapwatch.h`, `heapwatch_*`) is unchanged. `#include "heapwatch/radio/BleDelegate.h"` still resolves via a shim.
+
 ## [0.15.0] - 2026-09-14
 
 ### Changed

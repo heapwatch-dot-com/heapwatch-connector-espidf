@@ -89,7 +89,9 @@ already expects these old-school types - in that case we MUST match it to be com
 
 ### Namespaces
 
-- namespaces MUST use naming like this "Heapwatch", "Heapwatch::Connectors", "Heapwatch::Connectors::BluetoothLe" etc.
+- namespaces MUST use naming like this - THE ARE ONLY EXAMPLES - "Heapwatch" NOT "heapwatch", "Heapwatch::Connectors" NOT "heapwatch::connectors", "Heapwatch::Connectors::BluetoothLe" NOT "heapwatch::connectors::bluetooth_le", "Heapwatch::Helpers" NOT "heapwatch::helpers"
+- the root namespace is Heapwatch
+- sub-namespaces differ by domain
 
 ### ESP-IDF Log Tags
 
