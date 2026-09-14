@@ -1,4 +1,4 @@
-#include "DeviceSpecsCollector.h"
+    #include "DeviceSpecsCollector.h"
 
 #include <cstdio>
 #include <cstring>
@@ -58,7 +58,7 @@ void append_chip_features(char* output, size_t output_len, uint32_t features) {
         const char* name;
     };
 
-    static const FeatureFlag flags[] = {
+    static const FeatureFlag FEATURE_FLAGS[] = {
         {CHIP_FEATURE_EMB_FLASH, "embed_flash"},
         {CHIP_FEATURE_WIFI_BGN, "wifi"},
         {CHIP_FEATURE_BLE, "ble"},
@@ -68,7 +68,7 @@ void append_chip_features(char* output, size_t output_len, uint32_t features) {
     };
 
     offset += snprintf(output + offset, output_len - offset, ",\"chip_features\":[");
-    for (const FeatureFlag& feature : flags) {
+    for (const FeatureFlag& feature : FEATURE_FLAGS) {
         if ((features & feature.flag) == 0) {
             continue;
         }

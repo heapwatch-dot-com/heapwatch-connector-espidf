@@ -7,10 +7,10 @@
 
 namespace heapwatch::device_fs {
 
-constexpr size_t kFsPathMax = 256;
-constexpr size_t kFsNameMax = 128;
-constexpr size_t kFsSha256HexMax = 65;
-constexpr size_t kFsCommandIdMax = 27;
+constexpr size_t FS_PATH_MAX = 256;
+constexpr size_t FS_NAME_MAX = 128;
+constexpr size_t FS_SHA256_HEX_MAX = 65;
+constexpr size_t FS_COMMAND_ID_MAX = 27;
 
 struct FsError {
     const char* code = "io_error";

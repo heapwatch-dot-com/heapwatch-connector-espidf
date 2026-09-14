@@ -5,7 +5,7 @@
 #define HW_CATALOG_INT(n) HW_CATALOG_INT2(n)
 #define HW_CATALOG_INT2(n) #n
 
-// Builtin heapwatch namespace config catalog — keep in sync with kHeapwatchFields in ConnectorSettings.cpp.
+// Builtin heapwatch namespace config catalog — keep in sync with HEAPWATCH_FIELDS in ConnectorSettings.cpp.
 #define HEAPWATCH_BUILTIN_CONFIG_CATALOGS_JSON                                 \
     "[{\"id\":\"heapwatch\",\"title\":\"Heapwatch Connector\",\"nvs_namespace\":" \
     "\"heapwatch\",\"fields\":["                                               \

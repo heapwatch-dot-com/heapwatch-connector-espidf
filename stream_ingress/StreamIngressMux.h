@@ -5,19 +5,19 @@
 
 namespace heapwatch::stream_ingress::mux {
 
-constexpr uint8_t kVersion1 = 1;
-constexpr uint8_t kFrameTypeData = 1;
-constexpr uint8_t kFrameTypeStdin = 2;
-constexpr uint8_t kFrameTypeCtrl = 3;
+constexpr uint8_t VERSION_1 = 1;
+constexpr uint8_t FRAME_TYPE_DATA = 1;
+constexpr uint8_t FRAME_TYPE_STDIN = 2;
+constexpr uint8_t FRAME_TYPE_CTRL = 3;
 
-constexpr size_t kMaxChannelIdLen = 64;
+constexpr size_t MAX_CHANNEL_ID_LEN = 64;
 /** Hard cap for one mux frame payload — light streaming chunk size. */
-constexpr size_t kMaxPayloadLen = 4 * 1024;
-constexpr size_t kCoalesceMaxBytes = 4096;
+constexpr size_t MAX_PAYLOAD_LEN = 4 * 1024;
+constexpr size_t COALESCE_MAX_BYTES = 4096;
 
 struct Frame {
-    char channel_id[kMaxChannelIdLen + 1];
-    uint8_t type = kFrameTypeData;
+    char channel_id[MAX_CHANNEL_ID_LEN + 1];
+    uint8_t type = FRAME_TYPE_DATA;
     uint64_t uptime_ms = 0;
     const uint8_t* payload = nullptr;
     size_t payload_len = 0;

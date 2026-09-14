@@ -53,9 +53,9 @@
 namespace {
 static constexpr char TAG[] = "HwMqtt";
 /** OTA progress + FW_UPDATE events: block on full queue instead of dropping. */
-static constexpr TickType_t kOtaMqttQueueWait = pdMS_TO_TICKS(1000);
+static constexpr TickType_t OTA_MQTT_QUEUE_WAIT = pdMS_TO_TICKS(1000);
 /** Boot-critical large/tiny publishes: short block instead of silent drop. */
-static constexpr TickType_t kBootCriticalQueueWait = pdMS_TO_TICKS(250);
+static constexpr TickType_t BOOT_CRITICAL_QUEUE_WAIT = pdMS_TO_TICKS(250);
 QueueHandle_t g_tiny_queue = nullptr;
 QueueHandle_t g_small_queue = nullptr;
 QueueHandle_t g_large_queue = nullptr;
@@ -581,8 +581,8 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     const size_t free_heap = esp_get_free_heap_size();
     const size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
     // Streaming upload only needs a tiny chunk buffer + TLS; refuse if TLS can't start.
-    constexpr size_t kMinHeapForStreamingUpload = 12 * 1024;
-    if (largest_block < 4096 || free_heap < kMinHeapForStreamingUpload) {
+    constexpr size_t MIN_HEAP_FOR_STREAMING_UPLOAD = 12 * 1024;
+    if (largest_block < 4096 || free_heap < MIN_HEAP_FOR_STREAMING_UPLOAD) {
         ESP_LOGW(TAG,
                  "Skipping coredump upload at boot: dump=%u bytes, free_heap=%u, largest_block=%u "
                  "(not enough headroom for TLS streaming)",
@@ -645,8 +645,8 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     }
 
     // Stream from flash in small chunks — never malloc(dump_size).
-    constexpr size_t kChunkBytes = 256;
-    uint8_t chunk[kChunkBytes];
+    constexpr size_t CHUNK_BYTES = 256;
+    uint8_t chunk[CHUNK_BYTES];
 
     esp_err_t http_result = esp_http_client_open(http_client, static_cast<int>(dump_size));
     if (http_result != ESP_OK) {
@@ -658,7 +658,7 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
 
     size_t sent = 0;
     while (sent < dump_size) {
-        const size_t to_read = (dump_size - sent) > kChunkBytes ? kChunkBytes : (dump_size - sent);
+        const size_t to_read = (dump_size - sent) > CHUNK_BYTES ? CHUNK_BYTES : (dump_size - sent);
         const esp_err_t read_result =
             esp_partition_read(coredump_partition, partition_offset + sent, chunk, to_read);
         if (read_result != ESP_OK) {
@@ -816,7 +816,7 @@ void HeapwatchConnector::queueEvent(int eventTypeId, int32_t boot_cycle) {
     const bool fw_ota_event =
         eventTypeId >= HEAPWATCH_EVENT_FW_UPDATE_STARTED &&
         eventTypeId <= HEAPWATCH_EVENT_FW_UPDATE_FAILED;
-    const TickType_t send_wait = fw_ota_event ? kOtaMqttQueueWait : 0;
+    const TickType_t send_wait = fw_ota_event ? OTA_MQTT_QUEUE_WAIT : 0;
     heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, send_wait);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS */
 }
@@ -852,7 +852,7 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
              static_cast<long long>(total));
 #endif
 
-    heapwatch_outbound_send(g_small_queue, &g_scratch->small, kOtaMqttQueueWait);
+    heapwatch_outbound_send(g_small_queue, &g_scratch->small, OTA_MQTT_QUEUE_WAIT);
 }
 
 void HeapwatchConnector::queueSpecs() {
@@ -888,7 +888,7 @@ void HeapwatchConnector::queueSpecs() {
              g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
 void HeapwatchConnector::queueNetwork() {
@@ -922,7 +922,7 @@ void HeapwatchConnector::queueNetwork() {
              static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
 void HeapwatchConnector::queueBluetoothSnapshot() {
@@ -956,7 +956,7 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
              static_cast<unsigned long long>(utms), g_scratch->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait);
+    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
 void HeapwatchConnector::updateParameterInt(const char* slug, int64_t value) {
@@ -1009,7 +1009,7 @@ void HeapwatchConnector::flushParameters() {
     }
 
     g_scratch->large.type = MQTT_MESSAGE_TYPE_PARAMETER;
-    if (heapwatch_outbound_send(g_large_queue, &g_scratch->large, kBootCriticalQueueWait)) {
+    if (heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT)) {
         heapwatch::parameter_store::acknowledgeBoundsSent();
     }
 }

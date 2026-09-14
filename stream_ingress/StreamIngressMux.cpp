@@ -59,7 +59,7 @@ bool readExact(int socket_fd, uint8_t* buffer, size_t len) {
 }
 
 bool channelIdValid(const char* channel_id, size_t len) {
-    return channel_id != nullptr && len > 0 && len <= kMaxChannelIdLen;
+    return channel_id != nullptr && len > 0 && len <= MAX_CHANNEL_ID_LEN;
 }
 
 }  // namespace
@@ -79,11 +79,11 @@ bool encode(const Frame& frame, uint8_t* out_buf, size_t out_cap, size_t* out_le
         return false;
     }
 
-    if (frame.payload_len > kMaxPayloadLen) {
+    if (frame.payload_len > MAX_PAYLOAD_LEN) {
         return false;
     }
 
-    if (frame.type != kFrameTypeData && frame.type != kFrameTypeStdin && frame.type != kFrameTypeCtrl) {
+    if (frame.type != FRAME_TYPE_DATA && frame.type != FRAME_TYPE_STDIN && frame.type != FRAME_TYPE_CTRL) {
         return false;
     }
 
@@ -93,7 +93,7 @@ bool encode(const Frame& frame, uint8_t* out_buf, size_t out_cap, size_t* out_le
         return false;
     }
 
-    out_buf[0] = kVersion1;
+    out_buf[0] = VERSION_1;
     out_buf[1] = frame.type;
     const uint16_t channel_len_be = htons(static_cast<uint16_t>(channel_len));
     memcpy(out_buf + 2, &channel_len_be, sizeof(channel_len_be));
@@ -125,21 +125,21 @@ bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t 
         return false;
     }
 
-    if (header[0] != kVersion1) {
+    if (header[0] != VERSION_1) {
         return false;
     }
 
     const uint8_t frame_type = header[1];
-    if (frame_type != kFrameTypeData && frame_type != kFrameTypeStdin && frame_type != kFrameTypeCtrl) {
+    if (frame_type != FRAME_TYPE_DATA && frame_type != FRAME_TYPE_STDIN && frame_type != FRAME_TYPE_CTRL) {
         return false;
     }
 
     const uint16_t channel_len = ntohs(*reinterpret_cast<uint16_t*>(header + 2));
-    if (channel_len == 0 || channel_len > kMaxChannelIdLen) {
+    if (channel_len == 0 || channel_len > MAX_CHANNEL_ID_LEN) {
         return false;
     }
 
-    uint8_t channel_bytes[kMaxChannelIdLen] = {};
+    uint8_t channel_bytes[MAX_CHANNEL_ID_LEN] = {};
     if (!readExact(socket_fd, channel_bytes, channel_len)) {
         return false;
     }
@@ -151,7 +151,7 @@ bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t 
 
     const uint64_t uptime_ms = readU64BE(timing);
     const uint32_t payload_len = ntohl(*reinterpret_cast<uint32_t*>(timing + 8));
-    if (payload_len > kMaxPayloadLen || payload_len > payload_buf_cap) {
+    if (payload_len > MAX_PAYLOAD_LEN || payload_len > payload_buf_cap) {
         return false;
     }
 

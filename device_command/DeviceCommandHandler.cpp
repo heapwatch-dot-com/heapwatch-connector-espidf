@@ -29,8 +29,8 @@ namespace {
 
 const char* TAG = "HwCmd";
 
-constexpr size_t kSeenCommandIdsCapacity = 16;
-char g_seen_command_ids[kSeenCommandIdsCapacity][27];
+constexpr size_t SEEN_COMMAND_IDS_CAPACITY = 16;
+char g_seen_command_ids[SEEN_COMMAND_IDS_CAPACITY][27];
 size_t g_seen_write_index = 0;
 
 bool is_duplicate_command_id(const char* command_id) {
@@ -38,7 +38,7 @@ bool is_duplicate_command_id(const char* command_id) {
         return false;
     }
 
-    for (size_t i = 0; i < kSeenCommandIdsCapacity; i++) {
+    for (size_t i = 0; i < SEEN_COMMAND_IDS_CAPACITY; i++) {
         if (g_seen_command_ids[i][0] != '\0' && strcmp(g_seen_command_ids[i], command_id) == 0) {
             return true;
         }
@@ -53,7 +53,7 @@ void remember_command_id(const char* command_id) {
     }
 
     snprintf(g_seen_command_ids[g_seen_write_index], sizeof(g_seen_command_ids[0]), "%s", command_id);
-    g_seen_write_index = (g_seen_write_index + 1) % kSeenCommandIdsCapacity;
+    g_seen_write_index = (g_seen_write_index + 1) % SEEN_COMMAND_IDS_CAPACITY;
 }
 
 struct CommandRegistration {
@@ -62,7 +62,7 @@ struct CommandRegistration {
     void* user_ctx;
 };
 
-CommandRegistration g_registered_commands[kMaxRegisteredCommands] = {};
+CommandRegistration g_registered_commands[MAX_REGISTERED_COMMANDS] = {};
 
 bool is_builtin_name(const char* name) {
     return strcmp(name, "ping") == 0 || strcmp(name, "specs_refresh") == 0 ||
@@ -363,7 +363,7 @@ esp_err_t registerCommand(const char* name, CommandHandler handler, void* user_c
     }
 
     ESP_LOGE(TAG, "Cannot register command '%s': registration table full (max %u)", name,
-             static_cast<unsigned>(kMaxRegisteredCommands));
+             static_cast<unsigned>(MAX_REGISTERED_COMMANDS));
     return ESP_ERR_NO_MEM;
 }
 

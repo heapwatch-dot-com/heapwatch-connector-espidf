@@ -76,6 +76,10 @@ Workspace context: `heapwatch-firmware/CLAUDE.md` (Lysos `ws`/`rws`, build rules
 - you MUST keep in SYNC an .md file called PUBLIC_API.md - which contains a TABLE of every single
 function if the public API and its description
 
+### Consts
+
+- any const or constexpr MUST be named as FOOBAR_THINGY (uppercase)
+
 ### ESP-IDF Log Tags
 
 - multiple files can use the SAME log tag if needed

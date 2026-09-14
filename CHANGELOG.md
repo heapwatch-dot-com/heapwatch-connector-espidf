@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-14
+
+### Added
+- Per-volume filesystem used/total on the metrics interval (`dynamic.fs.<label>.used_bytes` and `_max`), gated by `CONFIG_HEAPWATCH_ENABLE_FS_VOLUME_STATS` (default on). Watch STORAGE follows these over Echo. This is not the retired lumped `storage.used_bytes` pair.
+- Kconfig `CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES` (default **10 KiB**, was hard-coded 6 KiB). Pin in host `sdkconfig.defaults` on GPS/modem images.
+
+### Fixed
+- `hw_going_dark` stack overflow on remoted-node-gps (peak **6109/6141 B**, 99.5% high-water).
+
 ## [0.14.0] - 2026-09-14
 
 ### Added

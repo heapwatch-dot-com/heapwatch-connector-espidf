@@ -14,8 +14,8 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "HwCmd";
-constexpr char kChannelConfigCatalog[] = "config_catalog";
-constexpr uint32_t kStreamConnectTimeoutMs = 30000;
+constexpr char CHANNEL_CONFIG_CATALOG[] = "config_catalog";
+constexpr uint32_t STREAM_CONNECT_TIMEOUT_MS = 30000;
 
 bool g_uploaded_this_boot = false;
 bool g_upload_requested = false;
@@ -59,13 +59,13 @@ void uploadConfigCatalog(bool force) {
 
     const size_t body_len = strlen(body);
 
-    if (!heapwatch::stream_ingress::waitForStreamTcp(kStreamConnectTimeoutMs)) {
+    if (!heapwatch::stream_ingress::waitForStreamTcp(STREAM_CONNECT_TIMEOUT_MS)) {
         ESP_LOGW(TAG, "Stream ingress not ready for config catalog upload");
         cJSON_free(body);
         return;
     }
 
-    if (!heapwatch::stream_ingress::streamJsonBody(kChannelConfigCatalog, body)) {
+    if (!heapwatch::stream_ingress::streamJsonBody(CHANNEL_CONFIG_CATALOG, body)) {
         ESP_LOGW(TAG, "Config catalog stream upload failed");
         cJSON_free(body);
         return;

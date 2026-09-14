@@ -9,11 +9,11 @@
 
 namespace heapwatch::fs_volumes {
 
-constexpr size_t kMaxFlashVolumes = 8;
-constexpr size_t kMaxSdVolumes = 4;
-constexpr size_t kMaxVolumes = kMaxFlashVolumes + kMaxSdVolumes;
-constexpr size_t kLabelMax = 17;
-constexpr size_t kMountPathMax = 64;
+constexpr size_t MAX_FLASH_VOLUMES = 8;
+constexpr size_t MAX_SD_VOLUMES = 4;
+constexpr size_t MAX_VOLUMES = MAX_FLASH_VOLUMES + MAX_SD_VOLUMES;
+constexpr size_t LABEL_MAX = 17;
+constexpr size_t MOUNT_PATH_MAX = 64;
 
 enum class Kind : uint8_t {
     Spiffs = 0,
@@ -22,8 +22,8 @@ enum class Kind : uint8_t {
 };
 
 struct Volume {
-    char label[kLabelMax] = {};
-    char mount_path[kMountPathMax] = {};
+    char label[LABEL_MAX] = {};
+    char mount_path[MOUNT_PATH_MAX] = {};
     Kind kind = Kind::Spiffs;
     bool mounted = false;
     bool browsable = false;
@@ -74,5 +74,11 @@ bool queryUsageByLabel(const char* label, Kind kind, size_t* total_bytes, size_t
 const char* kindName(Kind kind);
 
 cJSON* buildVolumeObject(const Volume& volume);
+
+/**
+ * Append `dynamic.fs.{id}.used_bytes` and `_max` (total) for each browsable volume.
+ * JSON: leading commas. Flat: leading `|`. Returns bytes written (not including NUL).
+ */
+size_t appendParameterFields(char* out, size_t out_len, bool json);
 
 }  // namespace heapwatch::fs_volumes

@@ -23,13 +23,13 @@
 namespace heapwatch::device_radio {
 namespace {
 
-constexpr const char* kTag = "HwBle";
+constexpr const char* TAG = "HwBle";
 
 NimBleProvider* g_provider = nullptr;
 bool g_host_synced = false;
 bool g_advertising = false;
 bool g_scanning = false;
-char g_mac[kBleAddrLen] = {};
+char g_mac[BLE_ADDR_LEN] = {};
 
 struct ScanSession {
     bool active = false;
@@ -51,7 +51,7 @@ void hostTask(void* /*param*/) {
 }
 
 void onReset(int reason) {
-    ESP_LOGE(kTag, "NimBLE reset, reason=%d", reason);
+    ESP_LOGE(TAG, "NimBLE reset, reason=%d", reason);
     g_host_synced = false;
 }
 
@@ -75,11 +75,11 @@ bool NimBleProvider::initialize() {
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
-        ESP_LOGE(kTag, "esp_bt_controller_init failed");
+        ESP_LOGE(TAG, "esp_bt_controller_init failed");
         return false;
     }
     if (esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) {
-        ESP_LOGE(kTag, "esp_bt_controller_enable failed");
+        ESP_LOGE(TAG, "esp_bt_controller_enable failed");
         return false;
     }
 
@@ -90,7 +90,7 @@ bool NimBleProvider::initialize() {
     ble_svc_gap_init();
     nimble_port_freertos_init(hostTask);
 
-    ESP_LOGI(kTag, "NimBLE report-only stack starting");
+    ESP_LOGI(TAG, "NimBLE report-only stack starting");
     return true;
 }
 
@@ -106,7 +106,7 @@ void NimBleProvider::updateMacFromStack() {
 void NimBleProvider::onHostSync() {
     g_host_synced = true;
     updateMacFromStack();
-    ESP_LOGI(kTag, "NimBLE host synced, mac=%s", g_mac);
+    ESP_LOGI(TAG, "NimBLE host synced, mac=%s", g_mac);
     heapwatch::device_radio::publishFullSync();
 }
 

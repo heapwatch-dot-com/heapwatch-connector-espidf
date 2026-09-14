@@ -1,5 +1,6 @@
 #include "FsVolumeManager.h"
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
@@ -17,8 +18,10 @@
 #include "sdmmc_cmd.h"
 #endif
 
+#include "DynamicParameterSegment.h"
 #include "HeapwatchFsPartition.h"
 #include "heapwatch.h"
+#include "heapwatch_config.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -27,17 +30,17 @@ namespace heapwatch::fs_volumes {
 
 namespace {
 
-constexpr char kTag[] = "HwFs";
+constexpr char TAG[] = "HwFs";
 
 struct HostMapping {
-    char label[kLabelMax] = {};
-    char mount_path[kMountPathMax] = {};
+    char label[LABEL_MAX] = {};
+    char mount_path[MOUNT_PATH_MAX] = {};
     bool used = false;
 };
 
-HostMapping g_host_map[kMaxFlashVolumes] = {};
-HostMapping g_sd_map[kMaxSdVolumes] = {};
-Volume g_volumes[kMaxVolumes] = {};
+HostMapping g_host_map[MAX_FLASH_VOLUMES] = {};
+HostMapping g_sd_map[MAX_SD_VOLUMES] = {};
+Volume g_volumes[MAX_VOLUMES] = {};
 size_t g_volume_count = 0;
 bool g_mount_all_done = false;
 SemaphoreHandle_t g_mutex = nullptr;
@@ -95,11 +98,11 @@ bool validMountPath(const char* path) {
     if (containsDotDot(path)) {
         return false;
     }
-    return strlen(path) < kMountPathMax;
+    return strlen(path) < MOUNT_PATH_MAX;
 }
 
 bool validLabel(const char* label) {
-    return label != nullptr && label[0] != '\0' && strlen(label) < kLabelMax;
+    return label != nullptr && label[0] != '\0' && strlen(label) < LABEL_MAX;
 }
 
 bool pathStartsWithMount(const char* path, const char* mount) {
@@ -129,7 +132,7 @@ const HostMapping* findHostMapping(const char* label) {
     if (label == nullptr) {
         return nullptr;
     }
-    for (size_t i = 0; i < kMaxFlashVolumes; ++i) {
+    for (size_t i = 0; i < MAX_FLASH_VOLUMES; ++i) {
         if (g_host_map[i].used && strcmp(g_host_map[i].label, label) == 0) {
             return &g_host_map[i];
         }
@@ -231,7 +234,7 @@ MountOutcome mountSpiffs(const char* label, const char* mount_path) {
     if (err == ESP_ERR_INVALID_STATE && dirExists(mount_path)) {
         return MountOutcome::HostOwned;
     }
-    ESP_LOGW(kTag, "SPIFFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
+    ESP_LOGW(TAG, "SPIFFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
     return MountOutcome::Failed;
 }
 
@@ -251,7 +254,7 @@ MountOutcome mountLittlefs(const char* label, const char* mount_path) {
     if (err == ESP_ERR_INVALID_STATE && dirExists(mount_path)) {
         return MountOutcome::HostOwned;
     }
-    ESP_LOGW(kTag, "LittleFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
+    ESP_LOGW(TAG, "LittleFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
     return MountOutcome::Failed;
 }
 
@@ -275,7 +278,7 @@ MountOutcome mountFat(Volume* volume) {
         volume->fat_wl = WL_INVALID_HANDLE;
         return MountOutcome::HostOwned;
     }
-    ESP_LOGW(kTag, "FatFS mount '%s' at '%s' failed: %s", volume->label, volume->mount_path,
+    ESP_LOGW(TAG, "FatFS mount '%s' at '%s' failed: %s", volume->label, volume->mount_path,
              esp_err_to_name(err));
     return MountOutcome::Failed;
 }
@@ -308,8 +311,8 @@ void adoptVolume(Kind kind, const char* label, const char* mount_path, bool conn
         existing->fat_wl = fat_wl;
         return;
     }
-    if (g_volume_count >= kMaxVolumes) {
-        ESP_LOGW(kTag, "FS volume table full; skipping '%s'", label);
+    if (g_volume_count >= MAX_VOLUMES) {
+        ESP_LOGW(TAG, "FS volume table full; skipping '%s'", label);
         return;
     }
     Volume& vol = g_volumes[g_volume_count++];
@@ -322,13 +325,13 @@ void adoptVolume(Kind kind, const char* label, const char* mount_path, bool conn
     vol.connector_mounted = connector_mounted;
     vol.external = external;
     vol.fat_wl = fat_wl;
-    ESP_LOGI(kTag, "%s volume '%s' at '%s' (%s)", kindName(kind), label, mount_path,
+    ESP_LOGI(TAG, "%s volume '%s' at '%s' (%s)", kindName(kind), label, mount_path,
              connector_mounted ? "connector-mounted" : "host-owned");
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-constexpr char kConnectorSdLabel[] = "sd";
-constexpr char kConnectorSdMountPath[] = "/sd";
+constexpr char CONNECTOR_SD_LABEL[] = "sd";
+constexpr char CONNECTOR_SD_MOUNT_PATH[] = "/sd";
 sdmmc_card_t* g_connector_sd_card = nullptr;
 
 /**
@@ -338,15 +341,15 @@ sdmmc_card_t* g_connector_sd_card = nullptr;
 void mountConnectorSdCard() {
     if (CONFIG_HEAPWATCH_SD_CARD_CS_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_MOSI_GPIO < 0 ||
         CONFIG_HEAPWATCH_SD_CARD_MISO_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_SCK_GPIO < 0) {
-        ESP_LOGI(kTag, "SD take-over enabled but pins unconfigured (-1) -- skipping mount");
+        ESP_LOGI(TAG, "SD take-over enabled but pins unconfigured (-1) -- skipping mount");
         return;
     }
-    if (dirExists(kConnectorSdMountPath)) {
-        ESP_LOGW(kTag,
+    if (dirExists(CONNECTOR_SD_MOUNT_PATH)) {
+        ESP_LOGW(TAG,
                  "'%s' is already mounted -- disable the SD take-over option and call "
                  "heapwatch_register_sd_volume() instead",
-                 kConnectorSdMountPath);
-        adoptVolume(Kind::Fat, kConnectorSdLabel, kConnectorSdMountPath, false, WL_INVALID_HANDLE,
+                 CONNECTOR_SD_MOUNT_PATH);
+        adoptVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, false, WL_INVALID_HANDLE,
                     true, true);
         return;
     }
@@ -363,7 +366,7 @@ void mountConnectorSdCard() {
     esp_err_t err = spi_bus_initialize(static_cast<spi_host_device_t>(host.slot), &bus_cfg,
                                        SDSPI_DEFAULT_DMA);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "SD card SPI bus init failed: %s -- no card mounted", esp_err_to_name(err));
+        ESP_LOGW(TAG, "SD card SPI bus init failed: %s -- no card mounted", esp_err_to_name(err));
         return;
     }
 
@@ -376,17 +379,17 @@ void mountConnectorSdCard() {
     mount_cfg.max_files = 4;
     mount_cfg.allocation_unit_size = 16 * 1024;
 
-    err = esp_vfs_fat_sdspi_mount(kConnectorSdMountPath, &host, &slot_cfg, &mount_cfg,
+    err = esp_vfs_fat_sdspi_mount(CONNECTOR_SD_MOUNT_PATH, &host, &slot_cfg, &mount_cfg,
                                   &g_connector_sd_card);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "SD card mount failed (no card present?): %s -- skipping",
+        ESP_LOGW(TAG, "SD card mount failed (no card present?): %s -- skipping",
                  esp_err_to_name(err));
         spi_bus_free(static_cast<spi_host_device_t>(host.slot));
         g_connector_sd_card = nullptr;
         return;
     }
 
-    adoptVolume(Kind::Fat, kConnectorSdLabel, kConnectorSdMountPath, true, WL_INVALID_HANDLE, true,
+    adoptVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, true, WL_INVALID_HANDLE, true,
                 true);
 }
 
@@ -397,7 +400,7 @@ void unmountConnectorSdCard(const char* mount_path) {
     const sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     const esp_err_t err = esp_vfs_fat_sdcard_unmount(mount_path, g_connector_sd_card);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "SD card unmount failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "SD card unmount failed: %s", esp_err_to_name(err));
     }
     spi_bus_free(static_cast<spi_host_device_t>(host.slot));
     g_connector_sd_card = nullptr;
@@ -410,13 +413,13 @@ void adoptSdVolumes() {
     mountConnectorSdCard();
 #endif
 
-    for (size_t i = 0; i < kMaxSdVolumes; ++i) {
+    for (size_t i = 0; i < MAX_SD_VOLUMES; ++i) {
         const HostMapping& mapping = g_sd_map[i];
         if (!mapping.used) {
             continue;
         }
         if (!dirExists(mapping.mount_path)) {
-            ESP_LOGW(kTag, "SD volume '%s' at '%s' is not mounted -- skipping", mapping.label,
+            ESP_LOGW(TAG, "SD volume '%s' at '%s' is not mounted -- skipping", mapping.label,
                      mapping.mount_path);
             continue;
         }
@@ -435,7 +438,7 @@ void processPartition(const esp_partition_t* part) {
         return;
     }
 
-    char intended[kMountPathMax] = {};
+    char intended[MOUNT_PATH_MAX] = {};
     const HostMapping* mapping = findHostMapping(label);
     if (mapping != nullptr) {
         snprintf(intended, sizeof(intended), "%s", mapping->mount_path);
@@ -450,7 +453,7 @@ void processPartition(const esp_partition_t* part) {
         if (dirExists(intended)) {
             adoptVolume(kind, label, intended, false, WL_INVALID_HANDLE, true);
         } else {
-            ESP_LOGW(kTag, "Registered volume '%s' at '%s' is not mounted", label, intended);
+            ESP_LOGW(TAG, "Registered volume '%s' at '%s' is not mounted", label, intended);
         }
         return;
     }
@@ -459,7 +462,7 @@ void processPartition(const esp_partition_t* part) {
     if (already) {
         const bool browsable = dirExists(intended);
         if (!browsable) {
-            ESP_LOGW(kTag,
+            ESP_LOGW(TAG,
                      "Partition '%s' is mounted by the host but '%s' is not a VFS root — "
                      "call heapwatch_register_fs_volume() with the real mount path",
                      label, intended);
@@ -492,7 +495,7 @@ esp_err_t applySdMappingLocked(const HostMapping& mapping) {
             return ESP_OK;
         }
         if (existing->connector_mounted) {
-            ESP_LOGE(kTag,
+            ESP_LOGE(TAG,
                      "Cannot move connector-owned volume '%s' from '%s' to '%s'",
                      mapping.label, existing->mount_path, mapping.mount_path);
             return ESP_ERR_HEAPWATCH_INVALID_ARG;
@@ -511,7 +514,7 @@ esp_err_t applySdMappingLocked(const HostMapping& mapping) {
         return ESP_OK;
     }
     if (!dirExists(mapping.mount_path)) {
-        ESP_LOGI(kTag, "SD volume '%s' at '%s' is not mounted yet — will adopt when present",
+        ESP_LOGI(TAG, "SD volume '%s' at '%s' is not mounted yet — will adopt when present",
                  mapping.label, mapping.mount_path);
         return ESP_OK;
     }
@@ -531,7 +534,7 @@ esp_err_t applyFlashMappingLocked(const HostMapping& mapping) {
             return ESP_OK;
         }
         if (existing->connector_mounted) {
-            ESP_LOGE(kTag,
+            ESP_LOGE(TAG,
                      "Cannot remount connector-owned flash volume '%s' from '%s' to '%s' — "
                      "register the custom path before the connector mounts it, or disable auto-mount",
                      mapping.label, existing->mount_path, mapping.mount_path);
@@ -553,7 +556,7 @@ esp_err_t applyFlashMappingLocked(const HostMapping& mapping) {
     const esp_partition_t* part =
         esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, mapping.label);
     if (part == nullptr) {
-        ESP_LOGW(kTag, "No flash data partition labelled '%s'", mapping.label);
+        ESP_LOGW(TAG, "No flash data partition labelled '%s'", mapping.label);
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
     processPartition(part);
@@ -564,12 +567,12 @@ void tryAdoptPendingLocked() {
     if (!g_mount_all_done) {
         return;
     }
-    for (size_t i = 0; i < kMaxSdVolumes; ++i) {
+    for (size_t i = 0; i < MAX_SD_VOLUMES; ++i) {
         if (g_sd_map[i].used) {
             (void)applySdMappingLocked(g_sd_map[i]);
         }
     }
-    for (size_t i = 0; i < kMaxFlashVolumes; ++i) {
+    for (size_t i = 0; i < MAX_FLASH_VOLUMES; ++i) {
         if (g_host_map[i].used) {
             (void)applyFlashMappingLocked(g_host_map[i]);
         }
@@ -584,7 +587,7 @@ esp_err_t registerVolume(const char* partition_label, const char* mount_path) {
     }
 
     TableLock lock;
-    HostMapping* slot = claimMappingSlot(g_host_map, kMaxFlashVolumes, partition_label);
+    HostMapping* slot = claimMappingSlot(g_host_map, MAX_FLASH_VOLUMES, partition_label);
     if (slot == nullptr) {
         return ESP_ERR_HEAPWATCH_NO_SPACE;
     }
@@ -600,7 +603,7 @@ esp_err_t registerSdVolume(const char* label, const char* mount_path) {
     }
 
     TableLock lock;
-    HostMapping* slot = claimMappingSlot(g_sd_map, kMaxSdVolumes, label);
+    HostMapping* slot = claimMappingSlot(g_sd_map, MAX_SD_VOLUMES, label);
     if (slot == nullptr) {
         return ESP_ERR_HEAPWATCH_NO_SPACE;
     }
@@ -618,7 +621,7 @@ void tryAdoptPending() {
 void mountAll() {
     TableLock lock;
     g_volume_count = 0;
-    for (size_t i = 0; i < kMaxVolumes; ++i) {
+    for (size_t i = 0; i < MAX_VOLUMES; ++i) {
         g_volumes[i] = {};
     }
 
@@ -646,7 +649,7 @@ void unmountConnectorOwned() {
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
         if (vol.external) {
             unmountConnectorSdCard(vol.mount_path);
-            ESP_LOGI(kTag, "Unmounted connector volume '%s'", vol.label);
+            ESP_LOGI(TAG, "Unmounted connector volume '%s'", vol.label);
             continue;
         }
 #endif
@@ -661,20 +664,20 @@ void unmountConnectorOwned() {
                 if (vol.fat_wl != WL_INVALID_HANDLE) {
                     err = esp_vfs_fat_spiflash_unmount_rw_wl(vol.mount_path, vol.fat_wl);
                 } else {
-                    ESP_LOGW(kTag, "Skipping FatFS unmount of '%s' (no wear-levelling handle)",
+                    ESP_LOGW(TAG, "Skipping FatFS unmount of '%s' (no wear-levelling handle)",
                              vol.label);
                     err = ESP_ERR_INVALID_STATE;
                 }
                 break;
         }
         if (err != ESP_OK) {
-            ESP_LOGW(kTag, "Unmount '%s' failed: %s", vol.label, esp_err_to_name(err));
+            ESP_LOGW(TAG, "Unmount '%s' failed: %s", vol.label, esp_err_to_name(err));
         } else {
-            ESP_LOGI(kTag, "Unmounted connector volume '%s'", vol.label);
+            ESP_LOGI(TAG, "Unmounted connector volume '%s'", vol.label);
         }
     }
     g_volume_count = 0;
-    for (size_t i = 0; i < kMaxVolumes; ++i) {
+    for (size_t i = 0; i < MAX_VOLUMES; ++i) {
         g_volumes[i] = {};
     }
     g_mount_all_done = false;
@@ -802,6 +805,69 @@ cJSON* buildVolumeObject(const Volume& volume) {
         cJSON_AddNullToObject(vol, "used_bytes");
     }
     return vol;
+}
+
+size_t appendParameterFields(char* out, size_t out_len, bool json) {
+    if (out == nullptr || out_len == 0) {
+        return 0;
+    }
+
+#if defined(CONFIG_HEAPWATCH_ENABLE_FS_VOLUME_STATS) && CONFIG_HEAPWATCH_ENABLE_FS_VOLUME_STATS
+    Volume copies[MAX_VOLUMES];
+    size_t count = 0;
+    {
+        TableLock lock;
+        tryAdoptPendingLocked();
+        count = g_volume_count;
+        if (count > MAX_VOLUMES) {
+            count = MAX_VOLUMES;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            copies[i] = g_volumes[i];
+        }
+    }
+
+    size_t pos = 0;
+    for (size_t i = 0; i < count && pos < out_len; ++i) {
+        const Volume& vol = copies[i];
+        if (!vol.browsable) {
+            continue;
+        }
+        size_t total = 0;
+        size_t used = 0;
+        if (!queryUsage(vol, &total, &used)) {
+            continue;
+        }
+        char slug_seg[LABEL_MAX];
+        if (!heapwatch::normalizeDynamicSegment(vol.label, slug_seg, sizeof(slug_seg))) {
+            continue;
+        }
+        int written = 0;
+        if (json) {
+            written = snprintf(out + pos, out_len - pos,
+                               ",\"dynamic.fs.%s.used_bytes\":%" PRIu64
+                               ",\"dynamic.fs.%s.used_bytes_max\":%" PRIu64,
+                               slug_seg, static_cast<uint64_t>(used), slug_seg,
+                               static_cast<uint64_t>(total));
+        } else {
+            written = snprintf(out + pos, out_len - pos,
+                               "%sdynamic.fs.%s.used_bytes=%" PRIu64
+                               "%sdynamic.fs.%s.used_bytes_max=%" PRIu64,
+                               HEAPWATCH_FLAT_DELIMITER, slug_seg, static_cast<uint64_t>(used),
+                               HEAPWATCH_FLAT_DELIMITER, slug_seg, static_cast<uint64_t>(total));
+        }
+        if (written < 0 || static_cast<size_t>(written) >= out_len - pos) {
+            out[pos] = '\0';
+            break;
+        }
+        pos += static_cast<size_t>(written);
+    }
+    return pos;
+#else
+    (void)json;
+    out[0] = '\0';
+    return 0;
+#endif
 }
 
 }  // namespace heapwatch::fs_volumes

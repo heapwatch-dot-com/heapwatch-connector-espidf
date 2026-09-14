@@ -59,12 +59,12 @@ static char g_command_topic[128] = {};
 extern const char heapwatch_local_ca_pem_start[] asm("_binary_heapwatch_local_ca_pem_start");
 extern const char heapwatch_local_ca_pem_end[] asm("_binary_heapwatch_local_ca_pem_end");
 
-static constexpr char k_dev_mqtts_hostname[] = "mqtts.mqtt.heapwatch.local";
+static constexpr char DEV_MQTTS_HOSTNAME[] = "mqtts.mqtt.heapwatch.local";
 // T2: production broker cert CN/SAN — verified rather than skipped, same rigor as dev.
-static constexpr char k_prod_mqtts_hostname[] = "mqtts.mqtt.heapwatch.com";
+static constexpr char PROD_MQTTS_HOSTNAME[] = "mqtts.mqtt.heapwatch.com";
 /** esp-mqtt outbox bytes; 0 = unlimited. Keep well under free-heap headroom for TLS. */
-static constexpr uint64_t k_mqtt_outbox_limit_bytes = 16 * 1024;
-static constexpr uint32_t k_mqtt_outbox_full_backoff_ms = 10;
+static constexpr uint64_t MQTT_OUTBOX_LIMIT_BYTES = 16 * 1024;
+static constexpr uint32_t MQTT_OUTBOX_FULL_BACKOFF_MS = 10;
 
 static HeapwatchShutdownAction g_shutdown_action = HeapwatchShutdownAction::Restart;
 
@@ -98,7 +98,7 @@ static bool mqtt_try_publish(const char* topic, const char* payload, int payload
     }
 
     if (result == -2) {
-        vTaskDelay(pdMS_TO_TICKS(k_mqtt_outbox_full_backoff_ms));
+        vTaskDelay(pdMS_TO_TICKS(MQTT_OUTBOX_FULL_BACKOFF_MS));
     }
     return false;
 }
@@ -145,8 +145,8 @@ static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
         config.broker.verification.certificate_len = 0;
         config.broker.verification.crt_bundle_attach = nullptr;
 #endif
-        config.broker.address.hostname = k_dev_mqtts_hostname;
-        config.broker.verification.common_name = k_dev_mqtts_hostname;
+        config.broker.address.hostname = DEV_MQTTS_HOSTNAME;
+        config.broker.verification.common_name = DEV_MQTTS_HOSTNAME;
         config.broker.verification.skip_cert_common_name_check = false;
         return;
     }
@@ -155,7 +155,7 @@ static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
     // "SUPER STABLE"/secure bar for a production device fleet. Verify the broker's cert
     // against its real hostname, same rigor as the dev path above.
     config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
-    config.broker.verification.common_name = k_prod_mqtts_hostname;
+    config.broker.verification.common_name = PROD_MQTTS_HOSTNAME;
     config.broker.verification.skip_cert_common_name_check = false;
 }
 
@@ -369,13 +369,13 @@ void heapwatch_dispatch_task(void* arg) {
             std::snprintf(g_lwt_topic, sizeof(g_lwt_topic), "%s/device/%s/disconnected",
                           heapwatch_get_tenant_slug(), heapwatch_get_device_uid());
             // EMQX forwards the LWT to the Laravel ingress webhook, which rejects an empty body.
-            static const char k_lwt_payload[] = "{}";
+            static const char LWT_PAYLOAD[] = "{}";
             config.session.last_will.topic = g_lwt_topic;
-            config.session.last_will.msg = k_lwt_payload;
-            config.session.last_will.msg_len = sizeof(k_lwt_payload) - 1;
+            config.session.last_will.msg = LWT_PAYLOAD;
+            config.session.last_will.msg_len = sizeof(LWT_PAYLOAD) - 1;
             config.session.last_will.qos = 0;
             config.session.last_will.retain = 0;
-            config.outbox.limit = k_mqtt_outbox_limit_bytes;
+            config.outbox.limit = MQTT_OUTBOX_LIMIT_BYTES;
 
             g_mqtt_client = create_mqtt_client(config);
             if (!g_mqtt_client) {

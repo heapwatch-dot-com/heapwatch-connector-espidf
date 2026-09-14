@@ -33,7 +33,7 @@
  * "coalesced, last-value-wins" for free.
  *
  * PARAM1b: `_min`/`_max` bounds are dirty-flag-gated — only re-included when
- * `kSlotBoundsDirty` is set. Dirty clears only after successful outbound queue accept.
+ * `SLOT_BOUNDS_DIRTY` is set. Dirty clears only after successful outbound queue accept.
  * Live values are included every flush that has at least one valued slug.
  * Limits-only slots (max/min set with no live value) are valid: a flush may
  * contain only `slug_max` / `slug_min` keys.

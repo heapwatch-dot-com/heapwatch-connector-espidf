@@ -42,13 +42,13 @@
 
 namespace {
 
-constexpr char kTag[] = "HwLife";
+constexpr char TAG[] = "HwLife";
 
 /** Host sticky flag — ORed with OTA-in-progress in heapwatch_keep_running(). */
 bool g_host_keep_running = false;
 
 // Post-link upload gate scans the shipped .bin for this exact string.
-__attribute__((used)) static const char k_embedded_build_identifier[] = HEAPWATCH_BUILD_IDENTIFIER;
+__attribute__((used)) static const char EMBEDDED_BUILD_IDENTIFIER[] = HEAPWATCH_BUILD_IDENTIFIER;
 
 esp_err_t require_queue_ready() {
     if (!HeapwatchConnector::getInstance().isInfrastructureReady()) {
@@ -101,7 +101,7 @@ esp_err_t heapwatch_get_status(heapwatch_status_t* out) {
 
 void heapwatch_set_keep_running(bool keep_running) {
     g_host_keep_running = keep_running;
-    ESP_LOGI(kTag, "keep_running host flag=%s (effective=%s)", keep_running ? "true" : "false",
+    ESP_LOGI(TAG, "keep_running host flag=%s (effective=%s)", keep_running ? "true" : "false",
              heapwatch_keep_running() ? "true" : "false");
 }
 
@@ -401,7 +401,7 @@ esp_err_t heapwatch_register_sd_volume(const char* label, const char* mount_path
     return heapwatch::fs_volumes::registerSdVolume(label, mount_path);
 }
 
-const char* heapwatch_get_build_identifier(void) { return k_embedded_build_identifier; }
+const char* heapwatch_get_build_identifier(void) { return EMBEDDED_BUILD_IDENTIFIER; }
 
 const char* heapwatch_get_app_source_version(void) { return HEAPWATCH_APP_SOURCE_VERSION; }
 

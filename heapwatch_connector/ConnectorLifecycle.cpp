@@ -32,7 +32,7 @@ void refreshHandoffLed();
 
 namespace {
 
-constexpr char kTag[] = "HwLife";
+constexpr char TAG[] = "HwLife";
 
 volatile heapwatch_phase_t g_phase = HEAPWATCH_PHASE_STARTING;
 volatile bool g_initialize_called = false;
@@ -89,7 +89,7 @@ bool hasProvisionedCredentialsInNvs() {
 void initBootIdentity() {
     g_boot_state = {};
     if (!heapwatch::boot_cycle::onBoot(&g_boot_state)) {
-        ESP_LOGE(kTag, "Boot cycle store unavailable — telemetry will report boot_cycle 0");
+        ESP_LOGE(TAG, "Boot cycle store unavailable — telemetry will report boot_cycle 0");
         return;
     }
     HeapwatchConnector::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
@@ -162,14 +162,14 @@ void onNetIpEvent(void*, esp_event_base_t event_base, int32_t event_id, void*) {
         if (connector.getStatus().initialized) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_CONNECTED);
         }
-        ESP_LOGI(kTag, "Network IP acquired (event %ld)", static_cast<long>(event_id));
+        ESP_LOGI(TAG, "Network IP acquired (event %ld)", static_cast<long>(event_id));
         onRuntimeConnectivityChanged();
     } else if (event_id == IP_EVENT_STA_LOST_IP || event_id == IP_EVENT_ETH_LOST_IP) {
         connector.setNetworkReady(false);
         if (connector.getStatus().initialized) {
             connector.queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
         }
-        ESP_LOGI(kTag, "Network IP lost (event %ld)", static_cast<long>(event_id));
+        ESP_LOGI(TAG, "Network IP lost (event %ld)", static_cast<long>(event_id));
         onRuntimeConnectivityChanged();
     }
 }
@@ -238,7 +238,7 @@ void bootstrapTask(void*) {
             }
             updateMqttPhaseFromStatus();
             refreshHandoffLed();
-            ESP_LOGI(kTag, "hw_bootstrap done — exiting");
+            ESP_LOGI(TAG, "hw_bootstrap done — exiting");
             break;
         }
 
@@ -358,7 +358,7 @@ esp_err_t initialize() {
     g_initialize_called = true;
 
     if (is_placeholder_build_identifier(HEAPWATCH_BUILD_IDENTIFIER)) {
-        ESP_LOGE(kTag,
+        ESP_LOGE(TAG,
                  "FATAL: HEAPWATCH_BUILD_IDENTIFIER is still the pre-link placeholder — run a full "
                  "idf.py build so the post-link fingerprint step can run");
         g_misconfigured = true;
@@ -368,7 +368,7 @@ esp_err_t initialize() {
 
     const esp_err_t nvs_err = initNvsFlash();
     if (nvs_err != ESP_OK) {
-        ESP_LOGE(kTag, "FATAL: nvs_flash_init failed: %s", esp_err_to_name(nvs_err));
+        ESP_LOGE(TAG, "FATAL: nvs_flash_init failed: %s", esp_err_to_name(nvs_err));
         g_misconfigured = true;
         setPhase(HEAPWATCH_PHASE_MISCONFIGURED);
         return ESP_ERR_HEAPWATCH_INIT_FAILED;
@@ -377,9 +377,9 @@ esp_err_t initialize() {
     initBootIdentity();
 
     if (hasProvisionedCredentialsInNvs()) {
-        ESP_LOGI(kTag, "Provisioned credentials in NVS — empty enrollment key is OK");
+        ESP_LOGI(TAG, "Provisioned credentials in NVS — empty enrollment key is OK");
     } else if (CONFIG_HEAPWATCH_ENROLLMENT_KEY[0] == '\0') {
-        ESP_LOGE(kTag,
+        ESP_LOGE(TAG,
                  "FATAL: device is not provisioned and CONFIG_HEAPWATCH_ENROLLMENT_KEY is empty — "
                  "cannot enroll");
         g_misconfigured = true;
@@ -391,7 +391,7 @@ esp_err_t initialize() {
     registerNetIpEventHandlers();
 
     if (!HeapwatchConnector::getInstance().ensureInfrastructure()) {
-        ESP_LOGE(kTag, "FATAL: failed to create connector message queues");
+        ESP_LOGE(TAG, "FATAL: failed to create connector message queues");
         g_misconfigured = true;
         setPhase(HEAPWATCH_PHASE_MISCONFIGURED);
         return ESP_ERR_HEAPWATCH_INIT_FAILED;
@@ -406,10 +406,10 @@ esp_err_t initialize() {
         g_bootstrap_started = true;
         g_bootstrap_stop = false;
         g_bootstrap_exited = false;
-        constexpr uint32_t kBootstrapStackBytes = 10240;
-        if (heapwatch_task_create_dram(bootstrapTask, "hw_bootstrap", kBootstrapStackBytes, nullptr,
+        constexpr uint32_t BOOTSTRAP_STACK_BYTES = 10240;
+        if (heapwatch_task_create_dram(bootstrapTask, "hw_bootstrap", BOOTSTRAP_STACK_BYTES, nullptr,
                                          tskIDLE_PRIORITY + 2, &g_bootstrap_task) != pdPASS) {
-            ESP_LOGE(kTag, "FATAL: failed to start hw_bootstrap task");
+            ESP_LOGE(TAG, "FATAL: failed to start hw_bootstrap task");
             g_bootstrap_started = false;
             g_bootstrap_exited = true;
             g_misconfigured = true;

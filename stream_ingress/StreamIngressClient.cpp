@@ -32,37 +32,37 @@ char g_runtime_stream_api_key[HEAPWATCH_MAX_STREAM_API_KEY_LEN] = {};
 namespace {
 
 constexpr char TAG[] = "HwStream";
-constexpr char kChannelLogs[] = "logs";
-constexpr char kChannelFileBrowser[] = "file_browser";
-constexpr char kChannelBleScan[] = "ble_scan";
-constexpr char kChannelBleEvents[] = "ble_events";
-constexpr char kChannelFsDownload[] = "fs_download";
-constexpr char kChannelFsUpload[] = "fs_upload";
+constexpr char CHANNEL_LOGS[] = "logs";
+constexpr char CHANNEL_FILE_BROWSER[] = "file_browser";
+constexpr char CHANNEL_BLE_SCAN[] = "ble_scan";
+constexpr char CHANNEL_BLE_EVENTS[] = "ble_events";
+constexpr char CHANNEL_FS_DOWNLOAD[] = "fs_download";
+constexpr char CHANNEL_FS_UPLOAD[] = "fs_upload";
 
-constexpr size_t kHandshakeMax = 512;
-constexpr size_t kEncodeMax = mux::kMaxPayloadLen + 128;
-constexpr size_t kStdinPayloadMax = 512;
-constexpr size_t kInboundPayloadMax = mux::kMaxPayloadLen;
-constexpr uint32_t kCoalesceFlushMs = 100;
-constexpr uint32_t kWorkerPollMs = 100;
-constexpr uint32_t kReconnectDelayMs = 2000;
+constexpr size_t HANDSHAKE_MAX = 512;
+constexpr size_t ENCODE_MAX = mux::MAX_PAYLOAD_LEN + 128;
+constexpr size_t STDIN_PAYLOAD_MAX = 512;
+constexpr size_t INBOUND_PAYLOAD_MAX = mux::MAX_PAYLOAD_LEN;
+constexpr uint32_t COALESCE_FLUSH_MS = 100;
+constexpr uint32_t WORKER_POLL_MS = 100;
+constexpr uint32_t RECONNECT_DELAY_MS = 2000;
 // Depth >1 so a file_browser result is not dropped while a download chunk is still queued.
 // BLE + WiFi on ESP32 is tight on internal DRAM; trim slots when the radio stack is on.
 #if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
-constexpr size_t kOutboundQueueDepth = 2;
+constexpr size_t OUTBOUND_QUEUE_DEPTH = 2;
 #else
-constexpr size_t kOutboundQueueDepth = 4;
+constexpr size_t OUTBOUND_QUEUE_DEPTH = 4;
 #endif
-constexpr size_t kMaxOutboundBytes = mux::kMaxPayloadLen;
+constexpr size_t MAX_OUTBOUND_BYTES = mux::MAX_PAYLOAD_LEN;
 // FS finalize/hash + cJSON run on this task; keep headroom above idle MQTT-era 6KiB.
-constexpr uint32_t kWorkerStackBytes = 10240;
+constexpr uint32_t WORKER_STACK_BYTES = 10240;
 
 struct OutboundSlot {
-    char channel_id[mux::kMaxChannelIdLen + 1] = {};
+    char channel_id[mux::MAX_CHANNEL_ID_LEN + 1] = {};
     size_t len = 0;
     bool busy = false;
-    uint8_t frame_type = mux::kFrameTypeData;
-    uint8_t data[kMaxOutboundBytes] = {};
+    uint8_t frame_type = mux::FRAME_TYPE_DATA;
+    uint8_t data[MAX_OUTBOUND_BYTES] = {};
 };
 
 struct OutboundQueued {
@@ -97,10 +97,10 @@ void ensureStreamDataAllocated() {
     if (g_encode_buf != nullptr) {
         return;
     }
-    g_coalesce_buf = static_cast<char*>(heapwatch_data_alloc(mux::kCoalesceMaxBytes));
-    g_outbound_slots = static_cast<OutboundSlot*>(heapwatch_data_alloc(sizeof(OutboundSlot) * kOutboundQueueDepth));
-    g_encode_buf = static_cast<uint8_t*>(heapwatch_data_alloc(kEncodeMax));
-    g_inbound_buf = static_cast<uint8_t*>(heapwatch_data_alloc(kInboundPayloadMax));
+    g_coalesce_buf = static_cast<char*>(heapwatch_data_alloc(mux::COALESCE_MAX_BYTES));
+    g_outbound_slots = static_cast<OutboundSlot*>(heapwatch_data_alloc(sizeof(OutboundSlot) * OUTBOUND_QUEUE_DEPTH));
+    g_encode_buf = static_cast<uint8_t*>(heapwatch_data_alloc(ENCODE_MAX));
+    g_inbound_buf = static_cast<uint8_t*>(heapwatch_data_alloc(INBOUND_PAYLOAD_MAX));
 }
 
 void freeStreamData() {
@@ -152,7 +152,7 @@ void closeSocket() {
     if (g_outbound_queue != nullptr) {
         OutboundQueued queued = {};
         while (xQueueReceive(g_outbound_queue, &queued, 0) == pdTRUE) {
-            if (queued.slot_index < kOutboundQueueDepth) {
+            if (queued.slot_index < OUTBOUND_QUEUE_DEPTH) {
                 g_outbound_slots[queued.slot_index].busy = false;
                 g_outbound_slots[queued.slot_index].len = 0;
             }
@@ -199,7 +199,7 @@ bool sendHandshake(int socket_fd) {
     const char* device_uid = heapwatch_get_device_uid();
     const uint32_t boot_cycle = heapwatch_get_boot_cycle();
 
-    char handshake[kHandshakeMax] = {};
+    char handshake[HANDSHAKE_MAX] = {};
     const int written = snprintf(
         handshake, sizeof(handshake),
         "{\"stream_api_key\":\"%s\",\"tenant_slug\":\"%s\",\"device_uid\":\"%s\",\"boot_cycle\":%lu}\n",
@@ -269,16 +269,16 @@ bool enqueueOutbound(const char* channel_id, uint8_t frame_type, const uint8_t* 
         return false;
     }
 
-    if (frame_type == mux::kFrameTypeCtrl) {
+    if (frame_type == mux::FRAME_TYPE_CTRL) {
         if (payload_len != 0) {
             return false;
         }
-    } else if (payload == nullptr || payload_len == 0 || payload_len > kMaxOutboundBytes) {
+    } else if (payload == nullptr || payload_len == 0 || payload_len > MAX_OUTBOUND_BYTES) {
         return false;
     }
 
     int free_slot = -1;
-    for (size_t i = 0; i < kOutboundQueueDepth; ++i) {
+    for (size_t i = 0; i < OUTBOUND_QUEUE_DEPTH; ++i) {
         if (!g_outbound_slots[i].busy) {
             free_slot = static_cast<int>(i);
             break;
@@ -315,7 +315,7 @@ void drainOutboundLocked() {
 
     OutboundQueued queued = {};
     while (xQueueReceive(g_outbound_queue, &queued, 0) == pdTRUE) {
-        if (queued.slot_index >= kOutboundQueueDepth) {
+        if (queued.slot_index >= OUTBOUND_QUEUE_DEPTH) {
             continue;
         }
 
@@ -325,7 +325,7 @@ void drainOutboundLocked() {
             continue;
         }
 
-        if (slot.len == 0 && slot.frame_type != mux::kFrameTypeCtrl) {
+        if (slot.len == 0 && slot.frame_type != mux::FRAME_TYPE_CTRL) {
             slot.busy = false;
             continue;
         }
@@ -339,7 +339,7 @@ void drainOutboundLocked() {
         frame.payload = slot.len > 0 ? slot.data : nullptr;
         frame.payload_len = slot.len;
 
-        if (!mux::encode(frame, g_encode_buf, kEncodeMax, &encoded_len)) {
+        if (!mux::encode(frame, g_encode_buf, ENCODE_MAX, &encoded_len)) {
             ESP_LOGW(TAG, "Failed to encode mux frame on channel %s", slot.channel_id);
             slot.busy = false;
             slot.len = 0;
@@ -377,10 +377,10 @@ bool sendMuxFrame(const char* channel_id, uint8_t frame_type, const uint8_t* pay
 }
 
 void handleInboundFrame(const mux::Frame& frame) {
-    if (frame.type == mux::kFrameTypeStdin) {
-        char line[kStdinPayloadMax + 1] = {};
+    if (frame.type == mux::FRAME_TYPE_STDIN) {
+        char line[STDIN_PAYLOAD_MAX + 1] = {};
         const size_t copy_len =
-            frame.payload_len < kStdinPayloadMax ? frame.payload_len : kStdinPayloadMax;
+            frame.payload_len < STDIN_PAYLOAD_MAX ? frame.payload_len : STDIN_PAYLOAD_MAX;
         if (frame.payload != nullptr && copy_len > 0) {
             memcpy(line, frame.payload, copy_len);
         }
@@ -388,12 +388,12 @@ void handleInboundFrame(const mux::Frame& frame) {
         return;
     }
 
-    if (frame.type != mux::kFrameTypeData) {
+    if (frame.type != mux::FRAME_TYPE_DATA) {
         return;
     }
 
-    if (strncmp(frame.channel_id, kChannelFsUpload, strlen(kChannelFsUpload)) == 0) {
-        const char* suffix = frame.channel_id + strlen(kChannelFsUpload);
+    if (strncmp(frame.channel_id, CHANNEL_FS_UPLOAD, strlen(CHANNEL_FS_UPLOAD)) == 0) {
+        const char* suffix = frame.channel_id + strlen(CHANNEL_FS_UPLOAD);
         if (suffix[0] == '/') {
             ++suffix;
         } else if (suffix[0] != '\0') {
@@ -414,13 +414,13 @@ bool flushCoalesceLocked() {
     size_t encoded_len = 0;
 
     mux::Frame frame = {};
-    snprintf(frame.channel_id, sizeof(frame.channel_id), "%s", kChannelLogs);
-    frame.type = mux::kFrameTypeData;
+    snprintf(frame.channel_id, sizeof(frame.channel_id), "%s", CHANNEL_LOGS);
+    frame.type = mux::FRAME_TYPE_DATA;
     frame.uptime_ms = g_coalesce_uptime_ms;
     frame.payload = reinterpret_cast<const uint8_t*>(g_coalesce_buf);
     frame.payload_len = g_coalesce_len;
 
-    if (!mux::encode(frame, g_encode_buf, kEncodeMax, &encoded_len)) {
+    if (!mux::encode(frame, g_encode_buf, ENCODE_MAX, &encoded_len)) {
         ESP_LOGW(TAG, "Failed to encode coalesced log frame (%u bytes)", static_cast<unsigned>(g_coalesce_len));
         g_coalesce_len = 0;
         return false;
@@ -456,7 +456,7 @@ bool tryReadInbound() {
 
     mux::Frame frame = {};
     const bool decoded =
-        mux::decodeFromSocket(g_socket_fd, frame, g_inbound_buf, kInboundPayloadMax);
+        mux::decodeFromSocket(g_socket_fd, frame, g_inbound_buf, INBOUND_PAYLOAD_MAX);
     if (decoded) {
         handleInboundFrame(frame);
     }
@@ -482,18 +482,18 @@ void workerTask(void* arg) {
             g_close_requested = false;
             g_coalesce_len = 0;
             unlock();
-            vTaskDelay(pdMS_TO_TICKS(kWorkerPollMs));
+            vTaskDelay(pdMS_TO_TICKS(WORKER_POLL_MS));
             continue;
         }
 
         if (!g_connected) {
             if (!tcp_requested || !streamIngressEnabled()) {
-                vTaskDelay(pdMS_TO_TICKS(kWorkerPollMs));
+                vTaskDelay(pdMS_TO_TICKS(WORKER_POLL_MS));
                 continue;
             }
 
             if (!connectTcp()) {
-                vTaskDelay(pdMS_TO_TICKS(kReconnectDelayMs));
+                vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
                 continue;
             }
             last_flush = xTaskGetTickCount();
@@ -507,12 +507,12 @@ void workerTask(void* arg) {
             flushCoalesceLocked();
             closeSocket();
             unlock();
-            vTaskDelay(pdMS_TO_TICKS(kReconnectDelayMs));
+            vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
             continue;
         }
 
         const TickType_t now = xTaskGetTickCount();
-        if ((now - last_flush) >= pdMS_TO_TICKS(kCoalesceFlushMs)) {
+        if ((now - last_flush) >= pdMS_TO_TICKS(COALESCE_FLUSH_MS)) {
             lock();
             if (!flushCoalesceLocked()) {
                 closeSocket();
@@ -601,14 +601,14 @@ static void ensureWorkerStarted() {
         g_mutex = xSemaphoreCreateMutex();
     }
     if (g_outbound_queue == nullptr) {
-        g_outbound_queue = heapwatch_queue_create(kOutboundQueueDepth, sizeof(OutboundQueued));
+        g_outbound_queue = heapwatch_queue_create(OUTBOUND_QUEUE_DEPTH, sizeof(OutboundQueued));
     }
     ensureStreamDataAllocated();
     if (g_worker_task == nullptr) {
         g_stop_requested = false;
         g_worker_exited = false;
         // Create only when TCP is actually needed — saves ~8KiB stack at boot for MQTT.
-        if (heapwatch_task_create_dram(workerTask, "hw_streaming", kWorkerStackBytes, nullptr,
+        if (heapwatch_task_create_dram(workerTask, "hw_streaming", WORKER_STACK_BYTES, nullptr,
                                        tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create hw_streaming task");
             g_worker_task = nullptr;
@@ -629,7 +629,7 @@ void init() {
         g_mutex = xSemaphoreCreateMutex();
     }
     if (g_outbound_queue == nullptr) {
-        g_outbound_queue = heapwatch_queue_create(kOutboundQueueDepth, sizeof(OutboundQueued));
+        g_outbound_queue = heapwatch_queue_create(OUTBOUND_QUEUE_DEPTH, sizeof(OutboundQueued));
     }
     ensureStreamDataAllocated();
     ESP_LOGI(TAG, "Stream ingress ready (worker deferred until TCP needed)");
@@ -729,12 +729,12 @@ void enqueueLogJson(const char* json_line) {
 
     const size_t line_len = strlen(json_line);
     const size_t needed = line_len + 1;
-    if (needed > mux::kCoalesceMaxBytes) {
+    if (needed > mux::COALESCE_MAX_BYTES) {
         unlock();
         return;
     }
 
-    if (g_coalesce_len > 0 && (g_coalesce_len + needed) > mux::kCoalesceMaxBytes) {
+    if (g_coalesce_len > 0 && (g_coalesce_len + needed) > mux::COALESCE_MAX_BYTES) {
         if (!flushCoalesceLocked()) {
             closeSocket();
             unlock();
@@ -754,18 +754,18 @@ void enqueueLogJson(const char* json_line) {
 }
 
 bool sendMuxDataFrame(const char* channel_id, const uint8_t* payload, size_t payload_len) {
-    return sendMuxFrame(channel_id, mux::kFrameTypeData, payload, payload_len);
+    return sendMuxFrame(channel_id, mux::FRAME_TYPE_DATA, payload, payload_len);
 }
 
 bool sendMuxCtrlFrame(const char* channel_id) {
-    return sendMuxFrame(channel_id, mux::kFrameTypeCtrl, nullptr, 0);
+    return sendMuxFrame(channel_id, mux::FRAME_TYPE_CTRL, nullptr, 0);
 }
 
 bool sendFileBrowserJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxDataFrame(kChannelFileBrowser, reinterpret_cast<const uint8_t*>(json_line),
+    return sendMuxDataFrame(CHANNEL_FILE_BROWSER, reinterpret_cast<const uint8_t*>(json_line),
                             strlen(json_line));
 }
 
@@ -773,7 +773,7 @@ bool sendBleScanJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxDataFrame(kChannelBleScan, reinterpret_cast<const uint8_t*>(json_line),
+    return sendMuxDataFrame(CHANNEL_BLE_SCAN, reinterpret_cast<const uint8_t*>(json_line),
                             strlen(json_line));
 }
 
@@ -781,7 +781,7 @@ bool sendBleEventJson(const char* json_line) {
     if (json_line == nullptr || json_line[0] == '\0') {
         return false;
     }
-    return sendMuxDataFrame(kChannelBleEvents, reinterpret_cast<const uint8_t*>(json_line),
+    return sendMuxDataFrame(CHANNEL_BLE_EVENTS, reinterpret_cast<const uint8_t*>(json_line),
                             strlen(json_line));
 }
 
@@ -790,8 +790,8 @@ bool sendFsDownloadChunk(const char* command_id, const uint8_t* data, size_t len
         return false;
     }
 
-    char channel_id[mux::kMaxChannelIdLen + 1] = {};
-    snprintf(channel_id, sizeof(channel_id), "%s/%s", kChannelFsDownload, command_id);
+    char channel_id[mux::MAX_CHANNEL_ID_LEN + 1] = {};
+    snprintf(channel_id, sizeof(channel_id), "%s/%s", CHANNEL_FS_DOWNLOAD, command_id);
 
     return sendMuxDataFrame(channel_id, data, len);
 }

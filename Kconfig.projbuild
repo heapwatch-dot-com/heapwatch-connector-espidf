@@ -162,6 +162,14 @@ menu "Heapwatch Connector"
                 Collects internal RAM and external PSRAM usages and largest free block intel
                 for fantastic memory and heap fragmentation intelligence.
 
+        config HEAPWATCH_ENABLE_FS_VOLUME_STATS
+            bool "Collect per-volume filesystem used/total"
+            default y
+            help
+                Publishes dynamic.fs.<volume>.used_bytes (and _max = volume total) for each
+                browsable SPIFFS, LittleFS, or SD volume on the metrics interval so Watch STORAGE
+                can follow Echo. This is not the retired lumped storage.used_bytes pair.
+
         config HEAPWATCH_ENABLE_NETIF_TRAFFIC
             bool "Collect Network Interface Bytes Transmitted/Received"
             default y
@@ -385,6 +393,14 @@ menu "Heapwatch Connector"
             range 8192 32768
             help
                 Stack for hw_dispatcher.
+
+        config HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
+            int "Going-dark pipeline task stack (bytes)"
+            default 10240
+            range 8192 32768
+            help
+                Stack for hw_going_dark (restart, sleep, shutdown, Wi-Fi reconnect).
+                Was hard-coded 6 KiB; overflows on GPS during shutdown/sleep paths.
 
         config HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
             bool "Put as much data as possible in PSRAM (Recommended)"

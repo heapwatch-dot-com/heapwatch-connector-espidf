@@ -34,7 +34,7 @@
 #endif
 
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM || HEAPWATCH_STACKS_IN_PSRAM
-static constexpr UBaseType_t kHeapwatchPsramCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+static constexpr UBaseType_t HEAPWATCH_PSRAM_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 #endif
 
 /**
@@ -43,7 +43,7 @@ static constexpr UBaseType_t kHeapwatchPsramCaps = MALLOC_CAP_SPIRAM | MALLOC_CA
  */
 inline QueueHandle_t heapwatch_queue_create(UBaseType_t uxQueueLength, UBaseType_t uxItemSize) {
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
-    QueueHandle_t queue = xQueueCreateWithCaps(uxQueueLength, uxItemSize, kHeapwatchPsramCaps);
+    QueueHandle_t queue = xQueueCreateWithCaps(uxQueueLength, uxItemSize, HEAPWATCH_PSRAM_CAPS);
     if (queue == nullptr) {
         ESP_LOGE("HwMem", "FATAL: PSRAM queue create failed (len=%u item=%u)",
                  static_cast<unsigned>(uxQueueLength), static_cast<unsigned>(uxItemSize));
@@ -64,7 +64,7 @@ inline void* heapwatch_data_alloc(size_t bytes) {
         return nullptr;
     }
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
-    void* p = heap_caps_calloc(1, bytes, kHeapwatchPsramCaps);
+    void* p = heap_caps_calloc(1, bytes, HEAPWATCH_PSRAM_CAPS);
     if (p == nullptr) {
         ESP_LOGE("HwMem", "FATAL: PSRAM data alloc %u bytes failed", static_cast<unsigned>(bytes));
         abort();
@@ -115,7 +115,7 @@ inline void heapwatch_queue_delete(QueueHandle_t queue) {
 inline BaseType_t heapwatch_task_create(TaskFunction_t fn, const char* name, uint32_t stack_bytes,
                                         void* arg, UBaseType_t prio, TaskHandle_t* handle) {
 #if HEAPWATCH_STACKS_IN_PSRAM
-    return xTaskCreateWithCaps(fn, name, stack_bytes, arg, prio, handle, kHeapwatchPsramCaps);
+    return xTaskCreateWithCaps(fn, name, stack_bytes, arg, prio, handle, HEAPWATCH_PSRAM_CAPS);
 #else
     return xTaskCreate(fn, name, stack_bytes, arg, prio, handle);
 #endif

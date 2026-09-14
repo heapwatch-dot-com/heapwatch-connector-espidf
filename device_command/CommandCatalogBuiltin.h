@@ -5,7 +5,7 @@
 namespace heapwatch::device_command {
 
 // Builtin connector command catalog v2 — commands[] only (config catalogs are separate).
-static const char kBuiltinCommandCatalogJson[] =
+static const char BUILTIN_COMMAND_CATALOG_JSON[] =
     "{\"manifest_version\":2,\"build_identifier\":\"" HEAPWATCH_BUILD_IDENTIFIER "\","
     "\"commands\":["
     "{\"slug\":\"ping\",\"name\":\"Ping\",\"description\":\"Connectivity "

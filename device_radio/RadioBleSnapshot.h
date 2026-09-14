@@ -8,18 +8,18 @@
 
 namespace heapwatch::device_radio {
 
-constexpr size_t kMaxBleConnections = 4;
-constexpr size_t kMaxBleBonds = 8;
-constexpr size_t kBleAddrLen = 18;
+constexpr size_t MAX_BLE_CONNECTIONS = 4;
+constexpr size_t MAX_BLE_BONDS = 8;
+constexpr size_t BLE_ADDR_LEN = 18;
 
 struct RadioBleConnection {
-    char peer_addr[kBleAddrLen];
+    char peer_addr[BLE_ADDR_LEN];
     uint16_t conn_handle;
     bool is_central;
 };
 
 struct RadioBleBond {
-    char peer_addr[kBleAddrLen];
+    char peer_addr[BLE_ADDR_LEN];
 };
 
 struct RadioBleSnapshot {
@@ -27,10 +27,10 @@ struct RadioBleSnapshot {
     bool advertising;
     bool scanning;
     bool bt_enabled;
-    char mac[kBleAddrLen];
-    RadioBleConnection connections[kMaxBleConnections];
+    char mac[BLE_ADDR_LEN];
+    RadioBleConnection connections[MAX_BLE_CONNECTIONS];
     size_t connection_count;
-    RadioBleBond bonds[kMaxBleBonds];
+    RadioBleBond bonds[MAX_BLE_BONDS];
     size_t bond_count;
 };
 

@@ -29,9 +29,9 @@ using heapwatch::device_command::publishCommandAck;
 using heapwatch::device_command::publishCommandResponse;
 
 constexpr char TAG[] = "HwCmd";
-constexpr uint32_t kEventPublishGraceMs = 1500;
-constexpr size_t kCommandIdMax = 64;
-constexpr size_t kSuffixMax = 64;
+constexpr uint32_t EVENT_PUBLISH_GRACE_MS = 1500;
+constexpr size_t COMMAND_ID_MAX = 64;
+constexpr size_t SUFFIX_MAX = 64;
 
 enum class RequestKind : uint8_t {
     Restart,
@@ -42,8 +42,8 @@ enum class RequestKind : uint8_t {
 };
 
 struct GoingDarkRequest {
-    char suffix[kSuffixMax] = {};
-    char command_id[kCommandIdMax] = {};
+    char suffix[SUFFIX_MAX] = {};
+    char command_id[COMMAND_ID_MAX] = {};
     RequestKind kind = RequestKind::Sleep;
     SleepKind sleep_kind = SleepKind::Light;
     uint32_t duration_s = 0;
@@ -159,7 +159,7 @@ void runSleepPipeline(GoingDarkRequest request) {
     }
 
     // Let the dispatcher move the pre-sleep event toward MQTT before we arm shutdown.
-    vTaskDelay(pdMS_TO_TICKS(kEventPublishGraceMs));
+    vTaskDelay(pdMS_TO_TICKS(EVENT_PUBLISH_GRACE_MS));
 
     const char* ack_message =
         request.sleep_kind == SleepKind::Light ? "light sleep accepted" : "deep sleep accepted";
@@ -180,7 +180,7 @@ void runSleepPipeline(GoingDarkRequest request) {
 
         connector.queueEvent(HEAPWATCH_EVENT_WOKE_UP_FROM_LIGHT_SLEEP);
         reportLightSleepWakeContext(sleep_started_us);
-        vTaskDelay(pdMS_TO_TICKS(kEventPublishGraceMs));
+        vTaskDelay(pdMS_TO_TICKS(EVENT_PUBLISH_GRACE_MS));
         ESP_LOGI(TAG, "Woke from light sleep");
         return;
     }
@@ -246,7 +246,8 @@ void init() {
     }
 
     g_task_exited = false;
-    heapwatch_task_create(goingDarkTask, "hw_going_dark", 6144, nullptr, tskIDLE_PRIORITY + 2, nullptr);
+    heapwatch_task_create(goingDarkTask, "hw_going_dark", HEAPWATCH_GOING_DARK_TASK_STACK_BYTES, nullptr,
+                          tskIDLE_PRIORITY + 2, nullptr);
 }
 
 void shutdown() {

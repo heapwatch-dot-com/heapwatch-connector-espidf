@@ -21,14 +21,14 @@
 namespace heapwatch::device_network {
 namespace {
 
-constexpr const char* kTag = "HwNet";
-constexpr size_t kMaxTrackedKeys = 8;
-constexpr size_t kKeyLen = 32;
+constexpr const char* TAG = "HwNet";
+constexpr size_t MAX_TRACKED_KEYS = 8;
+constexpr size_t KEY_LEN = 32;
 
 bool g_started = false;
 volatile bool g_topology_dirty = false;
-char g_prev_default_key[kKeyLen] = {};
-char g_prev_keys[kMaxTrackedKeys][kKeyLen] = {};
+char g_prev_default_key[KEY_LEN] = {};
+char g_prev_keys[MAX_TRACKED_KEYS][KEY_LEN] = {};
 size_t g_prev_key_count = 0;
 bool g_have_prev = false;
 
@@ -87,7 +87,7 @@ void copy_key(char* dest, size_t dest_len, const char* src) {
 
 bool key_in_prev(const char* key) {
     for (size_t i = 0; i < g_prev_key_count; ++i) {
-        if (strncmp(g_prev_keys[i], key, kKeyLen) == 0) {
+        if (strncmp(g_prev_keys[i], key, KEY_LEN) == 0) {
             return true;
         }
     }
@@ -209,17 +209,17 @@ bool append_netif_object(esp_netif_t* netif, esp_netif_t* default_netif, char* o
 }
 
 void emit_events_for_scan(esp_netif_t* default_netif) {
-    char current_keys[kMaxTrackedKeys][kKeyLen] = {};
+    char current_keys[MAX_TRACKED_KEYS][KEY_LEN] = {};
     size_t current_count = 0;
 
     // Use locked esp_netif_next — next_unsafe from MQTT/event tasks can see an empty list.
     for (esp_netif_t* netif = esp_netif_next(nullptr); netif != nullptr;
          netif = esp_netif_next(netif)) {
         const char* key = esp_netif_get_ifkey(netif);
-        if (key == nullptr || key[0] == '\0' || current_count >= kMaxTrackedKeys) {
+        if (key == nullptr || key[0] == '\0' || current_count >= MAX_TRACKED_KEYS) {
             continue;
         }
-        copy_key(current_keys[current_count], kKeyLen, key);
+        copy_key(current_keys[current_count], KEY_LEN, key);
         if (g_have_prev && !key_in_prev(key) && esp_netif_is_netif_up(netif)) {
             HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
         }
@@ -230,7 +230,7 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
         for (size_t i = 0; i < g_prev_key_count; ++i) {
             bool still_present = false;
             for (size_t j = 0; j < current_count; ++j) {
-                if (strncmp(g_prev_keys[i], current_keys[j], kKeyLen) == 0) {
+                if (strncmp(g_prev_keys[i], current_keys[j], KEY_LEN) == 0) {
                     still_present = true;
                     break;
                 }
@@ -245,15 +245,15 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
     if (default_key == nullptr) {
         default_key = "";
     }
-    if (g_have_prev && strncmp(g_prev_default_key, default_key, kKeyLen) != 0) {
+    if (g_have_prev && strncmp(g_prev_default_key, default_key, KEY_LEN) != 0) {
         HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_DEFAULT_ROUTE_CHANGED);
     }
 
     g_prev_key_count = current_count;
     for (size_t i = 0; i < current_count; ++i) {
-        copy_key(g_prev_keys[i], kKeyLen, current_keys[i]);
+        copy_key(g_prev_keys[i], KEY_LEN, current_keys[i]);
     }
-    copy_key(g_prev_default_key, kKeyLen, default_key);
+    copy_key(g_prev_default_key, KEY_LEN, default_key);
     g_have_prev = true;
 }
 
@@ -335,14 +335,14 @@ bool buildPayload(char* out, size_t out_len) {
         return false;
     }
 
-    ESP_LOGI(kTag, "Built network payload with %u netif(s)", static_cast<unsigned>(netif_count));
+    ESP_LOGI(TAG, "Built network payload with %u netif(s)", static_cast<unsigned>(netif_count));
     return true;
 }
 
 void publishFullSync() {
     emit_events_for_scan(esp_netif_get_default_netif());
     HeapwatchConnector::getInstance().queueNetwork();
-    ESP_LOGI(kTag, "Queued full /network sync");
+    ESP_LOGI(TAG, "Queued full /network sync");
 }
 
 void markTopologyDirty() { g_topology_dirty = true; }
@@ -368,7 +368,7 @@ void start() {
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_register(
         WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_ip_or_wifi_event, nullptr));
     heapwatch::netif_traffic::start();
-    ESP_LOGI(kTag, "Network reporter started");
+    ESP_LOGI(TAG, "Network reporter started");
 }
 
 void stop() {

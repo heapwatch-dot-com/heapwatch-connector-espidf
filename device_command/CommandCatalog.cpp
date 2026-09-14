@@ -15,8 +15,8 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "HwCmd";
-constexpr char kChannelCommandCatalog[] = "command_catalog";
-constexpr uint32_t kStreamConnectTimeoutMs = 30000;
+constexpr char CHANNEL_COMMAND_CATALOG[] = "command_catalog";
+constexpr uint32_t STREAM_CONNECT_TIMEOUT_MS = 30000;
 
 bool g_uploaded_this_boot = false;
 bool g_upload_requested = false;
@@ -24,7 +24,7 @@ bool g_force_upload = false;
 
 }  // namespace
 
-const char* getBuiltinCommandCatalogJson() { return kBuiltinCommandCatalogJson; }
+const char* getBuiltinCommandCatalogJson() { return BUILTIN_COMMAND_CATALOG_JSON; }
 
 void uploadCommandCatalogIfNeeded() {
     uploadCommandCatalog(false);
@@ -35,15 +35,15 @@ void uploadCommandCatalog(bool force) {
         return;
     }
 
-    const char* body = kBuiltinCommandCatalogJson;
+    const char* body = BUILTIN_COMMAND_CATALOG_JSON;
     const size_t body_len = strlen(body);
 
-    if (!heapwatch::stream_ingress::waitForStreamTcp(kStreamConnectTimeoutMs)) {
+    if (!heapwatch::stream_ingress::waitForStreamTcp(STREAM_CONNECT_TIMEOUT_MS)) {
         ESP_LOGW(TAG, "Stream ingress not ready for command catalog upload");
         return;
     }
 
-    if (!heapwatch::stream_ingress::streamJsonBody(kChannelCommandCatalog, body)) {
+    if (!heapwatch::stream_ingress::streamJsonBody(CHANNEL_COMMAND_CATALOG, body)) {
         ESP_LOGW(TAG, "Command catalog stream upload failed");
         return;
     }

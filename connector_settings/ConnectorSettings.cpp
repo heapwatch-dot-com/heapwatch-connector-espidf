@@ -33,24 +33,24 @@ constexpr char KEY_LAST_CRASH_BC[] = "last_crash_bc";
 constexpr char KEY_MAN_HASH[] = "man_hash";
 constexpr char KEY_MAN_BUILD[] = "man_build";
 
-constexpr uint32_t kDefaultOutboxDrainMs = 30000;
-constexpr uint32_t kMinTelemetryMs = 1000;
-constexpr uint32_t kMaxTelemetryMs = 86400000;
-constexpr uint32_t kMinOutboxDrainMs = 1000;
-constexpr uint32_t kMaxOutboxDrainMs = 120000;
-constexpr size_t kMaxManagedCatalogs = 4;
-constexpr size_t kMaxCatalogFields = 32;
+constexpr uint32_t DEFAULT_OUTBOX_DRAIN_MS = 30000;
+constexpr uint32_t MIN_TELEMETRY_MS = 1000;
+constexpr uint32_t MAX_TELEMETRY_MS = 86400000;
+constexpr uint32_t MIN_OUTBOX_DRAIN_MS = 1000;
+constexpr uint32_t MAX_OUTBOX_DRAIN_MS = 120000;
+constexpr size_t MAX_MANAGED_CATALOGS = 4;
+constexpr size_t MAX_CATALOG_FIELDS = 32;
 
-constexpr FieldSchema kHeapwatchFields[] = {
+constexpr FieldSchema HEAPWATCH_FIELDS[] = {
     {KEY_TEL_INT_MS, "Telemetry interval",
      "Interval between automatic telemetry metric collection cycles.", "int", false, true, "ms",
-     static_cast<int>(kMinTelemetryMs), static_cast<int>(kMaxTelemetryMs)},
+     static_cast<int>(MIN_TELEMETRY_MS), static_cast<int>(MAX_TELEMETRY_MS)},
     {KEY_LOG_LVL, "Log relay level",
      "Minimum ESP-IDF log severity relayed to Heapwatch over MQTT.", "enum", false, true,
      nullptr, HEAPWATCH_SEVERITY_DEBUG, HEAPWATCH_SEVERITY_CRITICAL},
     {KEY_OUT_DRAIN_MS, "Outbox drain timeout",
      "Maximum time to drain the MQTT outbox before terminal offline actions.", "int", false,
-     true, "ms", static_cast<int>(kMinOutboxDrainMs), static_cast<int>(kMaxOutboxDrainMs)},
+     true, "ms", static_cast<int>(MIN_OUTBOX_DRAIN_MS), static_cast<int>(MAX_OUTBOX_DRAIN_MS)},
     {KEY_TENANT_SLUG, "Workspace slug",
      "Heapwatch workspace identifier for MQTT and API routing.", "string", false, false, nullptr, 0,
      0},
@@ -82,17 +82,17 @@ struct ManagedCatalog {
     const char* id;
     const char* title;
     const char* nvs_namespace;
-    FieldSchema fields[kMaxCatalogFields] = {};
+    FieldSchema fields[MAX_CATALOG_FIELDS] = {};
     size_t field_count;
 };
 
 struct CachedSettings {
     uint32_t telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
     uint8_t min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
-    uint32_t outbox_drain_timeout_ms = kDefaultOutboxDrainMs;
+    uint32_t outbox_drain_timeout_ms = DEFAULT_OUTBOX_DRAIN_MS;
 };
 
-ManagedCatalog g_catalogs[kMaxManagedCatalogs] = {};
+ManagedCatalog g_catalogs[MAX_MANAGED_CATALOGS] = {};
 size_t g_catalog_count = 0;
 
 CachedSettings g_cache = {};
@@ -104,8 +104,8 @@ struct OverlayEntry {
     cJSON* value;
 };
 
-constexpr size_t kMaxOverlayEntries = 16;
-OverlayEntry g_overlay[kMaxOverlayEntries] = {};
+constexpr size_t MAX_OVERLAY_ENTRIES = 16;
+OverlayEntry g_overlay[MAX_OVERLAY_ENTRIES] = {};
 
 bool overlayKeyEquals(const OverlayEntry& entry, const char* nvs_namespace, const char* nvs_key) {
     return entry.value != nullptr && strcmp(entry.nvs_namespace, nvs_namespace) == 0 &&
@@ -113,7 +113,7 @@ bool overlayKeyEquals(const OverlayEntry& entry, const char* nvs_namespace, cons
 }
 
 cJSON* findOverlayValue(const char* nvs_namespace, const char* nvs_key) {
-    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+    for (size_t i = 0; i < MAX_OVERLAY_ENTRIES; ++i) {
         if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
             return g_overlay[i].value;
         }
@@ -122,7 +122,7 @@ cJSON* findOverlayValue(const char* nvs_namespace, const char* nvs_key) {
 }
 
 void clearOverlay(const char* nvs_namespace, const char* nvs_key) {
-    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+    for (size_t i = 0; i < MAX_OVERLAY_ENTRIES; ++i) {
         if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
             cJSON_Delete(g_overlay[i].value);
             g_overlay[i].value = nullptr;
@@ -135,7 +135,7 @@ void clearOverlay(const char* nvs_namespace, const char* nvs_key) {
 
 bool setOverlay(const char* nvs_namespace, const char* nvs_key, const cJSON* value) {
     OverlayEntry* slot = nullptr;
-    for (size_t i = 0; i < kMaxOverlayEntries; ++i) {
+    for (size_t i = 0; i < MAX_OVERLAY_ENTRIES; ++i) {
         if (overlayKeyEquals(g_overlay[i], nvs_namespace, nvs_key)) {
             slot = &g_overlay[i];
             break;
@@ -242,25 +242,25 @@ void loadSettingsFromNvs(CachedSettings* target) {
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
         target->telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
         target->min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
-        target->outbox_drain_timeout_ms = kDefaultOutboxDrainMs;
+        target->outbox_drain_timeout_ms = DEFAULT_OUTBOX_DRAIN_MS;
         return;
     }
 
     readU32(handle, KEY_TEL_INT_MS, &target->telemetry_interval_ms,
             HEAPWATCH_METRICS_INTERVAL_MS);
     readU8(handle, KEY_LOG_LVL, &target->min_relay_severity, HEAPWATCH_MIN_RELAY_SEVERITY);
-    readU32(handle, KEY_OUT_DRAIN_MS, &target->outbox_drain_timeout_ms, kDefaultOutboxDrainMs);
+    readU32(handle, KEY_OUT_DRAIN_MS, &target->outbox_drain_timeout_ms, DEFAULT_OUTBOX_DRAIN_MS);
 
-    if (target->telemetry_interval_ms < kMinTelemetryMs ||
-        target->telemetry_interval_ms > kMaxTelemetryMs) {
+    if (target->telemetry_interval_ms < MIN_TELEMETRY_MS ||
+        target->telemetry_interval_ms > MAX_TELEMETRY_MS) {
         target->telemetry_interval_ms = HEAPWATCH_METRICS_INTERVAL_MS;
     }
     if (target->min_relay_severity > HEAPWATCH_SEVERITY_CRITICAL) {
         target->min_relay_severity = HEAPWATCH_MIN_RELAY_SEVERITY;
     }
-    if (target->outbox_drain_timeout_ms < kMinOutboxDrainMs ||
-        target->outbox_drain_timeout_ms > kMaxOutboxDrainMs) {
-        target->outbox_drain_timeout_ms = kDefaultOutboxDrainMs;
+    if (target->outbox_drain_timeout_ms < MIN_OUTBOX_DRAIN_MS ||
+        target->outbox_drain_timeout_ms > MAX_OUTBOX_DRAIN_MS) {
+        target->outbox_drain_timeout_ms = DEFAULT_OUTBOX_DRAIN_MS;
     }
 
     nvs_close(handle);
@@ -348,14 +348,14 @@ void addEnumOptions(cJSON* field_obj, const char* nvs_key) {
         int value;
         const char* label;
     };
-    static const Option kLogOptions[] = {
+    static const Option LOG_OPTIONS[] = {
         {HEAPWATCH_SEVERITY_DEBUG, "Debug"},
         {HEAPWATCH_SEVERITY_INFO, "Info"},
         {HEAPWATCH_SEVERITY_WARNING, "Warning"},
         {HEAPWATCH_SEVERITY_ERROR, "Error"},
         {HEAPWATCH_SEVERITY_CRITICAL, "Critical"},
     };
-    for (const auto& opt : kLogOptions) {
+    for (const auto& opt : LOG_OPTIONS) {
         cJSON* option = cJSON_CreateObject();
         char value_buf[16];
         std::snprintf(value_buf, sizeof(value_buf), "%d", opt.value);
@@ -544,7 +544,7 @@ cJSON* buildCatalogJson(const ManagedCatalog& catalog) {
                                     static_cast<double>(HEAPWATCH_MIN_RELAY_SEVERITY));
         } else if (strcmp(field.nvs_key, KEY_OUT_DRAIN_MS) == 0) {
             cJSON_AddNumberToObject(field_obj, "default",
-                                    static_cast<double>(kDefaultOutboxDrainMs));
+                                    static_cast<double>(DEFAULT_OUTBOX_DRAIN_MS));
         }
 
         addEnumOptions(field_obj, field.nvs_key);
@@ -616,8 +616,8 @@ bool writeJsonValueToNvs(nvs_handle_t handle, const char* key, const cJSON* valu
 }  // namespace
 
 void init() {
-    registerManagedCatalog("heapwatch", "Heapwatch Connector", NVS_NAMESPACE, kHeapwatchFields,
-                           sizeof(kHeapwatchFields) / sizeof(kHeapwatchFields[0]));
+    registerManagedCatalog("heapwatch", "Heapwatch Connector", NVS_NAMESPACE, HEAPWATCH_FIELDS,
+                           sizeof(HEAPWATCH_FIELDS) / sizeof(HEAPWATCH_FIELDS[0]));
     reloadFromNvs();
     ESP_LOGI(TAG, "telemetry=%u ms log_lvl=%u outbox_drain=%u ms",
              static_cast<unsigned>(g_cache.telemetry_interval_ms),
@@ -658,8 +658,8 @@ bool shouldMaskNvsKey(const char* nvs_namespace, const char* nvs_key) {
 bool registerManagedCatalog(const char* catalog_id, const char* title, const char* nvs_namespace,
                             const FieldSchema* fields, size_t field_count) {
     if (catalog_id == nullptr || title == nullptr || nvs_namespace == nullptr || fields == nullptr ||
-        field_count == 0 || field_count > kMaxCatalogFields ||
-        g_catalog_count >= kMaxManagedCatalogs) {
+        field_count == 0 || field_count > MAX_CATALOG_FIELDS ||
+        g_catalog_count >= MAX_MANAGED_CATALOGS) {
         return false;
     }
     if (findCatalog(nvs_namespace) != nullptr) {

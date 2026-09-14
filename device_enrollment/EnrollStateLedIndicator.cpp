@@ -15,7 +15,7 @@ namespace heapwatch::device_enrollment {
 
 namespace {
 
-constexpr char kTag[] = "HwEnroll";
+constexpr char TAG[] = "HwEnroll";
 
 volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::kWifiConnecting;
 
@@ -204,7 +204,7 @@ void startIndicator() {
     }
 
     if (CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO < 0) {
-        ESP_LOGW(kTag, "Enroll state LED enabled but GPIO is unset");
+        ESP_LOGW(TAG, "Enroll state LED enabled but GPIO is unset");
         return;
     }
 
@@ -217,13 +217,13 @@ void startIndicator() {
     g_task_exited = false;
     if (heapwatch_task_create(indicatorTaskEntry, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
                               nullptr) != pdPASS) {
-        ESP_LOGE(kTag, "Failed to start enroll state LED task");
+        ESP_LOGE(TAG, "Failed to start enroll state LED task");
         g_task_exited = true;
         return;
     }
 
     g_started = true;
-    ESP_LOGI(kTag, "Enroll state LED on GPIO %d (active_low=%d)",
+    ESP_LOGI(TAG, "Enroll state LED on GPIO %d (active_low=%d)",
              CONFIG_HEAPWATCH_ENROLL_STATE_LED_GPIO,
 #if defined(CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW) && CONFIG_HEAPWATCH_ENROLL_STATE_LED_ACTIVE_LOW
              1);

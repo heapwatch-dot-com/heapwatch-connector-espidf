@@ -25,9 +25,7 @@
    =========================================================================== */
 
 /* ---------------------------------------------------------------------------
-   Message Queue Configuration (K7 — Kconfig-tunable, see Kconfig.projbuild
-   "Memory / queue sizing"; #define fallbacks here only cover the
-   host-unit-test build, which doesn't go through sdkconfig)
+   Message Queue Configuration
    --------------------------------------------------------------------------- */
 
 #ifdef CONFIG_HEAPWATCH_TINY_QUEUE_LEN
@@ -47,12 +45,6 @@
 #define HEAPWATCH_SMALL_QUEUE_LEN        12
 #endif
 
-/**
- * Depth of the large-tier queue (SPECS/TASKS + MetricsCollector's periodic
- * PARAMETER blob, see M1 in task_plan.md). Deliberately shallow relative to
- * the tiny/small queues — these messages are periodic/rare compared to
- * logs/params, so there's little value buffering many of them.
- */
 #ifdef CONFIG_HEAPWATCH_LARGE_QUEUE_LEN
 #define HEAPWATCH_LARGE_QUEUE_LEN        CONFIG_HEAPWATCH_LARGE_QUEUE_LEN
 #else
@@ -113,6 +105,11 @@
 #else
 #define HEAPWATCH_DISPATCHER_TASK_STACK_BYTES   12288
 #endif
+#ifdef CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
+#define HEAPWATCH_GOING_DARK_TASK_STACK_BYTES     CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
+#else
+#define HEAPWATCH_GOING_DARK_TASK_STACK_BYTES     10240
+#endif
 
 /* ---------------------------------------------------------------------------
    Timing Configuration
@@ -148,7 +145,7 @@
 #define HEAPWATCH_MQTT_KEEPALIVE_SEC 60
 
 /**
- * C1: delay between core dump upload retry attempts on the heapwatch_dispatcher thread,
+ * Delay between core dump upload retry attempts on the heapwatch_dispatcher thread,
  * once MQTT is connected. A failed attempt no longer blocks the dispatcher's own
  * MQTT-publish work in between retries.
  */
@@ -220,7 +217,7 @@ typedef enum {
 #endif
 
 /* ============================================================================
-   Wake Cause Codes (framework-agnostic; see PORT1 policy)
+   Wake Cause Codes (framework-agnostic)
    =========================================================================== */
 
 /**

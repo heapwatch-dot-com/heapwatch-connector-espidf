@@ -18,8 +18,8 @@ namespace {
 
 constexpr char TAG[] = "HwFs";
 
-constexpr size_t kWorkQueueDepth = 4;
-constexpr TickType_t kUploadArmTimeoutTicks = pdMS_TO_TICKS(5000);
+constexpr size_t WORK_QUEUE_DEPTH = 4;
+constexpr TickType_t UPLOAD_ARM_TIMEOUT_TICKS = pdMS_TO_TICKS(5000);
 
 enum class WorkKind : uint8_t {
     Storage,
@@ -36,10 +36,10 @@ enum class WorkKind : uint8_t {
 
 struct WorkItem {
     WorkKind kind = WorkKind::Storage;
-    char command_id[kFsCommandIdMax] = {};
-    char path[kFsPathMax] = {};
-    char path2[kFsPathMax] = {};
-    char sha256[kFsSha256HexMax] = {};
+    char command_id[FS_COMMAND_ID_MAX] = {};
+    char path[FS_PATH_MAX] = {};
+    char path2[FS_PATH_MAX] = {};
+    char sha256[FS_SHA256_HEX_MAX] = {};
     int page = 1;
     int per_page = 25;
     int from_line = 1;
@@ -194,7 +194,7 @@ bool ensureIngressReady(const char* suffix, const char* command_id) {
 
 bool ensureWorkQueue() {
     if (g_work_queue == nullptr) {
-        g_work_queue = xQueueCreate(kWorkQueueDepth, sizeof(WorkItem));
+        g_work_queue = xQueueCreate(WORK_QUEUE_DEPTH, sizeof(WorkItem));
     }
     if (g_upload_arm_done == nullptr) {
         g_upload_arm_done = xSemaphoreCreateBinary();
@@ -217,7 +217,7 @@ bool armUploadAndWait(const WorkItem& work, FsError* error) {
         return false;
     }
 
-    if (xSemaphoreTake(g_upload_arm_done, kUploadArmTimeoutTicks) != pdTRUE) {
+    if (xSemaphoreTake(g_upload_arm_done, UPLOAD_ARM_TIMEOUT_TICKS) != pdTRUE) {
         if (error != nullptr) {
             error->code = "busy";
             error->message = "Timed out arming filesystem upload.";

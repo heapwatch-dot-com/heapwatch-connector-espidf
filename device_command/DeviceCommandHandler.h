@@ -29,7 +29,7 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
 using CommandHandler = void (*)(const char* suffix, const char* command_id, void* user_ctx);
 
 /** Small, fixed table — matches every other connector-internal sizing choice (no malloc). */
-constexpr size_t kMaxRegisteredCommands = 8;
+constexpr size_t MAX_REGISTERED_COMMANDS = 8;
 
 /**
  * Register a client-defined command name (matched against the MQTT command

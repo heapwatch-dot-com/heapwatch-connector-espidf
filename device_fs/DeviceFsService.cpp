@@ -30,25 +30,26 @@ namespace {
 constexpr char TAG[] = "HwFs";
 
 /** ESP-IDF: partition table always occupies one 4 KiB flash sector. */
-constexpr uint32_t kPartitionTableSectorBytes = 0x1000;
+constexpr uint32_t PARTITION_TABLE_SECTOR_BYTES = 0x1000;
 /** Secure Boot V1 digest at flash offset 0 (one sector). */
+constexpr uint32_t SECURE_BOOT_DIGEST_BYTES = 0x1000;
 /** ESP-IDF partition types (esp_partition_type_t) — stable since IDF 5.x CSV tooling. */
-constexpr int kEspPartitionTypeBootloader = 0x02;
-constexpr int kEspPartitionTypePartitionTable = 0x03;
-constexpr int kEspPartitionSubtypePrimary = 0x00;
+constexpr int PARTITION_TYPE_BOOTLOADER = 0x02;
+constexpr int PARTITION_TYPE_PARTITION_TABLE = 0x03;
+constexpr int PARTITION_SUBTYPE_PRIMARY = 0x00;
 
-constexpr size_t kDownloadChunkBytes = 4096;
-constexpr size_t kReadLineBuf = 512;
+constexpr size_t DOWNLOAD_CHUNK_BYTES = 4096;
+constexpr size_t READ_LINE_BUF = 512;
 // file_browser mux frames are ≤4 KiB. Leave headroom for JSON envelope + escaping.
-constexpr size_t kReadJsonEnvelopeReserve = 384;
-constexpr size_t kReadContentEscapedBudget =
-    stream_ingress::mux::kMaxPayloadLen > kReadJsonEnvelopeReserve
-        ? stream_ingress::mux::kMaxPayloadLen - kReadJsonEnvelopeReserve
+constexpr size_t READ_JSON_ENVELOPE_RESERVE = 384;
+constexpr size_t READ_CONTENT_ESCAPED_BUDGET =
+    stream_ingress::mux::MAX_PAYLOAD_LEN > READ_JSON_ENVELOPE_RESERVE
+        ? stream_ingress::mux::MAX_PAYLOAD_LEN - READ_JSON_ENVELOPE_RESERVE
         : 512;
 
 // Shared by sha256File / download — lives in BSS, not on the 6KiB stream-ingress stack.
 // Only called from hw_stream_ingress (single-threaded FS work).
-uint8_t g_io_buf[kDownloadChunkBytes] = {};
+uint8_t g_io_buf[DOWNLOAD_CHUNK_BYTES] = {};
 
 struct DirEntry {
     std::string name;
@@ -60,10 +61,10 @@ struct DirEntry {
 
 struct ActiveUpload {
     bool active = false;
-    char command_id[kFsCommandIdMax] = {};
-    char target_path[kFsPathMax] = {};
-    char temp_path[kFsPathMax] = {};
-    char expected_sha256[kFsSha256HexMax] = {};
+    char command_id[FS_COMMAND_ID_MAX] = {};
+    char target_path[FS_PATH_MAX] = {};
+    char temp_path[FS_PATH_MAX] = {};
+    char expected_sha256[FS_SHA256_HEX_MAX] = {};
     bool replace = false;
     int64_t expected_size = 0;
     int64_t received_size = 0;
@@ -107,7 +108,7 @@ void cleanupOrphanUploadTemps(const char* mount) {
             continue;
         }
 
-        char full[kFsPathMax] = {};
+        char full[FS_PATH_MAX] = {};
         const int written = snprintf(full, sizeof(full), "%s/%s", mount, entry->d_name);
         if (written <= 0 || static_cast<size_t>(written) >= sizeof(full)) {
             continue;
@@ -195,14 +196,14 @@ bool formatIso8601(time_t epoch_seconds, char* out, size_t out_len) {
 }
 
 bool hexEncodeSha256(const uint8_t digest[32], char* out, size_t out_len) {
-    if (out == nullptr || out_len < kFsSha256HexMax) {
+    if (out == nullptr || out_len < FS_SHA256_HEX_MAX) {
         return false;
     }
 
-    static const char* hex = "0123456789abcdef";
+    static const char* HEX_DIGITS = "0123456789abcdef";
     for (int i = 0; i < 32; i++) {
-        out[i * 2] = hex[(digest[i] >> 4) & 0x0f];
-        out[i * 2 + 1] = hex[digest[i] & 0x0f];
+        out[i * 2] = HEX_DIGITS[(digest[i] >> 4) & 0x0f];
+        out[i * 2 + 1] = HEX_DIGITS[digest[i] & 0x0f];
     }
     out[64] = '\0';
     return true;
@@ -251,11 +252,11 @@ void finalizeUpload() {
         return;
     }
 
-    char command_id[kFsCommandIdMax] = {};
+    char command_id[FS_COMMAND_ID_MAX] = {};
     snprintf(command_id, sizeof(command_id), "%s", g_upload.command_id);
     const bool replace = g_upload.replace;
-    char target_path[kFsPathMax] = {};
-    char temp_path[kFsPathMax] = {};
+    char target_path[FS_PATH_MAX] = {};
+    char temp_path[FS_PATH_MAX] = {};
     snprintf(target_path, sizeof(target_path), "%s", g_upload.target_path);
     snprintf(temp_path, sizeof(temp_path), "%s", g_upload.temp_path);
 
@@ -272,7 +273,7 @@ void finalizeUpload() {
         return;
     }
 
-    char actual_sha256[kFsSha256HexMax] = {};
+    char actual_sha256[FS_SHA256_HEX_MAX] = {};
     int64_t actual_size = 0;
     if (!sha256File(temp_path, actual_sha256, sizeof(actual_sha256), &actual_size)) {
         FsError err = {"io_error", "Failed to hash uploaded temp file."};
@@ -362,7 +363,7 @@ void downloadOnStreamTask(const char* command_id, const char* path) {
     mbedtls_sha256_finish(&ctx, digest);
     mbedtls_sha256_free(&ctx);
 
-    char sha_hex[kFsSha256HexMax] = {};
+    char sha_hex[FS_SHA256_HEX_MAX] = {};
     hexEncodeSha256(digest, sha_hex, sizeof(sha_hex));
 
     cJSON* result = cJSON_CreateObject();
@@ -563,23 +564,23 @@ void appendHiddenFlashPartitions(cJSON* partitions) {
     cJSON_AddItemToArray(
         partitions,
         buildSyntheticPartitionObject("secure_boot_digest", "Reserved", "reserved", "reserved", 0, 0,
-                                      0, kSecureBootDigestBytes));
+                                      0, SECURE_BOOT_DIGEST_BYTES));
 #endif
 
     if (table_offset > boot_offset) {
         cJSON_AddItemToArray(
             partitions,
             buildSyntheticPartitionObject("bootloader", "Bootloader", "bootloader", "primary",
-                                      kEspPartitionTypeBootloader, kEspPartitionSubtypePrimary,
+                                      PARTITION_TYPE_BOOTLOADER, PARTITION_SUBTYPE_PRIMARY,
                                       boot_offset, table_offset - boot_offset));
     }
 
     cJSON_AddItemToArray(
         partitions,
         buildSyntheticPartitionObject("partition_table", "Partition Table", "partition_table",
-                                      "primary", kEspPartitionTypePartitionTable,
-                                      kEspPartitionSubtypePrimary, table_offset,
-                                      kPartitionTableSectorBytes));
+                                      "primary", PARTITION_TYPE_PARTITION_TABLE,
+                                      PARTITION_SUBTYPE_PRIMARY, table_offset,
+                                      PARTITION_TABLE_SECTOR_BYTES));
 }
 
 cJSON* buildPartitionObject(const esp_partition_t* part) {
@@ -778,7 +779,7 @@ cJSON* buildListResult(const char* path, int page, int per_page, FsError* error)
             continue;
         }
 
-        char child_path[kFsPathMax] = {};
+        char child_path[FS_PATH_MAX] = {};
         const int path_written = snprintf(child_path, sizeof(child_path), "%s/%s", path, ent->d_name);
         if (path_written <= 0 || static_cast<size_t>(path_written) >= sizeof(child_path)) {
             continue;
@@ -904,7 +905,7 @@ cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* er
     int current_line = 0;
     int first_emitted = 0;
     int last_emitted = 0;
-    char line[kReadLineBuf] = {};
+    char line[READ_LINE_BUF] = {};
 
     while (fgets(line, sizeof(line), fp) != nullptr) {
         current_line++;
@@ -916,7 +917,7 @@ cJSON* buildReadResult(const char* path, int from_line, int to_line, FsError* er
         }
 
         const size_t line_escaped = jsonEscapedSize(line);
-        if (escaped_bytes + line_escaped > kReadContentEscapedBudget) {
+        if (escaped_bytes + line_escaped > READ_CONTENT_ESCAPED_BUDGET) {
             // Mux frame is full — return only lines that already fit.
             // Prefer returning a prefix of the window over failing the whole read.
             if (first_emitted == 0) {
@@ -1009,7 +1010,7 @@ bool renameEntry(const char* path, const char* new_name, FsError* error) {
         return false;
     }
 
-    char dest[kFsPathMax] = {};
+    char dest[FS_PATH_MAX] = {};
     const size_t dir_len = static_cast<size_t>(slash - path);
     snprintf(dest, sizeof(dest), "%.*s/%s", static_cast<int>(dir_len), path, new_name);
 
@@ -1095,7 +1096,7 @@ bool beginUploadJob(const char* command_id, const char* path, const char* temp_p
     // Interactive FS is now-or-never: a new upload command supersedes any stuck prior job
     // (e.g. bytes never arrived after MQTT arm). Without this the device stays busy forever.
     if (g_upload.active) {
-        char old_command_id[kFsCommandIdMax] = {};
+        char old_command_id[FS_COMMAND_ID_MAX] = {};
         snprintf(old_command_id, sizeof(old_command_id), "%s", g_upload.command_id);
         ESP_LOGW(TAG, "Superseding active upload %s with %s", old_command_id,
                  command_id != nullptr ? command_id : "");
@@ -1220,7 +1221,7 @@ void handleUploadChunk(const uint8_t* data, size_t len) {
             no_space ? "Not enough free space on the volume for this upload."
                      : "Failed to write upload chunk.",
         };
-        char command_id[kFsCommandIdMax] = {};
+        char command_id[FS_COMMAND_ID_MAX] = {};
         snprintf(command_id, sizeof(command_id), "%s", g_upload.command_id);
         unlink(g_upload.temp_path);
         resetUploadState();

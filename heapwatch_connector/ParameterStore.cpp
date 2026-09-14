@@ -29,10 +29,10 @@ namespace heapwatch::parameter_store {
 
 namespace {
 
-constexpr size_t kMaxSlugLen = 48;
+constexpr size_t MAX_SLUG_LEN = 48;
 
 struct ParamSlot {
-    char slug[kMaxSlugLen] = {0};
+    char slug[MAX_SLUG_LEN] = {0};
     int64_t int_value = 0;
     double double_value = 0.0;
     int64_t int_min = 0;
@@ -43,12 +43,12 @@ struct ParamSlot {
     uint8_t flags = 0;
 };
 
-constexpr uint8_t kSlotInUse = 1 << 0;
-constexpr uint8_t kSlotIsDouble = 1 << 1;
-constexpr uint8_t kSlotHasValue = 1 << 2;
-constexpr uint8_t kSlotHasMin = 1 << 3;
-constexpr uint8_t kSlotHasMax = 1 << 4;
-constexpr uint8_t kSlotBoundsDirty = 1 << 5;
+constexpr uint8_t SLOT_IN_USE = 1 << 0;
+constexpr uint8_t SLOT_IS_DOUBLE = 1 << 1;
+constexpr uint8_t SLOT_HAS_VALUE = 1 << 2;
+constexpr uint8_t SLOT_HAS_MIN = 1 << 3;
+constexpr uint8_t SLOT_HAS_MAX = 1 << 4;
+constexpr uint8_t SLOT_BOUNDS_DIRTY = 1 << 5;
 
 bool slot_flag(const ParamSlot& slot, uint8_t bit) {
     return (slot.flags & bit) != 0;
@@ -79,16 +79,16 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
     }
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (slot_flag(g_slots[i], kSlotInUse) && strncmp(g_slots[i].slug, slug, kMaxSlugLen) == 0) {
+        if (slot_flag(g_slots[i], SLOT_IN_USE) && strncmp(g_slots[i].slug, slug, MAX_SLUG_LEN) == 0) {
             return &g_slots[i];
         }
     }
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (!slot_flag(g_slots[i], kSlotInUse)) {
+        if (!slot_flag(g_slots[i], SLOT_IN_USE)) {
             g_slots[i] = ParamSlot();
-            slot_set_flag(g_slots[i], kSlotInUse, true);
-            slot_set_flag(g_slots[i], kSlotBoundsDirty, true);
+            slot_set_flag(g_slots[i], SLOT_IN_USE, true);
+            slot_set_flag(g_slots[i], SLOT_BOUNDS_DIRTY, true);
             snprintf(g_slots[i].slug, sizeof(g_slots[i].slug), "%s", slug);
             return &g_slots[i];
         }
@@ -102,7 +102,7 @@ ParamSlot* find_or_create_slot_locked(const char* slug) {
 }
 
 bool slot_has_publishable_content_locked(const ParamSlot& slot) {
-    return slot_flag(slot, kSlotHasValue) || slot_flag(slot, kSlotBoundsDirty);
+    return slot_flag(slot, SLOT_HAS_VALUE) || slot_flag(slot, SLOT_BOUNDS_DIRTY);
 }
 
 }  // namespace
@@ -114,8 +114,8 @@ void updateInt(const char* slug, int64_t value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot_set_flag(*slot, kSlotIsDouble, false);
-        slot_set_flag(*slot, kSlotHasValue, true);
+        slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
+        slot_set_flag(*slot, SLOT_HAS_VALUE, true);
         slot->int_value = value;
     }
     xSemaphoreGive(mutex);
@@ -128,8 +128,8 @@ void updateDouble(const char* slug, double value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot_set_flag(*slot, kSlotIsDouble, true);
-        slot_set_flag(*slot, kSlotHasValue, true);
+        slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
+        slot_set_flag(*slot, SLOT_HAS_VALUE, true);
         slot->double_value = value;
     }
     xSemaphoreGive(mutex);
@@ -142,15 +142,15 @@ void updateIntRanged(const char* slug, int64_t value, int64_t min_value, int64_t
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot_set_flag(*slot, kSlotIsDouble, false);
-        slot_set_flag(*slot, kSlotHasValue, true);
+        slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
+        slot_set_flag(*slot, SLOT_HAS_VALUE, true);
         slot->int_value = value;
-        if (!slot_flag(*slot, kSlotHasMin) || !slot_flag(*slot, kSlotHasMax)
+        if (!slot_flag(*slot, SLOT_HAS_MIN) || !slot_flag(*slot, SLOT_HAS_MAX)
             || slot->int_min != min_value || slot->int_max != max_value) {
-            slot_set_flag(*slot, kSlotBoundsDirty, true);
+            slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
         }
-        slot_set_flag(*slot, kSlotHasMin, true);
-        slot_set_flag(*slot, kSlotHasMax, true);
+        slot_set_flag(*slot, SLOT_HAS_MIN, true);
+        slot_set_flag(*slot, SLOT_HAS_MAX, true);
         slot->int_min = min_value;
         slot->int_max = max_value;
     }
@@ -164,15 +164,15 @@ void updateDoubleRanged(const char* slug, double value, double min_value, double
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        slot_set_flag(*slot, kSlotIsDouble, true);
-        slot_set_flag(*slot, kSlotHasValue, true);
+        slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
+        slot_set_flag(*slot, SLOT_HAS_VALUE, true);
         slot->double_value = value;
-        if (!slot_flag(*slot, kSlotHasMin) || !slot_flag(*slot, kSlotHasMax)
+        if (!slot_flag(*slot, SLOT_HAS_MIN) || !slot_flag(*slot, SLOT_HAS_MAX)
             || slot->double_min != min_value || slot->double_max != max_value) {
-            slot_set_flag(*slot, kSlotBoundsDirty, true);
+            slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
         }
-        slot_set_flag(*slot, kSlotHasMin, true);
-        slot_set_flag(*slot, kSlotHasMax, true);
+        slot_set_flag(*slot, SLOT_HAS_MIN, true);
+        slot_set_flag(*slot, SLOT_HAS_MAX, true);
         slot->double_min = min_value;
         slot->double_max = max_value;
     }
@@ -186,14 +186,14 @@ void setIntMax(const char* slug, int64_t max_value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        if (!slot_flag(*slot, kSlotHasValue)) {
-            slot_set_flag(*slot, kSlotIsDouble, false);
+        if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
+            slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
         }
-        if (!slot_flag(*slot, kSlotIsDouble)) {
-            if (!slot_flag(*slot, kSlotHasMax) || slot->int_max != max_value) {
-                slot_set_flag(*slot, kSlotBoundsDirty, true);
+        if (!slot_flag(*slot, SLOT_IS_DOUBLE)) {
+            if (!slot_flag(*slot, SLOT_HAS_MAX) || slot->int_max != max_value) {
+                slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
             }
-            slot_set_flag(*slot, kSlotHasMax, true);
+            slot_set_flag(*slot, SLOT_HAS_MAX, true);
             slot->int_max = max_value;
         }
     }
@@ -207,14 +207,14 @@ void setIntMin(const char* slug, int64_t min_value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        if (!slot_flag(*slot, kSlotHasValue)) {
-            slot_set_flag(*slot, kSlotIsDouble, false);
+        if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
+            slot_set_flag(*slot, SLOT_IS_DOUBLE, false);
         }
-        if (!slot_flag(*slot, kSlotIsDouble)) {
-            if (!slot_flag(*slot, kSlotHasMin) || slot->int_min != min_value) {
-                slot_set_flag(*slot, kSlotBoundsDirty, true);
+        if (!slot_flag(*slot, SLOT_IS_DOUBLE)) {
+            if (!slot_flag(*slot, SLOT_HAS_MIN) || slot->int_min != min_value) {
+                slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
             }
-            slot_set_flag(*slot, kSlotHasMin, true);
+            slot_set_flag(*slot, SLOT_HAS_MIN, true);
             slot->int_min = min_value;
         }
     }
@@ -228,14 +228,14 @@ void setDoubleMax(const char* slug, double max_value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        if (!slot_flag(*slot, kSlotHasValue)) {
-            slot_set_flag(*slot, kSlotIsDouble, true);
+        if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
+            slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
         }
-        if (slot_flag(*slot, kSlotIsDouble)) {
-            if (!slot_flag(*slot, kSlotHasMax) || slot->double_max != max_value) {
-                slot_set_flag(*slot, kSlotBoundsDirty, true);
+        if (slot_flag(*slot, SLOT_IS_DOUBLE)) {
+            if (!slot_flag(*slot, SLOT_HAS_MAX) || slot->double_max != max_value) {
+                slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
             }
-            slot_set_flag(*slot, kSlotHasMax, true);
+            slot_set_flag(*slot, SLOT_HAS_MAX, true);
             slot->double_max = max_value;
         }
     }
@@ -249,14 +249,14 @@ void setDoubleMin(const char* slug, double min_value) {
     }
     ParamSlot* slot = find_or_create_slot_locked(slug);
     if (slot != nullptr) {
-        if (!slot_flag(*slot, kSlotHasValue)) {
-            slot_set_flag(*slot, kSlotIsDouble, true);
+        if (!slot_flag(*slot, SLOT_HAS_VALUE)) {
+            slot_set_flag(*slot, SLOT_IS_DOUBLE, true);
         }
-        if (slot_flag(*slot, kSlotIsDouble)) {
-            if (!slot_flag(*slot, kSlotHasMin) || slot->double_min != min_value) {
-                slot_set_flag(*slot, kSlotBoundsDirty, true);
+        if (slot_flag(*slot, SLOT_IS_DOUBLE)) {
+            if (!slot_flag(*slot, SLOT_HAS_MIN) || slot->double_min != min_value) {
+                slot_set_flag(*slot, SLOT_BOUNDS_DIRTY, true);
             }
-            slot_set_flag(*slot, kSlotHasMin, true);
+            slot_set_flag(*slot, SLOT_HAS_MIN, true);
             slot->double_min = min_value;
         }
     }
@@ -279,7 +279,7 @@ bool buildFlushPayload(char* out, size_t out_size) {
 
     bool any_publishable = false;
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
-        if (slot_flag(g_slots[i], kSlotInUse) && slot_has_publishable_content_locked(g_slots[i])) {
+        if (slot_flag(g_slots[i], SLOT_IN_USE) && slot_has_publishable_content_locked(g_slots[i])) {
             any_publishable = true;
             break;
         }
@@ -295,12 +295,12 @@ bool buildFlushPayload(char* out, size_t out_size) {
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS && pos < out_size; ++i) {
         ParamSlot& slot = g_slots[i];
-        if (!slot_flag(slot, kSlotInUse)) {
+        if (!slot_flag(slot, SLOT_IN_USE)) {
             continue;
         }
 
-        if (slot_flag(slot, kSlotHasValue)) {
-            if (slot_flag(slot, kSlotIsDouble)) {
+        if (slot_flag(slot, SLOT_HAS_VALUE)) {
+            if (slot_flag(slot, SLOT_IS_DOUBLE)) {
                 pos += snprintf(out + pos, out_size - pos, ",\"%s\":%.6f", slot.slug, slot.double_value);
             } else {
                 pos += snprintf(out + pos, out_size - pos, ",\"%s\":%lld", slot.slug,
@@ -308,22 +308,22 @@ bool buildFlushPayload(char* out, size_t out_size) {
             }
         }
 
-        if (slot_flag(slot, kSlotBoundsDirty) && pos < out_size) {
-            if (slot_flag(slot, kSlotIsDouble)) {
-                if (slot_flag(slot, kSlotHasMin)) {
+        if (slot_flag(slot, SLOT_BOUNDS_DIRTY) && pos < out_size) {
+            if (slot_flag(slot, SLOT_IS_DOUBLE)) {
+                if (slot_flag(slot, SLOT_HAS_MIN)) {
                     pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%.6f", slot.slug,
                                      slot.double_min);
                 }
-                if (slot_flag(slot, kSlotHasMax) && pos < out_size) {
+                if (slot_flag(slot, SLOT_HAS_MAX) && pos < out_size) {
                     pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%.6f", slot.slug,
                                      slot.double_max);
                 }
             } else {
-                if (slot_flag(slot, kSlotHasMin)) {
+                if (slot_flag(slot, SLOT_HAS_MIN)) {
                     pos += snprintf(out + pos, out_size - pos, ",\"%s_min\":%lld", slot.slug,
                                      static_cast<long long>(slot.int_min));
                 }
-                if (slot_flag(slot, kSlotHasMax) && pos < out_size) {
+                if (slot_flag(slot, SLOT_HAS_MAX) && pos < out_size) {
                     pos += snprintf(out + pos, out_size - pos, ",\"%s_max\":%lld", slot.slug,
                                      static_cast<long long>(slot.int_max));
                 }
@@ -352,10 +352,10 @@ void acknowledgeBoundsSent() {
     const TickType_t now = xTaskGetTickCount();
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {
         ParamSlot& slot = g_slots[i];
-        if (!slot_flag(slot, kSlotInUse) || !slot_flag(slot, kSlotBoundsDirty)) {
+        if (!slot_flag(slot, SLOT_IN_USE) || !slot_flag(slot, SLOT_BOUNDS_DIRTY)) {
             continue;
         }
-        slot_set_flag(slot, kSlotBoundsDirty, false);
+        slot_set_flag(slot, SLOT_BOUNDS_DIRTY, false);
         slot.last_bounds_sent_tick = now;
     }
 

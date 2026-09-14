@@ -24,9 +24,9 @@ void emitBleEvent(int event_id, const char* detail, const char* peer_addr);
 
 namespace {
 
-constexpr const char* kTag = "HwBle";
-constexpr size_t kJsonLineMax = 512;
-constexpr size_t kCommandIdMax = 64;
+constexpr const char* TAG = "HwBle";
+constexpr size_t JSON_LINE_MAX = 512;
+constexpr size_t COMMAND_ID_MAX = 64;
 
 bool g_started = false;
 volatile bool g_stop_requested = false;
@@ -35,7 +35,7 @@ bool g_prev_stack_ready = false;
 bool g_prev_advertising = false;
 bool g_prev_scanning = false;
 RadioBleSnapshot g_prev_snapshot = {};
-char g_scan_command_id[kCommandIdMax] = {};
+char g_scan_command_id[COMMAND_ID_MAX] = {};
 
 bool append(char* out, size_t out_len, size_t* offset, const char* fmt, ...) {
     if (*offset >= out_len) {
@@ -110,7 +110,7 @@ void onScanPeer(const ScanPeer& peer, void* /*ctx*/) {
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    char line[kJsonLineMax] = {};
+    char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"command_id\":\"%s\",\"addr\":\"%s\",\"rssi\":%d,\"name\":\"%s\","
@@ -133,7 +133,7 @@ void onScanComplete(bool success, const char* message, void* /*ctx*/) {
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    char line[kJsonLineMax] = {};
+    char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"command_id\":\"%s\",\"done\":true,\"ok\":%s,\"message\":\"%s\","
@@ -261,7 +261,7 @@ void emitBleEvent(int event_id, const char* detail, const char* peer_addr) {
     uint64_t utms = 0;
     heapwatch_get_ingress_timing_ms(&tsms, &utms);
 
-    char line[kJsonLineMax] = {};
+    char line[JSON_LINE_MAX] = {};
     if (peer_addr != nullptr && peer_addr[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"event_id\":%d,\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%llu,"
@@ -285,7 +285,7 @@ void publishFullSync() {
     emitStateTransitions(snap);
     g_prev_snapshot = snap;
     HeapwatchConnector::getInstance().queueBluetoothSnapshot();
-    ESP_LOGI(kTag, "Queued full /bluetooth sync");
+    ESP_LOGI(TAG, "Queued full /bluetooth sync");
 }
 
 void handleGetCommand() { publishFullSync(); }
@@ -302,7 +302,7 @@ bool startCommandScan(const char* command_id, bool active, uint32_t duration_sec
     }
 
     if (!heapwatch::stream_ingress::ensureTcpSession()) {
-        ESP_LOGW(kTag, "Stream ingress unavailable for BLE scan");
+        ESP_LOGW(TAG, "Stream ingress unavailable for BLE scan");
     }
 
     return provider.startScan(active, duration_seconds, onScanPeer, onScanComplete, nullptr);
@@ -315,12 +315,12 @@ void start() {
     g_started = true;
 
     if (!isBleReportingEnabled() && !heapwatch_ble_has_delegate()) {
-        ESP_LOGI(kTag, "BLE reporting disabled");
+        ESP_LOGI(TAG, "BLE reporting disabled");
         return;
     }
 
     if (!getBleProvider().initialize()) {
-        ESP_LOGW(kTag, "BLE provider init failed");
+        ESP_LOGW(TAG, "BLE provider init failed");
     }
 
     g_stop_requested = false;
@@ -331,7 +331,7 @@ void start() {
     g_task_exited = true;
 #endif
 
-    ESP_LOGI(kTag, "Bluetooth reporter started");
+    ESP_LOGI(TAG, "Bluetooth reporter started");
 }
 
 void stop() {

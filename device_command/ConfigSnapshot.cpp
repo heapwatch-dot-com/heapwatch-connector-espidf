@@ -15,8 +15,8 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "HwCmd";
-constexpr char kChannelConfigSnapshot[] = "config_snapshot";
-constexpr uint32_t kStreamConnectTimeoutMs = 30000;
+constexpr char CHANNEL_CONFIG_SNAPSHOT[] = "config_snapshot";
+constexpr uint32_t STREAM_CONNECT_TIMEOUT_MS = 30000;
 
 bool g_full_partition_uploaded_this_boot = false;
 bool g_upload_requested = false;
@@ -66,13 +66,13 @@ void uploadConfigSnapshot(const char* nvs_namespace, bool force) {
 
     const size_t body_len = strlen(body);
 
-    if (!heapwatch::stream_ingress::waitForStreamTcp(kStreamConnectTimeoutMs)) {
+    if (!heapwatch::stream_ingress::waitForStreamTcp(STREAM_CONNECT_TIMEOUT_MS)) {
         ESP_LOGW(TAG, "Stream ingress not ready for config snapshot upload");
         cJSON_free(body);
         return;
     }
 
-    if (!heapwatch::stream_ingress::streamJsonBody(kChannelConfigSnapshot, body)) {
+    if (!heapwatch::stream_ingress::streamJsonBody(CHANNEL_CONFIG_SNAPSHOT, body)) {
         ESP_LOGW(TAG, "Config snapshot stream upload failed");
         cJSON_free(body);
         return;

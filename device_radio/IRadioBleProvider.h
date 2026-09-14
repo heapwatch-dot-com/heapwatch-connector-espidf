@@ -11,7 +11,7 @@
 namespace heapwatch::device_radio {
 
 struct ScanPeer {
-    char addr[kBleAddrLen];
+    char addr[BLE_ADDR_LEN];
     int8_t rssi;
     char name[32];
 };

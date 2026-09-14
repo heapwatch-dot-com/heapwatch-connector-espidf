@@ -21,11 +21,11 @@ namespace heapwatch::device_command {
 namespace {
 
 constexpr char TAG[] = "HwCmd";
-constexpr size_t kInboundQueueDepth = 8;
-constexpr size_t kTopicMax = 160;
+constexpr size_t INBOUND_QUEUE_DEPTH = 8;
+constexpr size_t TOPIC_MAX = 160;
 /** Matches CONFIG_MQTT_BUFFER_SIZE on client firmware projects. */
-constexpr size_t kPayloadMax = 1024;
-constexpr uint32_t kWorkerStackBytes = 10240;
+constexpr size_t PAYLOAD_MAX = 1024;
+constexpr uint32_t WORKER_STACK_BYTES = 10240;
 
 enum class InboundKind : uint8_t {
     MqttCommand = 0,
@@ -38,8 +38,8 @@ struct CommandInboundMessage {
     uint8_t mqtt_retain = 0;
     uint16_t topic_len = 0;
     uint16_t payload_len = 0;
-    char topic[kTopicMax] = {};
-    char payload[kPayloadMax] = {};
+    char topic[TOPIC_MAX] = {};
+    char payload[PAYLOAD_MAX] = {};
 };
 
 QueueHandle_t g_inbound_queue = nullptr;
@@ -108,14 +108,14 @@ void initCommandWorker() {
         return;
     }
 
-    g_inbound_queue = heapwatch_queue_create(kInboundQueueDepth, sizeof(CommandInboundMessage));
+    g_inbound_queue = heapwatch_queue_create(INBOUND_QUEUE_DEPTH, sizeof(CommandInboundMessage));
     if (g_inbound_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create inbound command queue");
         return;
     }
 
     g_worker_exited = false;
-    if (heapwatch_task_create_dram(commandWorkerTask, "hw_command", kWorkerStackBytes, nullptr, tskIDLE_PRIORITY + 2,
+    if (heapwatch_task_create_dram(commandWorkerTask, "hw_command", WORKER_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
                                   nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hw_command task");
         heapwatch_queue_delete(g_inbound_queue);
@@ -152,7 +152,7 @@ bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload
     if (g_inbound_queue == nullptr || topic == nullptr || payload == nullptr) {
         return false;
     }
-    if (topic_len == 0 || topic_len >= kTopicMax || payload_len >= kPayloadMax) {
+    if (topic_len == 0 || topic_len >= TOPIC_MAX || payload_len >= PAYLOAD_MAX) {
         ESP_LOGW(TAG, "Dropping oversize MQTT command (topic_len=%u payload_len=%u)",
                  static_cast<unsigned>(topic_len), static_cast<unsigned>(payload_len));
         return false;

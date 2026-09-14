@@ -12,10 +12,10 @@ namespace heapwatch::stream_ingress {
 
 namespace {
 
-constexpr uint32_t kMuxSendRetryMs = 30000;
+constexpr uint32_t MUX_SEND_RETRY_MS = 30000;
 
 bool sendCtrlEnd(const char* channel_id) {
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MUX_SEND_RETRY_MS);
     while (xTaskGetTickCount() < deadline && !isShuttingDown()) {
         if (sendMuxCtrlFrame(channel_id)) {
             flushOutbound();
@@ -28,7 +28,7 @@ bool sendCtrlEnd(const char* channel_id) {
 }
 
 bool sendDataChunk(const char* channel_id, const uint8_t* data, size_t len) {
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kMuxSendRetryMs);
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(MUX_SEND_RETRY_MS);
     while (xTaskGetTickCount() < deadline && !isShuttingDown()) {
         if (sendMuxDataFrame(channel_id, data, len)) {
             flushOutbound();
@@ -74,7 +74,7 @@ bool streamJsonBody(const char* channel_id, const char* body) {
 
     while (offset < total_len) {
         const size_t chunk_len =
-            (total_len - offset) > mux::kMaxPayloadLen ? mux::kMaxPayloadLen : (total_len - offset);
+            (total_len - offset) > mux::MAX_PAYLOAD_LEN ? mux::MAX_PAYLOAD_LEN : (total_len - offset);
 
         if (!sendDataChunk(channel_id, reinterpret_cast<const uint8_t*>(body + offset), chunk_len)) {
             return false;

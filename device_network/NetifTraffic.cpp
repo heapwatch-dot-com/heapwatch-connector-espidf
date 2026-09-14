@@ -18,14 +18,14 @@
 namespace heapwatch::netif_traffic {
 namespace {
 
-constexpr const char* kTag = "HwNet";
-constexpr size_t kMaxTrackedKeys = 8;
-constexpr size_t kKeyLen = 32;
+constexpr const char* TAG = "HwNet";
+constexpr size_t MAX_TRACKED_KEYS = 8;
+constexpr size_t KEY_LEN = 32;
 
-const char* kKnownIfKeys[] = {"WIFI_STA_DEF", "WIFI_AP_DEF", "ETH_DEF", "PPP_DEF"};
+const char* KNOWN_IF_KEYS[] = {"WIFI_STA_DEF", "WIFI_AP_DEF", "ETH_DEF", "PPP_DEF"};
 
 struct Slot {
-    char key[kKeyLen];
+    char key[KEY_LEN];
     struct netif* lwip;
     netif_input_fn orig_input;
     netif_linkoutput_fn orig_linkoutput;
@@ -34,7 +34,7 @@ struct Slot {
     bool hooked;
 };
 
-Slot g_slots[kMaxTrackedKeys] = {};
+Slot g_slots[MAX_TRACKED_KEYS] = {};
 size_t g_slot_count = 0;
 bool g_started = false;
 
@@ -46,7 +46,7 @@ bool g_started = false;
 
 Slot* find_slot_by_key(const char* key) {
     for (size_t i = 0; i < g_slot_count; ++i) {
-        if (strncmp(g_slots[i].key, key, kKeyLen) == 0) {
+        if (strncmp(g_slots[i].key, key, KEY_LEN) == 0) {
             return &g_slots[i];
         }
     }
@@ -66,8 +66,8 @@ Slot* find_slot_by_lwip(struct netif* lwip) {
 }
 
 void copy_key(char* dest, const char* src) {
-    strncpy(dest, src, kKeyLen - 1);
-    dest[kKeyLen - 1] = '\0';
+    strncpy(dest, src, KEY_LEN - 1);
+    dest[KEY_LEN - 1] = '\0';
 }
 
 err_t hook_input(struct pbuf* p, struct netif* inp) {
@@ -97,7 +97,7 @@ Slot* alloc_slot(const char* key, struct netif* lwip) {
     if (slot != nullptr) {
         return slot;
     }
-    if (g_slot_count >= kMaxTrackedKeys) {
+    if (g_slot_count >= MAX_TRACKED_KEYS) {
         return nullptr;
     }
     slot = &g_slots[g_slot_count++];
@@ -139,12 +139,12 @@ void hook_esp_netif(esp_netif_t* netif) {
         lwip->linkoutput = &hook_linkoutput;
     }
     slot->hooked = true;
-    ESP_LOGI(kTag, "hooked if_key=%s input=%d linkoutput=%d", key, slot->orig_input != nullptr,
+    ESP_LOGI(TAG, "hooked if_key=%s input=%d linkoutput=%d", key, slot->orig_input != nullptr,
              slot->orig_linkoutput != nullptr);
 }
 
 void hook_known_netifs() {
-    for (const char* key : kKnownIfKeys) {
+    for (const char* key : KNOWN_IF_KEYS) {
         hook_esp_netif(esp_netif_get_handle_from_ifkey(key));
     }
     hook_esp_netif(esp_netif_get_default_netif());
@@ -161,9 +161,9 @@ void start() {
     }
     g_started = true;
     hook_known_netifs();
-    ESP_LOGI(kTag, "start: input/linkoutput hooks (slots=%u)", static_cast<unsigned>(g_slot_count));
+    ESP_LOGI(TAG, "start: input/linkoutput hooks (slots=%u)", static_cast<unsigned>(g_slot_count));
 #else
-    ESP_LOGI(kTag, "start: NETIF_TRAFFIC compiled OUT");
+    ESP_LOGI(TAG, "start: NETIF_TRAFFIC compiled OUT");
     (void)g_started;
 #endif
 }
@@ -189,7 +189,7 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
         if (!slot.hooked) {
             continue;
         }
-        char slug_seg[kKeyLen];
+        char slug_seg[KEY_LEN];
         if (!heapwatch::normalizeDynamicSegment(slot.key, slug_seg, sizeof(slug_seg))) {
             continue;
         }

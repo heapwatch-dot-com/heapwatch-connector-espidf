@@ -49,11 +49,11 @@
 
 namespace heapwatch::connector_bootstrap {
 
-constexpr char kTag[] = "HwLife";
+constexpr char TAG[] = "HwLife";
 
-constexpr EventBits_t kWifiConnectedBit = BIT0;
-constexpr EventBits_t kWifiFailBit = BIT1;
-constexpr int kWifiMaxRetry = 10;
+constexpr EventBits_t WIFI_CONNECTED_EVENT_BIT = BIT0;
+constexpr EventBits_t WIFI_FAIL_EVENT_BIT = BIT1;
+constexpr int WIFI_CONNECT_MAX_RETRY = 10;
 
 EventGroupHandle_t g_wifi_event_group = nullptr;
 int g_wifi_retry = 0;
@@ -66,30 +66,30 @@ esp_event_handler_instance_t g_wifi_handler_instance = nullptr;
 
 namespace {
 
-constexpr uint32_t kLogForwardIntervalMs = 100;
-constexpr uint32_t kLogAssemblyFlushTimeoutMs = 250;
-constexpr size_t kLogLineMaxLen = 256;
-constexpr size_t kLogTagMaxLen = 32;
-constexpr size_t kLogRingCapacity = 64;
+constexpr uint32_t LOG_FORWARD_INTERVAL_MS = 100;
+constexpr uint32_t LOG_ASSEMBLY_FLUSH_TIMEOUT_MS = 250;
+constexpr size_t LOG_LINE_MAX_LEN = 256;
+constexpr size_t LOG_TAG_MAX_LEN = 32;
+constexpr size_t LOG_RING_CAPACITY = 64;
 
 int (*g_default_log_vprintf)(const char* fmt, va_list args) = nullptr;
 uint32_t g_log_lines_dropped_total = 0;
 uint32_t g_log_mqtt_dropped_total = 0;
 
 struct RawLogLine {
-    char text[kLogLineMaxLen];
+    char text[LOG_LINE_MAX_LEN];
     char task_name[configMAX_TASK_NAME_LEN];
-    char tag[kLogTagMaxLen];
+    char tag[LOG_TAG_MAX_LEN];
     int core;
 };
 
-RawLogLine g_log_ring[kLogRingCapacity] = {};
+RawLogLine g_log_ring[LOG_RING_CAPACITY] = {};
 size_t g_log_ring_head = 0;
 size_t g_log_ring_tail = 0;
 size_t g_log_ring_count = 0;
 portMUX_TYPE g_log_ring_lock = portMUX_INITIALIZER_UNLOCKED;
 
-char g_log_line_assembly[kLogLineMaxLen] = {};
+char g_log_line_assembly[LOG_LINE_MAX_LEN] = {};
 size_t g_log_line_assembly_len = 0;
 char g_log_line_task_name[configMAX_TASK_NAME_LEN] = {};
 int g_log_line_core = -1;
@@ -106,9 +106,9 @@ bool pushLogRingLine(const RawLogLine* line) {
 
     bool pushed = false;
     taskENTER_CRITICAL(&g_log_ring_lock);
-    if (g_log_ring_count < kLogRingCapacity) {
+    if (g_log_ring_count < LOG_RING_CAPACITY) {
         g_log_ring[g_log_ring_head] = *line;
-        g_log_ring_head = (g_log_ring_head + 1U) % kLogRingCapacity;
+        g_log_ring_head = (g_log_ring_head + 1U) % LOG_RING_CAPACITY;
         g_log_ring_count++;
         pushed = true;
     }
@@ -125,7 +125,7 @@ bool popLogRingLine(RawLogLine* line) {
     taskENTER_CRITICAL(&g_log_ring_lock);
     if (g_log_ring_count > 0) {
         *line = g_log_ring[g_log_ring_tail];
-        g_log_ring_tail = (g_log_ring_tail + 1U) % kLogRingCapacity;
+        g_log_ring_tail = (g_log_ring_tail + 1U) % LOG_RING_CAPACITY;
         g_log_ring_count--;
         popped = true;
     }
@@ -158,8 +158,8 @@ void redactAuthorizationBearer(char* line, size_t cap) {
         return;
     }
 
-    static constexpr char kRedacted[] = "(REDACTED)";
-    const size_t rlen = sizeof(kRedacted) - 1;
+    static constexpr char REDACTED[] = "(REDACTED)";
+    const size_t rlen = sizeof(REDACTED) - 1;
     char* p = line;
     while (*p != '\0') {
         if (strncasecmp(p, "authorization:", 14) != 0) {
@@ -195,7 +195,7 @@ void redactAuthorizationBearer(char* line, size_t cap) {
             return;
         }
         std::memmove(token_start + rlen, p, tail_len + 1);
-        std::memcpy(token_start, kRedacted, rlen);
+        std::memcpy(token_start, REDACTED, rlen);
         p = token_start + rlen;
     }
 }
@@ -283,7 +283,7 @@ void flushAssembledLogLine() {
     g_log_line_assembly[g_log_line_assembly_len] = '\0';
 
     RawLogLine line = {};
-    std::snprintf(line.text, kLogLineMaxLen, "%s", g_log_line_assembly);
+    std::snprintf(line.text, LOG_LINE_MAX_LEN, "%s", g_log_line_assembly);
     std::snprintf(line.task_name, sizeof(line.task_name), "%s", g_log_line_task_name);
     line.core = g_log_line_core;
     parseEspLogTag(g_log_line_assembly, line.tag, sizeof(line.tag));
@@ -348,7 +348,7 @@ void ingestLogTextChunk(const char* text) {
             continue;
         }
 
-        if (g_log_line_assembly_len >= (kLogLineMaxLen - 1)) {
+        if (g_log_line_assembly_len >= (LOG_LINE_MAX_LEN - 1)) {
             flushAssembledLogLine();
         }
 
@@ -370,7 +370,7 @@ int mqttLogVprintfHook(const char* fmt, va_list args) {
         return printed;
     }
 
-    char buffer[kLogLineMaxLen] = {};
+    char buffer[LOG_LINE_MAX_LEN] = {};
     va_list copy_for_parse;
     va_copy(copy_for_parse, args);
     std::vsnprintf(buffer, sizeof(buffer), fmt, copy_for_parse);
@@ -391,7 +391,7 @@ void logForwardTask(void* arg) {
     TickType_t last_wake = xTaskGetTickCount();
     while (!g_log_stop_requested) {
         while (popLogRingLine(&log_line)) {
-            char sanitized_line[kLogLineMaxLen] = {};
+            char sanitized_line[LOG_LINE_MAX_LEN] = {};
             stripAnsiSequences(log_line.text, sanitized_line, sizeof(sanitized_line));
             redactAuthorizationBearer(sanitized_line, sizeof(sanitized_line));
 
@@ -423,12 +423,12 @@ void logForwardTask(void* arg) {
         taskENTER_CRITICAL(&g_log_assembly_lock);
         if (g_log_line_assembly_len > 0 && g_log_line_assembly_last_update != 0 &&
             (xTaskGetTickCount() - g_log_line_assembly_last_update) >=
-                pdMS_TO_TICKS(kLogAssemblyFlushTimeoutMs)) {
+                pdMS_TO_TICKS(LOG_ASSEMBLY_FLUSH_TIMEOUT_MS)) {
             flushAssembledLogLine();
         }
         taskEXIT_CRITICAL(&g_log_assembly_lock);
 
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kLogForwardIntervalMs));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(LOG_FORWARD_INTERVAL_MS));
     }
     g_log_task_exited = true;
     g_log_forward_task = nullptr;
@@ -448,20 +448,20 @@ void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
         HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
         g_wifi_reconnects_total++;
         if (g_command_wifi_reconnect_active) {
-            ESP_LOGI(kTag, "Wi-Fi disconnected (commanded reconnect — deferring auto-reconnect)");
+            ESP_LOGI(TAG, "Wi-Fi disconnected (commanded reconnect — deferring auto-reconnect)");
             return;
         }
-        if (g_wifi_retry < kWifiMaxRetry) {
+        if (g_wifi_retry < WIFI_CONNECT_MAX_RETRY) {
             g_wifi_retry++;
             esp_wifi_connect();
-            ESP_LOGW(kTag, "Wi-Fi reconnect attempt %d/%d", g_wifi_retry, kWifiMaxRetry);
+            ESP_LOGW(TAG, "Wi-Fi reconnect attempt %d/%d", g_wifi_retry, WIFI_CONNECT_MAX_RETRY);
         } else {
-            xEventGroupSetBits(g_wifi_event_group, kWifiFailBit);
+            xEventGroupSetBits(g_wifi_event_group, WIFI_FAIL_EVENT_BIT);
             g_wifi_permanently_failed = true;
             heapwatch::connector_lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
             heapwatch::device_enrollment::setIndicatorPhase(
                 heapwatch::device_enrollment::EnrollStateLedPhase::kWifiFailed);
-            ESP_LOGE(kTag, "Wi-Fi connect failed after %d retries", kWifiMaxRetry);
+            ESP_LOGE(TAG, "Wi-Fi connect failed after %d retries", WIFI_CONNECT_MAX_RETRY);
         }
     }
 }
@@ -559,10 +559,10 @@ bool requestWifiReconnect(uint32_t duration_s) {
     const esp_err_t err = esp_wifi_connect();
     g_command_wifi_reconnect_active = false;
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
         return false;
     }
-    ESP_LOGI(kTag, "Wi-Fi reconnect requested (duration_s=%u)", static_cast<unsigned>(duration_s));
+    ESP_LOGI(TAG, "Wi-Fi reconnect requested (duration_s=%u)", static_cast<unsigned>(duration_s));
     return true;
 #else
     (void)duration_s;
@@ -621,37 +621,37 @@ void startWifiIfManaged() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(kTag, "Wi-Fi STA started (non-blocking)");
+    ESP_LOGI(TAG, "Wi-Fi STA started (non-blocking)");
 #else
-    ESP_LOGI(kTag, "HEAPWATCH_MANAGE_WIFI disabled; host app owns networking");
+    ESP_LOGI(TAG, "HEAPWATCH_MANAGE_WIFI disabled; host app owns networking");
 #endif /* CONFIG_HEAPWATCH_MANAGE_WIFI */
 }
 
 void syncTimeIfManaged() {
 #if !CONFIG_HEAPWATCH_MANAGE_TIME_SYNC
-    ESP_LOGI(kTag, "HEAPWATCH_MANAGE_TIME_SYNC disabled; client is responsible for system time");
+    ESP_LOGI(TAG, "HEAPWATCH_MANAGE_TIME_SYNC disabled; client is responsible for system time");
 #else
     esp_sntp_stop();
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
 
-    constexpr int max_checks = 20;
-    constexpr time_t min_valid_unix = 1700000000;
+    constexpr int MAX_CHECKS = 20;
+    constexpr time_t MIN_VALID_UNIX = 1700000000;
     int checks = 0;
 
-    while (checks < max_checks) {
+    while (checks < MAX_CHECKS) {
         const time_t now = time(nullptr);
-        if (now >= min_valid_unix) {
-            ESP_LOGI(kTag, "System time synced: %lld", static_cast<long long>(now));
+        if (now >= MIN_VALID_UNIX) {
+            ESP_LOGI(TAG, "System time synced: %lld", static_cast<long long>(now));
             return;
         }
         checks++;
-        ESP_LOGI(kTag, "Waiting for SNTP sync... (%d/%d)", checks, max_checks);
+        ESP_LOGI(TAG, "Waiting for SNTP sync... (%d/%d)", checks, MAX_CHECKS);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    ESP_LOGW(kTag, "SNTP sync timeout, continuing with current system time");
+    ESP_LOGW(TAG, "SNTP sync timeout, continuing with current system time");
 #endif /* CONFIG_HEAPWATCH_MANAGE_TIME_SYNC */
 }
 

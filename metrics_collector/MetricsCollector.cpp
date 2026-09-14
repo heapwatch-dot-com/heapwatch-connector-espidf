@@ -35,17 +35,18 @@
 #include "../heapwatch_config.h"
 #include "../connector_boot_sync/ConnectorBootSync.h"
 #include "../connector_settings/ConnectorSettings.h"
+#include "../device_fs/FsVolumeManager.h"
 #include "../device_network/DeviceNetworkReporter.h"
 #include "../device_network/NetifTraffic.h"
 namespace heapwatch::metrics_collector {
 
 namespace {
-constexpr char kTag[] = "HwMetrics";
+constexpr char TAG[] = "HwMetrics";
 uint64_t g_start_time_us = 0;
 char* g_payload_buf = nullptr;
 MqttMessage* g_mqtt_enqueue_msg = nullptr;
 
-constexpr size_t kMaxTaskRows = 48;
+constexpr size_t MAX_TASK_ROWS = 48;
 
 // One row per task name, carried across telemetry cycles.
 struct TaskStats {
@@ -63,11 +64,11 @@ struct TaskStats {
 };
 
 
-constexpr size_t kMaxCoresSupported = 4;
+constexpr size_t MAX_CORES_SUPPORTED = 4;
 
 struct CpuUsageState {
     uint64_t prev_total_runtime = 0;
-    uint64_t prev_idle_runtime[kMaxCoresSupported] = {};
+    uint64_t prev_idle_runtime[MAX_CORES_SUPPORTED] = {};
     bool initialized = false;
 };
 
@@ -76,7 +77,7 @@ size_t g_task_stats_count = 0;
 bool g_task_table_full_logged = false;
 CpuUsageState g_cpu_usage_state;
 
-uint8_t g_dirty_task_stack_idx[kMaxTaskRows];
+uint8_t g_dirty_task_stack_idx[MAX_TASK_ROWS];
 uint8_t g_dirty_task_stack_max_count = 0;
 
 struct TaskStackSample {
@@ -152,10 +153,10 @@ TaskStats* acquire_task_row(const char* task_name) {
         }
     }
 
-    if (g_task_stats_count >= kMaxTaskRows) {
+    if (g_task_stats_count >= MAX_TASK_ROWS) {
         if (!g_task_table_full_logged) {
-            ESP_LOGW(kTag, "task stats table full (%u rows) — '%s' is not reported",
-                     static_cast<unsigned>(kMaxTaskRows), name);
+            ESP_LOGW(TAG, "task stats table full (%u rows) — '%s' is not reported",
+                     static_cast<unsigned>(MAX_TASK_ROWS), name);
             g_task_table_full_logged = true;
         }
         return nullptr;
@@ -174,7 +175,7 @@ void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     QueueHandle_t queue = heapwatch_get_queue();
     if (queue != nullptr) {
         if (!heapwatch_outbound_send(queue, g_mqtt_enqueue_msg, 0)) {
-            ESP_LOGW(kTag, "large MQTT queue full — dropped %s payload",
+            ESP_LOGW(TAG, "large MQTT queue full — dropped %s payload",
                      type == MQTT_MESSAGE_TYPE_TASKS ? "TASKS" : "PARAMETER");
         }
     }
@@ -185,15 +186,15 @@ static_assert(HEAPWATCH_MAX_PAYLOAD_SIZE >= HEAPWATCH_LARGE_PAYLOAD_SIZE,
 
 // LargeMqttMessage.payload is HEAPWATCH_LARGE_PAYLOAD_SIZE and is filled with snprintf,
 // so the JSON string (including the closer) must be at most that size minus the NUL.
-constexpr size_t kLargeJsonMax = HEAPWATCH_LARGE_PAYLOAD_SIZE - 1;
-constexpr int kParameterJsonCloseLen = 1;   // }
+constexpr size_t LARGE_JSON_MAX = HEAPWATCH_LARGE_PAYLOAD_SIZE - 1;
+constexpr int PARAMETER_JSON_CLOSE_LEN = 1;   // }
 
 bool append_json_chunk(int* payload_len, const char* chunk, int chunk_len, int close_len) {
     if (payload_len == nullptr || chunk == nullptr || chunk_len <= 0) {
         return false;
     }
     if (*payload_len < 0
-        || *payload_len + chunk_len + close_len > static_cast<int>(kLargeJsonMax)) {
+        || *payload_len + chunk_len + close_len > static_cast<int>(LARGE_JSON_MAX)) {
         return false;
     }
     memcpy(g_payload_buf + *payload_len, chunk, static_cast<size_t>(chunk_len));
@@ -202,27 +203,27 @@ bool append_json_chunk(int* payload_len, const char* chunk, int chunk_len, int c
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-constexpr int kTasksJsonCloseLen = 2;       // ]}
+constexpr int TASKS_JSON_CLOSE_LEN = 2;       // ]}
 
-constexpr size_t kTasksJsonHeaderMax =
+constexpr size_t TASKS_JSON_HEADER_MAX =
     sizeof("{\"tsms\":18446744073709551615,\"utms\":18446744073709551615,\"tasks\":[") - 1;
-constexpr size_t kTaskNameMaxChars = sizeof(TaskStats::name) - 1;
-constexpr size_t kTaskJsonRowMax =
+constexpr size_t TASK_NAME_MAX_CHARS = sizeof(TaskStats::name) - 1;
+constexpr size_t TASK_JSON_ROW_MAX =
     sizeof(",{\"name\":\"\",\"total\":4294967295,\"now\":4294967295,\"min\":4294967295,"
            "\"max\":4294967295,\"peak\":4294967295,\"cpu\":100.00}")
-    - 1 + kTaskNameMaxChars;
+    - 1 + TASK_NAME_MAX_CHARS;
 
-static_assert(kTasksJsonHeaderMax + kTaskJsonRowMax + kTasksJsonCloseLen <= kLargeJsonMax,
+static_assert(TASKS_JSON_HEADER_MAX + TASK_JSON_ROW_MAX + TASKS_JSON_CLOSE_LEN <= LARGE_JSON_MAX,
               "HEAPWATCH_LARGE_PAYLOAD_SIZE cannot hold one TASKS object");
 
 // How many TASKS objects go in one MQTT_MESSAGE_TYPE_TASKS publish. Each publish is a
 // complete, independently ingestible subset — later messages do not replace earlier ones.
-constexpr size_t kMaxTasksPerPublish =
-    (kLargeJsonMax - kTasksJsonHeaderMax - static_cast<size_t>(kTasksJsonCloseLen))
-    / kTaskJsonRowMax;
-static_assert(kMaxTasksPerPublish >= 1, "large MQTT slot cannot hold a single TASKS row");
+constexpr size_t MAX_TASKS_PER_PUBLISH =
+    (LARGE_JSON_MAX - TASKS_JSON_HEADER_MAX - static_cast<size_t>(TASKS_JSON_CLOSE_LEN))
+    / TASK_JSON_ROW_MAX;
+static_assert(MAX_TASKS_PER_PUBLISH >= 1, "large MQTT slot cannot hold a single TASKS row");
 
-constexpr size_t kTaskJsonRowBuf = kTaskJsonRowMax + 8;
+constexpr size_t TASK_JSON_ROW_BUF = TASK_JSON_ROW_MAX + 8;
 
 int start_tasks_payload(uint64_t tsms, uint64_t utms) {
     return snprintf(
@@ -238,13 +239,13 @@ void close_and_enqueue_tasks(int* payload_len) {
         return;
     }
 
-    if (*payload_len + kTasksJsonCloseLen <= static_cast<int>(kLargeJsonMax)) {
+    if (*payload_len + TASKS_JSON_CLOSE_LEN <= static_cast<int>(LARGE_JSON_MAX)) {
         *payload_len += snprintf(
             g_payload_buf + *payload_len,
             HEAPWATCH_LARGE_PAYLOAD_SIZE - static_cast<size_t>(*payload_len),
             "]}");
     } else {
-        g_payload_buf[kLargeJsonMax] = '\0';
+        g_payload_buf[LARGE_JSON_MAX] = '\0';
     }
     enqueue_mqtt_message(MQTT_MESSAGE_TYPE_TASKS, g_payload_buf);
 }
@@ -308,11 +309,11 @@ void tasks_publish_append(
     uint32_t max_bytes,
     uint32_t peak,
     float cpu_pct) {
-    char row[kTaskJsonRowBuf];
+    char row[TASK_JSON_ROW_BUF];
     const bool slot_full =
         pub->rows > 0
-        && pub->len + static_cast<int>(kTaskJsonRowMax) + kTasksJsonCloseLen
-            > static_cast<int>(kLargeJsonMax);
+        && pub->len + static_cast<int>(TASK_JSON_ROW_MAX) + TASKS_JSON_CLOSE_LEN
+            > static_cast<int>(LARGE_JSON_MAX);
     if (slot_full) {
         tasks_publish_close(pub);
         tasks_publish_begin(pub, pub->tsms, pub->utms);
@@ -333,9 +334,9 @@ void tasks_publish_append(
         return;
     }
 
-    if (!append_json_chunk(&pub->len, row, row_len, kTasksJsonCloseLen)) {
+    if (!append_json_chunk(&pub->len, row, row_len, TASKS_JSON_CLOSE_LEN)) {
         if (pub->rows == 0) {
-            ESP_LOGW(kTag, "task '%s' does not fit one TASKS slot", task_name);
+            ESP_LOGW(TAG, "task '%s' does not fit one TASKS slot", task_name);
             return;
         }
         tasks_publish_close(pub);
@@ -353,8 +354,8 @@ void tasks_publish_append(
             cpu_pct);
         if (row_len <= 0
             || row_len >= static_cast<int>(sizeof(row))
-            || !append_json_chunk(&pub->len, row, row_len, kTasksJsonCloseLen)) {
-            ESP_LOGW(kTag, "task '%s' does not fit one TASKS slot", task_name);
+            || !append_json_chunk(&pub->len, row, row_len, TASKS_JSON_CLOSE_LEN)) {
+            ESP_LOGW(TAG, "task '%s' does not fit one TASKS slot", task_name);
             return;
         }
     }
@@ -397,7 +398,7 @@ void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
     row.stack_total_bytes = stack_total_bytes;
 
     const size_t idx = static_cast<size_t>(&row - g_task_stats);
-    if (g_dirty_task_stack_max_count < kMaxTaskRows) {
+    if (g_dirty_task_stack_max_count < MAX_TASK_ROWS) {
         g_dirty_task_stack_idx[g_dirty_task_stack_max_count++] = static_cast<uint8_t>(idx);
     }
 }
@@ -416,11 +417,11 @@ void close_and_enqueue_parameter(int* payload_len) {
         return;
     }
 
-    if (*payload_len + kParameterJsonCloseLen <= static_cast<int>(kLargeJsonMax)) {
+    if (*payload_len + PARAMETER_JSON_CLOSE_LEN <= static_cast<int>(LARGE_JSON_MAX)) {
         g_payload_buf[(*payload_len)++] = '}';
         g_payload_buf[*payload_len] = '\0';
     } else {
-        g_payload_buf[kLargeJsonMax] = '\0';
+        g_payload_buf[LARGE_JSON_MAX] = '\0';
     }
     enqueue_mqtt_message(MQTT_MESSAGE_TYPE_PARAMETER, g_payload_buf);
 }
@@ -455,14 +456,14 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
             continue;
         }
 
-        if (!append_json_chunk(&pos, chunk, chunk_len, kParameterJsonCloseLen)) {
+        if (!append_json_chunk(&pos, chunk, chunk_len, PARAMETER_JSON_CLOSE_LEN)) {
             if (pos > header_len) {
                 close_and_enqueue_parameter(&pos);
             }
             pos = start_parameter_payload(tsms, utms);
             header_len = pos;
-            if (!append_json_chunk(&pos, chunk, chunk_len, kParameterJsonCloseLen)) {
-                ESP_LOGW(kTag, "stack limit fields for '%s' do not fit one PARAMETER slot",
+            if (!append_json_chunk(&pos, chunk, chunk_len, PARAMETER_JSON_CLOSE_LEN)) {
+                ESP_LOGW(TAG, "stack limit fields for '%s' do not fit one PARAMETER slot",
                          row.name);
             }
         }
@@ -476,7 +477,7 @@ void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
 
 void refreshConnectorGaugeLimits() {
     const size_t core_count =
-        (portNUM_PROCESSORS <= kMaxCoresSupported) ? portNUM_PROCESSORS : kMaxCoresSupported;
+        (portNUM_PROCESSORS <= MAX_CORES_SUPPORTED) ? portNUM_PROCESSORS : MAX_CORES_SUPPORTED;
     refresh_connector_gauge_limits(core_count);
 }
 
@@ -489,7 +490,7 @@ void init() {
         g_mqtt_enqueue_msg = static_cast<MqttMessage*>(heapwatch_data_alloc(sizeof(MqttMessage)));
     }
     if (g_task_stats == nullptr) {
-        g_task_stats = static_cast<TaskStats*>(heapwatch_data_alloc(sizeof(TaskStats) * kMaxTaskRows));
+        g_task_stats = static_cast<TaskStats*>(heapwatch_data_alloc(sizeof(TaskStats) * MAX_TASK_ROWS));
     }
 }
 
@@ -571,8 +572,8 @@ void collectTask(void* arg) {
         uint16_t freertos_ready_tasks_count = 0;
         // CPU1: one entry per actual core (portNUM_PROCESSORS), not a fixed cpu0/cpu1 pair.
         const size_t core_count =
-            (portNUM_PROCESSORS <= kMaxCoresSupported) ? portNUM_PROCESSORS : kMaxCoresSupported;
-        float cpu_usage_pct[kMaxCoresSupported] = {};
+            (portNUM_PROCESSORS <= MAX_CORES_SUPPORTED) ? portNUM_PROCESSORS : MAX_CORES_SUPPORTED;
+        float cpu_usage_pct[MAX_CORES_SUPPORTED] = {};
         refresh_connector_gauge_limits(core_count);
 
         // Ready-task count, task stack maxes, TASKS snapshots, and CPU-usage share
@@ -589,8 +590,8 @@ void collectTask(void* arg) {
             const UBaseType_t task_count =
                 uxTaskGetSystemState(task_status, task_table_len, &total_runtime);
             if (task_count > 0) {
-                uint64_t idle_runtime[kMaxCoresSupported] = {};
-                char idle_task_name[kMaxCoresSupported][8];
+                uint64_t idle_runtime[MAX_CORES_SUPPORTED] = {};
+                char idle_task_name[MAX_CORES_SUPPORTED][8];
                 for (size_t core = 0; core < core_count; ++core) {
                     snprintf(idle_task_name[core], sizeof(idle_task_name[core]), "IDLE%u",
                              static_cast<unsigned>(core));
@@ -749,7 +750,7 @@ void collectTask(void* arg) {
 #endif
 
         // CPU1: emit one array entry per actual core rather than fixed cpu0/cpu1 fields.
-        char cpu_usage_array[kMaxCoresSupported * 8 + 2] = {};
+        char cpu_usage_array[MAX_CORES_SUPPORTED * 8 + 2] = {};
         {
             size_t pos = 0;
             cpu_usage_array[pos++] = '[';
@@ -810,17 +811,24 @@ void collectTask(void* arg) {
 #ifdef HEAPWATCH_USE_JSON_FORMAT
                 if (g_payload_buf[len - 1] == '}') {
                     g_payload_buf[len - 1] = '\0';
-                    const size_t added = heapwatch::netif_traffic::appendParameterFields(
-                        g_payload_buf + len - 1, HEAPWATCH_MAX_PAYLOAD_SIZE - (len - 1), true);
-                    size_t end = (len - 1) + added;
-                    if (end + 1 < HEAPWATCH_MAX_PAYLOAD_SIZE) {
-                        g_payload_buf[end++] = '}';
-                        g_payload_buf[end] = '\0';
+                    size_t pos = len - 1;
+                    pos += heapwatch::netif_traffic::appendParameterFields(
+                        g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos, true);
+                    pos += heapwatch::fs_volumes::appendParameterFields(
+                        g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos, true);
+                    if (pos + 1 < HEAPWATCH_MAX_PAYLOAD_SIZE) {
+                        g_payload_buf[pos++] = '}';
+                        g_payload_buf[pos] = '\0';
                     }
                 }
 #else
-                (void)heapwatch::netif_traffic::appendParameterFields(
-                    g_payload_buf + len, HEAPWATCH_MAX_PAYLOAD_SIZE - len, false);
+                {
+                    size_t pos = len;
+                    pos += heapwatch::netif_traffic::appendParameterFields(
+                        g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos, false);
+                    (void)heapwatch::fs_volumes::appendParameterFields(
+                        g_payload_buf + pos, HEAPWATCH_MAX_PAYLOAD_SIZE - pos, false);
+                }
 #endif
             }
         }
@@ -838,7 +846,7 @@ void collectTask(void* arg) {
         // HEAP1: default-off proactive corruption check — heap_caps_check_integrity() walks
         // the full heap, so this has a real CPU cost and stays opt-in.
         if (!heap_caps_check_integrity(MALLOC_CAP_DEFAULT, true)) {
-            ESP_LOGE(kTag, "Heap corruption detected by heap_caps_check_integrity()");
+            ESP_LOGE(TAG, "Heap corruption detected by heap_caps_check_integrity()");
             HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
         }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
