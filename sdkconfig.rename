@@ -1,0 +1,2 @@
+# Old Kconfig option → new name (picked up by idf.py reconfigure).
+CONFIG_HEAPWATCH_ALLOCATE_QUEUES_IN_PSRAM CONFIG_HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
