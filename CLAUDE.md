@@ -93,6 +93,15 @@ already expects these old-school types - in that case we MUST match it to be com
 - the root namespace is Heapwatch
 - sub-namespaces differ by domain
 
+### Naming
+
+- you MUST give things PROPER CLEAR AND MEANINGFUL names
+- do NOT try to be clever and make up fancy names nobody understands
+- bad example: function name for handling messages from system event loop (should be workload easy) "serveNetMailbox" => NOBODY HAS A CLUE WHAT THAT MEANS! "mailbox" ?! everybody will think it has something to
+do with POP3 or IMAP! you MUST NEVER make confusing naming like this
+- good example: "handleNotificationsFromSystemEventLoop()" => yes, it's long and IT'S SUPER CLEAR! that's exactly how it should be!
+- name things in SUPER CLEAR why - it does not mater it's longer - CLEAR is MORE IMPORTANT than confusing and short.
+
 ### ESP-IDF Log Tags
 
 - multiple files can use the SAME log tag if needed
@@ -122,3 +131,13 @@ already expects these old-school types - in that case we MUST match it to be com
 [`CHANGELOG.md`](CHANGELOG.md) — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) + **SemVer**. Firmware keeps SemVer; do not tag the connector with cloud CalVer (`v2026.37.4`).
 
 When you ship any **notable** connector change (new/changed MQTT commands, config, OTA behaviour, breaking API), **add a user-facing bullet under `[Unreleased]` in the same change**. Do not paste commit logs. On **git tag**, promote `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`, then add a fresh empty `[Unreleased]`. Commit to `heapwatch-dot-com/heapwatch-connector-espidf`. Follow the `changelog` skill in the umbrella repo (`.claude/skills/changelog/SKILL.md`).
+
+## CLAUDE.md Update
+
+- CLAUDE.md file is an instruction/rule set for AI agents
+- because of this, it is an asset that need long lifetime
+- we update it / improve it when needed to make the AI agent's output even better
+- because of this you MUST NOT put garbage into CLAUDE.md - this file MUST be super clear
+- CLAUDE.md MUST be super clear - which means you MUST never put garbage and junk into it
+- you must also NEVER put short-lived DETAILS into it, that will require constant synchronization - you can be sure it would DRIFT!
+- what are "short-lived details" - precise listing of parts that will constantly change and you will need to update it over and over again like "Folder FooBar contains graphics files, icons, logos, banners, sounds, music..." => this is GARBAGE, because the moment we change anything you must rewrite this!
