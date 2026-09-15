@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-15
+
+### Fixed
+- Short-lived tasks such as `hw_bootstrap` are remembered again. Task stats are seeded during connector activate (while bootstrap is still running) and kept refreshed while waiting for MQTT, so they still appear on TASKS with `exists: false` after that task exits.
+
+## [0.17.0] - 2026-09-15
+
+### Added
+- TASKS MQTT rows include `exists` (boolean). Every FreeRTOS task name seen since connector boot is published each metrics tick: live tasks have `exists: true`, deleted tasks stay in the table with frozen last Now/Min/Max/Peak/CPU and `exists: false`.
+
+### Changed
+- When the task-stats table is full (`HEAPWATCH_MAX_TASK_ROWS`), a new live task is logged as an **error** (dropped from tracking) instead of a one-shot warning.
+
 ## [0.16.3] - 2026-09-15
 
 ### Security

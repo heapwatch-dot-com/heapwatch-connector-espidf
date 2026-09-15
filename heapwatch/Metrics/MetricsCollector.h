@@ -46,7 +46,10 @@ struct TaskStats {
     uint32_t stack_max_bytes;
     uint32_t stack_peak_bytes;
     uint64_t runtime;
+    float last_cpu_pct;
     bool stack_range_seeded;
+    /** True when this name appeared in the latest uxTaskGetSystemState scan. */
+    bool exists;
 };
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 

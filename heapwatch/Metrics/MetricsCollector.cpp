@@ -139,7 +139,9 @@ TaskStats* acquire_task_row(const char* task_name) {
 
     if (g_task_stats_count >= HEAPWATCH_MAX_TASK_ROWS) {
         if (!g_task_table_full_logged) {
-            ESP_LOGW(TAG, "task stats table full (%" PRIu32 " rows) — '%s' is not reported",
+            ESP_LOGE(TAG,
+                     "task stats table full (%" PRIu32
+                     " rows) — live task '%s' dropped from tracking (raise HEAPWATCH_MAX_TASK_ROWS)",
                      static_cast<uint32_t>(HEAPWATCH_MAX_TASK_ROWS), name);
             g_task_table_full_logged = true;
         }
@@ -195,7 +197,7 @@ constexpr size_t TASKS_JSON_HEADER_MAX =
 constexpr size_t TASK_NAME_MAX_CHARS = sizeof(TaskStats::name) - 1;
 constexpr size_t TASK_JSON_ROW_MAX =
     sizeof(",{\"name\":\"\",\"total\":4294967295,\"now\":4294967295,\"min\":4294967295,"
-           "\"max\":4294967295,\"peak\":4294967295,\"cpu\":100.00}")
+           "\"max\":4294967295,\"peak\":4294967295,\"cpu\":100.00,\"exists\":false}")
     - 1 + TASK_NAME_MAX_CHARS;
 
 static_assert(TASKS_JSON_HEADER_MAX + TASK_JSON_ROW_MAX + TASKS_JSON_CLOSE_LEN <= LARGE_JSON_MAX,
@@ -245,13 +247,14 @@ int32_t format_task_json_row(
     uint32_t min_bytes,
     uint32_t max_bytes,
     uint32_t peak,
-    float cpu_pct) {
+    float cpu_pct,
+    bool exists) {
     return snprintf(
         out,
         out_len,
         "%s{\"name\":\"%s\",\"total\":%" PRIu32 ",\"now\":%" PRIu32
         ",\"min\":%" PRIu32 ",\"max\":%" PRIu32 ",\"peak\":%" PRIu32
-        ",\"cpu\":%.2f}",
+        ",\"cpu\":%.2f,\"exists\":%s}",
         leading_comma ? "," : "",
         task_name,
         total,
@@ -259,7 +262,8 @@ int32_t format_task_json_row(
         min_bytes,
         max_bytes,
         peak,
-        static_cast<double>(cpu_pct));
+        static_cast<double>(cpu_pct),
+        exists ? "true" : "false");
 }
 
 struct TasksPublish {
@@ -293,7 +297,8 @@ void tasks_publish_append(
     uint32_t min_bytes,
     uint32_t max_bytes,
     uint32_t peak,
-    float cpu_pct) {
+    float cpu_pct,
+    bool exists) {
     char row[TASK_JSON_ROW_BUF];
     const bool slot_full =
         pub->rows > 0
@@ -314,7 +319,8 @@ void tasks_publish_append(
         min_bytes,
         max_bytes,
         peak,
-        cpu_pct);
+        cpu_pct,
+        exists);
     if (row_len <= 0 || row_len >= static_cast<int32_t>(sizeof(row))) {
         return;
     }
@@ -336,7 +342,8 @@ void tasks_publish_append(
             min_bytes,
             max_bytes,
             peak,
-            cpu_pct);
+            cpu_pct,
+            exists);
         if (row_len <= 0
             || row_len >= static_cast<int32_t>(sizeof(row))
             || !append_json_chunk(&pub->len, row, row_len, TASKS_JSON_CLOSE_LEN)) {
@@ -419,6 +426,230 @@ void close_and_enqueue_parameter(int32_t* payload_len) {
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+void publish_all_task_stats(uint64_t tsms, uint64_t utms) {
+    TasksPublish tasks_pub;
+    tasks_publish_begin(&tasks_pub, tsms, utms);
+    for (size_t ti = 0; ti < g_task_stats_count; ++ti) {
+        const TaskStats& row = g_task_stats[ti];
+        if (!row.stack_range_seeded) {
+            continue;
+        }
+        tasks_publish_append(
+            &tasks_pub,
+            row.name,
+            row.stack_total_bytes,
+            row.stack_current_bytes,
+            row.stack_min_bytes,
+            row.stack_max_bytes,
+            row.stack_peak_bytes,
+            row.last_cpu_pct,
+            row.exists);
+    }
+    tasks_publish_close(&tasks_pub);
+}
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+
+/**
+ * One FreeRTOS system-state scan: ready count, per-core idle/CPU %, and (when enabled)
+ * TaskStats table update. Optionally enqueue TASKS MQTT. Safe before MQTT is up when
+ * publish_tasks is false — used to remember short-lived tasks like hw_bootstrap.
+ */
+struct FreertosMetricsScanResult {
+    uint16_t ready_tasks_count = 0;
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
+    float cpu_usage_pct[MAX_CORES_SUPPORTED] = {};
+#endif
+};
+
+bool run_freertos_metrics_scan(
+    size_t core_count,
+    FreertosMetricsScanResult* out,
+    bool publish_tasks,
+    uint64_t tsms,
+    uint64_t utms) {
+    if (out == nullptr) {
+        return false;
+    }
+    *out = FreertosMetricsScanResult{};
+
+#if (configUSE_TRACE_FACILITY != 1)
+    (void)core_count;
+    (void)publish_tasks;
+    (void)tsms;
+    (void)utms;
+    return false;
+#else
+    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    UBaseType_t task_table_len =
+        static_cast<UBaseType_t>(uxTaskGetNumberOfTasks()) + 4U;
+    if (task_table_len > HEAPWATCH_MAX_TASK_STATUS_SCAN) {
+        task_table_len = HEAPWATCH_MAX_TASK_STATUS_SCAN;
+    }
+    TaskStatus_t* task_status = (ws != nullptr) ? ws->task_status_scan : nullptr;
+    if (task_status == nullptr) {
+        return false;
+    }
+
+    uint32_t total_runtime = 0;
+    const UBaseType_t task_count =
+        uxTaskGetSystemState(task_status, task_table_len, &total_runtime);
+    if (task_count == 0) {
+        return false;
+    }
+
+    uint64_t idle_runtime[MAX_CORES_SUPPORTED] = {};
+    char idle_task_name[MAX_CORES_SUPPORTED][8];
+    for (size_t core = 0; core < core_count; ++core) {
+        snprintf(idle_task_name[core], sizeof(idle_task_name[core]), "IDLE%" PRIu32,
+                 static_cast<uint32_t>(core));
+    }
+    const uint64_t total_runtime_u64 = static_cast<uint64_t>(total_runtime);
+    uint64_t total_runtime_delta = 0;
+    if (g_cpu_usage_state.initialized
+        && total_runtime_u64 > g_cpu_usage_state.prev_total_runtime) {
+        total_runtime_delta = total_runtime_u64 - g_cpu_usage_state.prev_total_runtime;
+    }
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+    if (g_task_stats != nullptr) {
+        for (size_t i = 0; i < g_task_stats_count; ++i) {
+            g_task_stats[i].exists = false;
+        }
+    }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+
+    for (UBaseType_t i = 0; i < task_count; ++i) {
+        const TaskStatus_t& task = task_status[i];
+        if (task.eCurrentState == eReady) {
+            out->ready_tasks_count++;
+        }
+        if (task.pcTaskName != nullptr) {
+            for (size_t core = 0; core < core_count; ++core) {
+                if (strcmp(task.pcTaskName, idle_task_name[core]) == 0) {
+                    idle_runtime[core] = static_cast<uint64_t>(task.ulRunTimeCounter);
+                    break;
+                }
+            }
+        }
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+        if (g_task_stats == nullptr) {
+            continue;
+        }
+
+        TaskStats* row = acquire_task_row(task.pcTaskName);
+        if (row == nullptr) {
+            continue;
+        }
+
+        const bool new_instance = row->handle != task.xHandle;
+        if (new_instance) {
+            row->handle = task.xHandle;
+            row->stack_total_bytes = 0;
+            row->stack_current_bytes = 0;
+            row->stack_min_bytes = 0;
+            row->stack_max_bytes = 0;
+            row->stack_peak_bytes = 0;
+            row->last_cpu_pct = 0.0f;
+            row->stack_range_seeded = false;
+        }
+
+        const uint64_t current_runtime = static_cast<uint64_t>(task.ulRunTimeCounter);
+        const uint64_t runtime_delta =
+            (!new_instance && current_runtime >= row->runtime)
+                ? current_runtime - row->runtime
+                : 0;
+        row->runtime = current_runtime;
+
+        const TaskStackSample stack = measure_task_stack(task);
+        if (stack.total == 0) {
+            continue;
+        }
+
+        row->stack_lowest = stack.lowest;
+        row->stack_highest = stack.highest;
+        if (stack.current > 0) {
+            row->stack_current_bytes = stack.current;
+            if (!row->stack_range_seeded) {
+                row->stack_min_bytes = stack.current;
+                row->stack_max_bytes = stack.current;
+                row->stack_range_seeded = true;
+            } else {
+                if (stack.current < row->stack_min_bytes) {
+                    row->stack_min_bytes = stack.current;
+                }
+                if (stack.current > row->stack_max_bytes) {
+                    row->stack_max_bytes = stack.current;
+                }
+            }
+        }
+        row->stack_peak_bytes = stack.peak;
+        note_task_stack_total(*row, stack.total);
+
+        float task_cpu_pct = 0.0f;
+        if (total_runtime_delta > 0) {
+            task_cpu_pct = static_cast<float>(
+                (static_cast<double>(runtime_delta) / static_cast<double>(total_runtime_delta))
+                * 100.0);
+            if (task_cpu_pct < 0.0f) {
+                task_cpu_pct = 0.0f;
+            }
+            if (task_cpu_pct > 100.0f) {
+                task_cpu_pct = 100.0f;
+            }
+        }
+
+        if (!row->stack_range_seeded) {
+            continue;
+        }
+
+        row->last_cpu_pct = task_cpu_pct;
+        row->exists = true;
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+    }
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+    if (publish_tasks) {
+        publish_all_task_stats(tsms, utms);
+    }
+#else
+    (void)publish_tasks;
+    (void)tsms;
+    (void)utms;
+#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
+    if (total_runtime_delta > 0) {
+        const double total_runtime_delta_d = static_cast<double>(total_runtime_delta);
+        for (size_t core = 0; core < core_count; ++core) {
+            const uint64_t delta_idle =
+                idle_runtime[core] - g_cpu_usage_state.prev_idle_runtime[core];
+            const double idle_pct =
+                (static_cast<double>(delta_idle) / total_runtime_delta_d) * 100.0;
+            float usage_pct = static_cast<float>(100.0 - idle_pct);
+            if (usage_pct < 0.0f) {
+                usage_pct = 0.0f;
+            }
+            if (usage_pct > 100.0f) {
+                usage_pct = 100.0f;
+            }
+            out->cpu_usage_pct[core] = usage_pct;
+        }
+    }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS */
+
+    g_cpu_usage_state.initialized = true;
+    g_cpu_usage_state.prev_total_runtime = total_runtime_u64;
+#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
+    for (size_t core = 0; core < core_count; ++core) {
+        g_cpu_usage_state.prev_idle_runtime[core] = idle_runtime[core];
+    }
+#endif  /* CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS */
+    return true;
+#endif  /* configUSE_TRACE_FACILITY */
+}
+
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
 void enqueue_dirty_task_stack_maxes(uint64_t tsms, uint64_t utms) {
     if (g_dirty_task_stack_max_count == 0) {
         return;
@@ -482,13 +713,32 @@ void init() {
     g_mqtt_enqueue_msg = &ws->metrics_enqueue;
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
     g_task_stats = ws->task_stats;
+    // activateWithBroker runs on hw_bootstrap: seed the table before that task exits so
+    // short-lived connector tasks are still reported with exists:false after MQTT is up.
+    {
+        const size_t core_count =
+            (portNUM_PROCESSORS <= MAX_CORES_SUPPORTED) ? portNUM_PROCESSORS : MAX_CORES_SUPPORTED;
+        FreertosMetricsScanResult unused;
+        (void)run_freertos_metrics_scan(core_count, &unused, false, 0, 0);
+    }
 #endif
 }
 
 void collectTask(void* arg) {
     (void)arg;
 
+    // Keep refreshing TaskStats while MQTT is down so tasks that live only in this
+    // window (and anything seeded at Metrics::init) stay in the table for first publish.
     while (heapwatch_collector_running() && !g_mqtt_connected) {
+#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
+        {
+            const size_t core_count =
+                (portNUM_PROCESSORS <= MAX_CORES_SUPPORTED) ? portNUM_PROCESSORS
+                                                           : MAX_CORES_SUPPORTED;
+            FreertosMetricsScanResult unused;
+            (void)run_freertos_metrics_scan(core_count, &unused, false, 0, 0);
+        }
+#endif
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 
@@ -565,178 +815,15 @@ void collectTask(void* arg) {
 #endif
         refresh_connector_gauge_limits(core_count);
 
-        // Ready-task count, task stack maxes, TASKS snapshots, and CPU-usage share
-        // this FreeRTOS runtime-stats scan. TASKS / CPU fields stay gated; the
-        // scan itself always runs when trace facility is on so ready-count and
-        // stack limits stay current.
-#if (configUSE_TRACE_FACILITY == 1)
-        Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
-        UBaseType_t task_table_len =
-            static_cast<UBaseType_t>(uxTaskGetNumberOfTasks()) + 4U;
-        if (task_table_len > HEAPWATCH_MAX_TASK_STATUS_SCAN) {
-            task_table_len = HEAPWATCH_MAX_TASK_STATUS_SCAN;
-        }
-        TaskStatus_t* task_status = (ws != nullptr) ? ws->task_status_scan : nullptr;
-        if (task_status != nullptr) {
-            uint32_t total_runtime = 0;
-            const UBaseType_t task_count =
-                uxTaskGetSystemState(task_status, task_table_len, &total_runtime);
-            if (task_count > 0) {
-                uint64_t idle_runtime[MAX_CORES_SUPPORTED] = {};
-                char idle_task_name[MAX_CORES_SUPPORTED][8];
-                for (size_t core = 0; core < core_count; ++core) {
-                    snprintf(idle_task_name[core], sizeof(idle_task_name[core]), "IDLE%" PRIu32,
-                             static_cast<uint32_t>(core));
-                }
-                const uint64_t total_runtime_u64 = static_cast<uint64_t>(total_runtime);
-                // Denominator for per-task CPU % must be the FreeRTOS run-time counter
-                // delta over the whole sample window (same basis as per-core usage below).
-                // Do NOT use a running sum of task deltas inside the emit loop — that made
-                // early tasks (often hw_metrics itself) report ~100% while cores were idle.
-                uint64_t total_runtime_delta = 0;
-                if (g_cpu_usage_state.initialized
-                    && total_runtime_u64 > g_cpu_usage_state.prev_total_runtime) {
-                    total_runtime_delta =
-                        total_runtime_u64 - g_cpu_usage_state.prev_total_runtime;
-                }
-
-#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-                TasksPublish tasks_pub;
-                tasks_publish_begin(&tasks_pub, tsms, utms);
-#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
-
-                for (UBaseType_t i = 0; i < task_count; ++i) {
-                    const TaskStatus_t& task = task_status[i];
-                    if (task.eCurrentState == eReady) {
-                        freertos_ready_tasks_count++;
-                    }
-                    if (task.pcTaskName != nullptr) {
-                        for (size_t core = 0; core < core_count; ++core) {
-                            if (strcmp(task.pcTaskName, idle_task_name[core]) == 0) {
-                                idle_runtime[core] = static_cast<uint64_t>(task.ulRunTimeCounter);
-                                break;
-                            }
-                        }
-                    }
-
-#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-                    TaskStats* row = acquire_task_row(task.pcTaskName);
-                    if (row == nullptr) {
-                        continue;
-                    }
-
-                    // A name can be reused by a task that was deleted and created again. Its stack
-                    // lives somewhere else and its run-time counter starts over, so every
-                    // statistic accumulated for the previous instance has to go — including the
-                    // recorded depth, so the ceiling limits are republished for the new stack.
-                    const bool new_instance = row->handle != task.xHandle;
-                    if (new_instance) {
-                        row->handle = task.xHandle;
-                        row->stack_total_bytes = 0;
-                        row->stack_current_bytes = 0;
-                        row->stack_min_bytes = 0;
-                        row->stack_max_bytes = 0;
-                        row->stack_peak_bytes = 0;
-                        row->stack_range_seeded = false;
-                    }
-
-                    const uint64_t current_runtime = static_cast<uint64_t>(task.ulRunTimeCounter);
-                    const uint64_t runtime_delta =
-                        (!new_instance && current_runtime >= row->runtime)
-                            ? current_runtime - row->runtime
-                            : 0;
-                    row->runtime = current_runtime;
-
-                    const TaskStackSample stack = measure_task_stack(task);
-
-                    if (stack.total == 0) {
-                        continue;
-                    }
-
-                    row->stack_lowest = stack.lowest;
-                    row->stack_highest = stack.highest;
-                    // A depth of zero means the stack pointer failed the range check, not that the
-                    // task is using nothing, so keep the last good reading rather than report 0.
-                    if (stack.current > 0) {
-                        row->stack_current_bytes = stack.current;
-                        if (!row->stack_range_seeded) {
-                            row->stack_min_bytes = stack.current;
-                            row->stack_max_bytes = stack.current;
-                            row->stack_range_seeded = true;
-                        } else {
-                            if (stack.current < row->stack_min_bytes) {
-                                row->stack_min_bytes = stack.current;
-                            }
-                            if (stack.current > row->stack_max_bytes) {
-                                row->stack_max_bytes = stack.current;
-                            }
-                        }
-                    }
-                    row->stack_peak_bytes = stack.peak;
-                    note_task_stack_total(*row, stack.total);
-
-                    float task_cpu_pct = 0.0f;
-                    if (total_runtime_delta > 0) {
-                        task_cpu_pct = static_cast<float>(
-                            (static_cast<double>(runtime_delta)
-                                / static_cast<double>(total_runtime_delta))
-                            * 100.0);
-                        if (task_cpu_pct < 0.0f) {
-                            task_cpu_pct = 0.0f;
-                        }
-                        if (task_cpu_pct > 100.0f) {
-                            task_cpu_pct = 100.0f;
-                        }
-                    }
-
-                    if (!row->stack_range_seeded) {
-                        continue;
-                    }
-
-                    tasks_publish_append(
-                        &tasks_pub,
-                        task.pcTaskName != nullptr ? task.pcTaskName : "?",
-                        stack.total,
-                        row->stack_current_bytes,
-                        row->stack_min_bytes,
-                        row->stack_max_bytes,
-                        stack.peak,
-                        task_cpu_pct);
-#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
-                }
-
+        FreertosMetricsScanResult scan = {};
+        if (run_freertos_metrics_scan(core_count, &scan, true, tsms, utms)) {
+            freertos_ready_tasks_count = scan.ready_tasks_count;
 #if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
-                if (total_runtime_delta > 0) {
-                    const double total_runtime_delta_d = static_cast<double>(total_runtime_delta);
-                    for (size_t core = 0; core < core_count; ++core) {
-                        const uint64_t delta_idle =
-                            idle_runtime[core] - g_cpu_usage_state.prev_idle_runtime[core];
-                        const double idle_pct =
-                            (static_cast<double>(delta_idle) / total_runtime_delta_d) * 100.0;
-                        float usage_pct = static_cast<float>(100.0 - idle_pct);
-                        if (usage_pct < 0.0f) usage_pct = 0.0f;
-                        if (usage_pct > 100.0f) usage_pct = 100.0f;
-                        cpu_usage_pct[core] = usage_pct;
-                    }
-                }
-#endif  /* CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS */
-
-                // Advance the shared baseline after both task and per-core % use it.
-                // Must run even when only TASK_SNAPSHOTS is enabled, or task CPU stays 0.
-                g_cpu_usage_state.initialized = true;
-                g_cpu_usage_state.prev_total_runtime = total_runtime_u64;
-#if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
-                for (size_t core = 0; core < core_count; ++core) {
-                    g_cpu_usage_state.prev_idle_runtime[core] = idle_runtime[core];
-                }
-#endif  /* CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS */
-
-#if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
-                tasks_publish_close(&tasks_pub);
-#endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
+            for (size_t core = 0; core < core_count; ++core) {
+                cpu_usage_pct[core] = scan.cpu_usage_pct[core];
             }
-        }
 #endif
+        }
 
         // CPU1: emit one array entry per actual core rather than fixed cpu0/cpu1 fields.
 #if CONFIG_HEAPWATCH_ENABLE_CPU_SNAPSHOTS
