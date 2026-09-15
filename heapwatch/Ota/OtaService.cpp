@@ -8,7 +8,6 @@
 #include <cinttypes>
 
 #include "cJSON.h"
-#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -25,6 +24,7 @@
 #include "heapwatch/Mqtt/HeapwatchConnector.h"
 #include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
+#include "heapwatch/Helpers/Tls/Tls.h"
 
 namespace Heapwatch::Ota {
 
@@ -197,7 +197,7 @@ bool flash_data_partition(const DataPartitionJob& part, int64_t session_id) {
     config.url = part.download_url;
     config.timeout_ms = HTTP_TIMEOUT_MS;
     config.buffer_size = static_cast<int>(DOWNLOAD_CHUNK);
-    config.crt_bundle_attach = esp_crt_bundle_attach;
+    Heapwatch::Helpers::Tls::applyToHttpClient(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == nullptr) {
@@ -318,7 +318,7 @@ bool stream_flash_app(const OtaJob& job) {
     config.url = job.code_download_url;
     config.timeout_ms = HTTP_TIMEOUT_MS;
     config.buffer_size = static_cast<int>(DOWNLOAD_CHUNK);
-    config.crt_bundle_attach = esp_crt_bundle_attach;
+    Heapwatch::Helpers::Tls::applyToHttpClient(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == nullptr) {

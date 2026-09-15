@@ -9,11 +9,13 @@ import argparse
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -126,6 +128,23 @@ def fail_on_upload_error() -> bool:
     """Fail the ESP-IDF build when firmware upload fails. Default on; set HEAPWATCH_FAIL_ON_UPLOAD_ERROR=0 to opt out."""
     raw = os.environ.get("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", "true").strip().lower()
     return raw not in {"0", "false", "no", "off"}
+
+
+def https_ssl_context(api_base: str) -> ssl.SSLContext:
+    """
+    Trust HEAPWATCH_TLS_CA_FILE when set. Lab `*.heapwatch.local` uses the
+    bundled Caddy internal CA. Production uses the default public CA store.
+    """
+    cafile = os.environ.get("HEAPWATCH_TLS_CA_FILE", "").strip()
+    if not cafile:
+        host = (urlparse(api_base).hostname or "").lower()
+        if host.endswith(".heapwatch.local"):
+            bundled = SCRIPTS_DIR.parent / "certs" / "heapwatch_local_ca.pem"
+            if bundled.is_file():
+                cafile = str(bundled)
+    if cafile:
+        return ssl.create_default_context(cafile=cafile)
+    return ssl.create_default_context()
 
 
 def upload_firmware_bundle(
@@ -256,7 +275,7 @@ def upload_firmware_bundle(
     req.add_header("X-Tenant-Id", tenant_uuid)
 
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with urllib.request.urlopen(req, timeout=600, context=https_ssl_context(base)) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             code = resp.getcode() or 200
     except urllib.error.HTTPError as e:

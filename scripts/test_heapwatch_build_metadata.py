@@ -22,6 +22,7 @@ from post_build_upload_firmware import (
     ensure_artifacts_match_successful_build,
     format_firmware_upload_success,
     fail_on_upload_error,
+    https_ssl_context,
     normalize_optional_version,
     stale_sources_newer_than,
     upload_firmware_bundle,
@@ -254,6 +255,17 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
                 app_root=app_root,
                 connector_root=connector_root,
             )
+
+    def test_https_ssl_context_lab_uses_bundled_caddy_ca(self) -> None:
+        saved = os.environ.pop("HEAPWATCH_TLS_CA_FILE", None)
+        try:
+            ctx = https_ssl_context("https://api.heapwatch.local")
+            self.assertIsNotNone(ctx)
+            bundled = Path(__file__).resolve().parent.parent / "certs" / "heapwatch_local_ca.pem"
+            self.assertTrue(bundled.is_file(), f"missing lab CA {bundled}")
+        finally:
+            if saved is not None:
+                os.environ["HEAPWATCH_TLS_CA_FILE"] = saved
 
     def test_fail_on_upload_error_defaults_true(self) -> None:
         saved = os.environ.pop("HEAPWATCH_FAIL_ON_UPLOAD_ERROR", None)

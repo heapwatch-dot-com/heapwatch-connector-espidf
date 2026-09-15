@@ -23,8 +23,8 @@
 
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #include "esp_core_dump.h"
-#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "heapwatch/Helpers/Tls/Tls.h"
 #endif
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -584,7 +584,7 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
     http_config.url = g_coredump_upload_url;
     http_config.timeout_ms = 30000;
     http_config.buffer_size = 512;
-    http_config.crt_bundle_attach = esp_crt_bundle_attach;
+    Heapwatch::Helpers::Tls::applyToHttpClient(http_config);
 
     esp_http_client_handle_t http_client = esp_http_client_init(&http_config);
     if (http_client == nullptr) {

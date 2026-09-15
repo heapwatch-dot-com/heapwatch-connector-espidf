@@ -12,7 +12,7 @@ using FsUploadChunkHandler = void (*)(const uint8_t* data, size_t len);
 /** Set stream API key from NVS provisioning (set during enrollment confirm). */
 void setStreamApiKey(const char* stream_api_key);
 
-/** Initialize stream ingress (mutex/queue only; worker starts on first TCP need). */
+/** Initialize stream ingress (mutex/queue only; worker starts on first TLS session). */
 void init();
 
 void shutdown();
@@ -20,7 +20,7 @@ void shutdown();
 /** True when hw_streaming is not running (never started, or stopped). */
 bool workerExited();
 
-/** Request opening a mux TCP stream to backend-stream-ingress (async). Enables log capture. */
+/** Request opening a mux TLS stream to backend-stream-ingress (async). Enables log capture. */
 void requestOpen();
 
 /** Request closing the active stream connection and log capture. */
@@ -29,7 +29,7 @@ void requestClose();
 bool isShuttingDown();
 
 /**
- * Lazily request a shared ingress TCP session (Console + file browser).
+ * Lazily request a shared ingress TLS session (Console + file browser).
  * Does not enable log capture. Returns false when stream ingress is not configured.
  */
 bool ensureTcpSession();
@@ -64,7 +64,7 @@ bool sendBleEventJson(const char* json_line);
 bool sendFsDownloadChunk(const char* command_id, const uint8_t* data, size_t len);
 
 /**
- * Drain queued mux frames to the TCP socket.
+ * Drain queued mux frames to the TLS session.
  * Safe to call from hw_stream_ingress (including while running FS work).
  */
 void flushOutbound();

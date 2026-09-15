@@ -22,7 +22,8 @@
 #include <sys/time.h>
 #include <cinttypes>
 
-#include "esp_crt_bundle.h"
+#include "heapwatch/Helpers/Tls/Tls.h"
+#include "sdkconfig.h"
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #include "esp_core_dump.h"
 #endif
@@ -59,13 +60,6 @@ static std::string g_mqtt_username;
 static char g_lwt_topic[128] = {};
 static volatile bool g_mqtt_reconnect_requested = false;
 static char g_command_topic[128] = {};
-
-extern const char heapwatch_local_ca_pem_start[] asm("_binary_heapwatch_local_ca_pem_start");
-extern const char heapwatch_local_ca_pem_end[] asm("_binary_heapwatch_local_ca_pem_end");
-
-static constexpr char DEV_MQTTS_HOSTNAME[] = "mqtts.mqtt.heapwatch.local";
-// T2: production broker cert CN/SAN — verified rather than skipped, same rigor as dev.
-static constexpr char PROD_MQTTS_HOSTNAME[] = "mqtts.mqtt.heapwatch.com";
 /** esp-mqtt outbox bytes; 0 = unlimited. Keep well under free-heap headroom for TLS. */
 static constexpr uint64_t MQTT_OUTBOX_LIMIT_BYTES = 16 * 1024;
 static constexpr uint32_t MQTT_OUTBOX_FULL_BACKOFF_MS = 10;
@@ -134,33 +128,7 @@ static void try_publish_queue_head(QueueHandle_t queue) {
 }
 
 static void configure_mqtt_tls_verification(esp_mqtt_client_config_t& config) {
-    if (std::strcmp(CONFIG_HEAPWATCH_BUILD_ENV, "development") == 0) {
-        // Local dev: broker URI is LAN IP; common_name drives TLS SNI for Caddy L4.
-#if defined(CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY) && CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY
-        // Caddy uses a local CA that is awkward to keep synced in flash; skip verify in
-        // dev only (sdkconfig.defaults). SNI must still be set (skip_common_name=false).
-        config.broker.verification.certificate = nullptr;
-        config.broker.verification.certificate_len = 0;
-        config.broker.verification.crt_bundle_attach = nullptr;
-#else
-        // PEM length must stay 0 so esp-mqtt uses strlen() for PEM parse (non-zero selects DER).
-        config.broker.verification.certificate =
-            static_cast<const char*>(static_cast<const void*>(heapwatch_local_ca_pem_start));
-        config.broker.verification.certificate_len = 0;
-        config.broker.verification.crt_bundle_attach = nullptr;
-#endif
-        config.broker.address.hostname = DEV_MQTTS_HOSTNAME;
-        config.broker.verification.common_name = DEV_MQTTS_HOSTNAME;
-        config.broker.verification.skip_cert_common_name_check = false;
-        return;
-    }
-
-    // T2 (fixed): production previously skipped CN/SAN verification, which weakens the
-    // "SUPER STABLE"/secure bar for a production device fleet. Verify the broker's cert
-    // against its real hostname, same rigor as the dev path above.
-    config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
-    config.broker.verification.common_name = PROD_MQTTS_HOSTNAME;
-    config.broker.verification.skip_cert_common_name_check = false;
+    Heapwatch::Helpers::Tls::applyToMqtt(config);
 }
 
 /**

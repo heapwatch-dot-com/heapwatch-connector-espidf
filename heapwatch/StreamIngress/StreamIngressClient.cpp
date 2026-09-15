@@ -1,24 +1,22 @@
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
 #include <cinttypes>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_tls.h"
 #include "sdkconfig.h"
 
 #include "heapwatch/Mqtt/HeapwatchConnector.h"
 #include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
+#include "heapwatch/Helpers/Tls/Tls.h"
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch/Fs/DeviceFsCommandHandler.h"
@@ -63,7 +61,7 @@ bool g_log_capture_requested = false;
 bool g_close_requested = false;
 bool g_connected = false;
 bool g_boot_stream_upload_requested = false;
-int g_socket_fd = -1;
+esp_tls_t* g_tls = nullptr;
 
 FsUploadChunkHandler g_fs_upload_handler = nullptr;
 
@@ -129,10 +127,10 @@ void unlock() {
     }
 }
 
-void closeSocket() {
-    if (g_socket_fd >= 0) {
-        close(g_socket_fd);
-        g_socket_fd = -1;
+void closeTlsSession() {
+    if (g_tls != nullptr) {
+        esp_tls_conn_destroy(g_tls);
+        g_tls = nullptr;
     }
     g_connected = false;
 
@@ -148,7 +146,11 @@ void closeSocket() {
     }
 }
 
-bool writeAll(int socket_fd, const uint8_t* data, size_t len) {
+bool writeAll(esp_tls_t* tls, const uint8_t* data, size_t len) {
+    if (tls == nullptr) {
+        return false;
+    }
+
     size_t offset = 0;
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
 
@@ -157,17 +159,13 @@ bool writeAll(int socket_fd, const uint8_t* data, size_t len) {
             return false;
         }
 
-        const ssize_t sent = send(socket_fd, data + offset, len - offset, MSG_DONTWAIT);
+        const ssize_t sent = esp_tls_conn_write(tls, data + offset, len - offset);
         if (sent > 0) {
             offset += static_cast<size_t>(sent);
             continue;
         }
 
-        if (sent == 0) {
-            return false;
-        }
-
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (sent == ESP_TLS_ERR_SSL_WANT_READ || sent == ESP_TLS_ERR_SSL_WANT_WRITE) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
@@ -178,7 +176,7 @@ bool writeAll(int socket_fd, const uint8_t* data, size_t len) {
     return true;
 }
 
-bool sendHandshake(int socket_fd) {
+bool sendHandshake(esp_tls_t* tls) {
     const char* stream_key = activeStreamApiKey();
     if (stream_key == nullptr || stream_key[0] == '\0') {
         return false;
@@ -196,58 +194,53 @@ bool sendHandshake(int socket_fd) {
         return false;
     }
 
-    return writeAll(socket_fd, reinterpret_cast<const uint8_t*>(handshake), static_cast<size_t>(written));
+    return writeAll(tls, reinterpret_cast<const uint8_t*>(handshake), static_cast<size_t>(written));
 }
 
-bool connectTcp() {
-    struct sockaddr_in dest = {};
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(HEAPWATCH_STREAM_INGRESS_TCP_PORT);
-
-    if (inet_aton(HEAPWATCH_STREAM_INGRESS_HOST, &dest.sin_addr) == 0) {
-        ESP_LOGE(TAG, "Invalid stream ingress host: %s", HEAPWATCH_STREAM_INGRESS_HOST);
+bool connectTls() {
+    esp_tls_t* tls = esp_tls_init();
+    if (tls == nullptr) {
+        ESP_LOGE(TAG, "esp_tls_init failed");
         return false;
     }
 
-    const int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket_fd < 0) {
-        ESP_LOGE(TAG, "socket() failed: errno=%d", errno);
+    esp_tls_cfg_t cfg = {};
+    Heapwatch::Helpers::Tls::applyToEspTls(cfg, Heapwatch::Helpers::Tls::Server::Stream);
+    cfg.timeout_ms = 10000;
+    cfg.non_block = true;
+
+    const int32_t connected = esp_tls_conn_new_sync(
+        HEAPWATCH_STREAM_INGRESS_HOST,
+        static_cast<int>(std::strlen(HEAPWATCH_STREAM_INGRESS_HOST)),
+        HEAPWATCH_STREAM_INGRESS_TCP_PORT, &cfg, tls);
+    if (connected != 1) {
+        ESP_LOGE(TAG, "TLS connect to %s:%" PRId32 " SNI %s failed", HEAPWATCH_STREAM_INGRESS_HOST,
+                 static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT),
+                 Heapwatch::Helpers::Tls::serverName(Heapwatch::Helpers::Tls::Server::Stream));
+        esp_tls_conn_destroy(tls);
         return false;
     }
 
-    if (connect(socket_fd, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) != 0) {
-        ESP_LOGE(TAG, "connect(%s:%" PRId32 ") failed: errno=%d", HEAPWATCH_STREAM_INGRESS_HOST,
-                 static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT), errno);
-        close(socket_fd);
-        return false;
-    }
-
-    const int flags = fcntl(socket_fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-        ESP_LOGE(TAG, "Failed to set socket non-blocking: errno=%d", errno);
-        close(socket_fd);
-        return false;
-    }
-
-    if (!sendHandshake(socket_fd)) {
+    if (!sendHandshake(tls)) {
         ESP_LOGE(TAG, "Stream handshake write failed");
-        close(socket_fd);
+        esp_tls_conn_destroy(tls);
         return false;
     }
 
     lock();
-    if (g_connected && g_socket_fd >= 0) {
-        close(socket_fd);
+    if (g_connected && g_tls != nullptr) {
+        esp_tls_conn_destroy(tls);
         unlock();
         return true;
     }
 
-    g_socket_fd = socket_fd;
+    g_tls = tls;
     g_connected = true;
     unlock();
 
-    ESP_LOGI(TAG, "Stream ingress TCP connected to %s:%" PRId32, HEAPWATCH_STREAM_INGRESS_HOST,
-             static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT));
+    ESP_LOGI(TAG, "Stream ingress TLS connected to %s:%" PRId32 " SNI %s", HEAPWATCH_STREAM_INGRESS_HOST,
+             static_cast<int32_t>(HEAPWATCH_STREAM_INGRESS_TCP_PORT),
+             Heapwatch::Helpers::Tls::serverName(Heapwatch::Helpers::Tls::Server::Stream));
     return true;
 }
 
@@ -297,7 +290,7 @@ bool enqueueOutbound(const char* channel_id, uint8_t frame_type, const uint8_t* 
 }
 
 void drainOutboundLocked() {
-    if (!g_connected || g_socket_fd < 0) {
+    if (!g_connected || g_tls == nullptr) {
         return;
     }
 
@@ -334,13 +327,13 @@ void drainOutboundLocked() {
             continue;
         }
 
-        const bool wrote = writeAll(g_socket_fd, g_encode_buf, encoded_len);
+        const bool wrote = writeAll(g_tls, g_encode_buf, encoded_len);
         slot.busy = false;
         slot.len = 0;
 
         if (!wrote) {
             ESP_LOGW(TAG, "Stream write failed on channel %s", frame.channel_id);
-            closeSocket();
+            closeTlsSession();
             return;
         }
     }
@@ -395,7 +388,7 @@ void handleInboundFrame(const Heapwatch::StreamIngress::Mux::Frame& frame) {
 }
 
 bool flushCoalesceLocked() {
-    if (g_coalesce_len == 0 || g_socket_fd < 0) {
+    if (g_coalesce_len == 0 || g_tls == nullptr) {
         return true;
     }
 
@@ -414,7 +407,7 @@ bool flushCoalesceLocked() {
         return false;
     }
 
-    const bool ok = writeAll(g_socket_fd, g_encode_buf, encoded_len);
+    const bool ok = writeAll(g_tls, g_encode_buf, encoded_len);
     if (!ok) {
         ESP_LOGW(TAG, "Stream write failed during coalesce flush");
         return false;
@@ -425,26 +418,31 @@ bool flushCoalesceLocked() {
 }
 
 bool tryReadInbound() {
-    if (g_socket_fd < 0) {
+    if (g_tls == nullptr) {
+        return false;
+    }
+
+    int sockfd = -1;
+    if (esp_tls_get_conn_sockfd(g_tls, &sockfd) != ESP_OK || sockfd < 0) {
         return false;
     }
 
     fd_set read_fds;
     FD_ZERO(&read_fds);
-    FD_SET(g_socket_fd, &read_fds);
+    FD_SET(sockfd, &read_fds);
 
     struct timeval timeout = {};
     timeout.tv_sec = 0;
     timeout.tv_usec = 0;
 
-    const int32_t ready = select(g_socket_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+    const int32_t ready = select(sockfd + 1, &read_fds, nullptr, nullptr, &timeout);
     if (ready <= 0) {
         return ready == 0;
     }
 
     Heapwatch::StreamIngress::Mux::Frame frame = {};
     const bool decoded =
-        Heapwatch::StreamIngress::Mux::decodeFromSocket(g_socket_fd, frame, g_inbound_buf, Heapwatch::StreamIngress::Mux::MAX_PAYLOAD_LEN);
+        Heapwatch::StreamIngress::Mux::decodeFromTls(g_tls, frame, g_inbound_buf, Heapwatch::StreamIngress::Mux::MAX_PAYLOAD_LEN);
     if (decoded) {
         handleInboundFrame(frame);
     }
@@ -464,7 +462,7 @@ void workerTask(void* arg) {
         if (close_requested) {
             lock();
             flushCoalesceLocked();
-            closeSocket();
+            closeTlsSession();
             g_tcp_requested = false;
             g_log_capture_requested = false;
             g_close_requested = false;
@@ -480,7 +478,7 @@ void workerTask(void* arg) {
                 continue;
             }
 
-            if (!connectTcp()) {
+            if (!connectTls()) {
                 vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
                 continue;
             }
@@ -493,7 +491,7 @@ void workerTask(void* arg) {
         if (!tryReadInbound()) {
             lock();
             flushCoalesceLocked();
-            closeSocket();
+            closeTlsSession();
             unlock();
             vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
             continue;
@@ -503,7 +501,7 @@ void workerTask(void* arg) {
         if ((now - last_flush) >= pdMS_TO_TICKS(COALESCE_FLUSH_MS)) {
             lock();
             if (!flushCoalesceLocked()) {
-                closeSocket();
+                closeTlsSession();
             } else {
                 drainOutboundLocked();
             }
@@ -562,7 +560,7 @@ void workerTask(void* arg) {
 
     lock();
     flushCoalesceLocked();
-    closeSocket();
+    closeTlsSession();
     unlock();
     g_worker_exited = true;
     g_worker_task = nullptr;
@@ -589,7 +587,7 @@ static void ensureWorkerStarted() {
     if (g_worker_task == nullptr) {
         g_stop_requested = false;
         g_worker_exited = false;
-        // Create only when TCP is actually needed — saves ~8KiB stack at boot for MQTT.
+        // Create only when TLS is actually needed — saves ~8KiB stack at boot for MQTT.
         if (heapwatch_task_create_dram(workerTask, "hw_streaming", WORKER_STACK_BYTES, nullptr,
                                        tskIDLE_PRIORITY + 2, &g_worker_task) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create hw_streaming task");
@@ -608,7 +606,7 @@ void init() {
     // Worker task is deferred until ensureTcpSession/requestOpen
     // so boot heap stays large enough for the MQTT client task.
     bindStreamWorkingSet();
-    ESP_LOGI(TAG, "Stream ingress ready (worker deferred until TCP needed)");
+    ESP_LOGI(TAG, "Stream ingress ready (worker deferred until TLS needed)");
 }
 
 void requestOpen() {
@@ -710,7 +708,7 @@ void enqueueLogJson(const char* json_line) {
 
     if (g_coalesce_len > 0 && (g_coalesce_len + needed) > Heapwatch::StreamIngress::Mux::COALESCE_MAX_BYTES) {
         if (!flushCoalesceLocked()) {
-            closeSocket();
+            closeTlsSession();
             unlock();
             return;
         }

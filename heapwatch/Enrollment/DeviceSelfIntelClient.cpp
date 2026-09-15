@@ -6,9 +6,9 @@
 
 #include "cJSON.h"
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
-#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "heapwatch/Helpers/Tls/Tls.h"
 
 namespace Heapwatch::Enrollment {
 
@@ -62,7 +62,7 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
     config.timeout_ms = 15000;
     config.event_handler = http_event_handler;
     config.user_data = &response;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
+    Heapwatch::Helpers::Tls::applyToHttpClient(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == nullptr) {

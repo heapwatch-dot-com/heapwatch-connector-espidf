@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-09-15
+
+### Security
+- Stream ingress and Heapwatch REST now use TLS in lab and production. The connector dials with `esp_tls` / HTTPS (SNI `stream.heapwatch.local` / `api.heapwatch.local` in development) instead of plaintext TCP or HTTP.
+
+### Changed
+- Post-build firmware upload uses Caddy HTTPS. Lab `HEAPWATCH_API_BASE=https://api.heapwatch.local` trusts the bundled Caddy CA (`certs/heapwatch_local_ca.pem`); production still uses the default public CA store.
+
 ## [0.16.2] - 2026-09-15
 
 ### Changed

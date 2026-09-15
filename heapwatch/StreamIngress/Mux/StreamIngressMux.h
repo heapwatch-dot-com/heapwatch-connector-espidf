@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "esp_tls.h"
+
 namespace Heapwatch::StreamIngress::Mux {
 
 constexpr uint8_t VERSION_1 = 1;
@@ -38,8 +40,8 @@ struct Frame {
 bool encode(const Frame& frame, uint8_t* out_buf, size_t out_cap, size_t* out_len);
 
 /**
- * Read exactly one mux frame from a connected TCP socket. Returns false on disconnect or parse error.
+ * Read exactly one mux frame from a TLS stream session. Returns false on disconnect or parse error.
  */
-bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t payload_buf_cap);
+bool decodeFromTls(esp_tls_t* tls, Frame& frame, uint8_t* payload_buf, size_t payload_buf_cap);
 
 }  // namespace Heapwatch::StreamIngress::Mux

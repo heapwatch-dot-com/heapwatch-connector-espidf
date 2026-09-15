@@ -126,6 +126,89 @@ do with POP3 or IMAP! you MUST NEVER make confusing naming like this
 
 - ESP-IDF component tags (`wifi`, `HTTP_CLIENT`, `mqtt`, …) are not renamed
 
+### Class, file, and architecture style
+
+These rules apply to **new** connector C++. They are the same house style as Remoted Node GPS firmware. Existing sections still win on their own topics: Naming (clear long names), Namespaces (PascalCase), Consts (uppercase), Types (fixed-width), Tasks (`hw_` + under 16 chars), Telemetry (queue then dispatch).
+
+Do not invent a parallel naming scheme. Do not rewrite the whole tree to match this in one go — follow it when you add or touch a type.
+
+#### Domain layers
+
+Keep a type in the layer it belongs to. Do not mash a hardware driver, a protocol client, and a command handler into one class.
+
+- **Helpers** — reusable utilities with no product workflow
+- **Adapters / drivers** — talk to a chip, netif, radio, filesystem, or other hardware/OS surface
+- **Clients** — a protocol on top of an adapter (MQTT, HTTP, stream, …)
+- **Services / reporters / collectors** — long-running connector subsystems
+- **Commands** — one command (or a tight family) per type when that command has its own execute path
+- **Data** — DTOs and message structs
+
+Folder path and namespace stay aligned (see Namespaces). The public C API in `heapwatch.h` stays C — these rules are for internal C++.
+
+#### Classes: `I` / `Abstract` / concrete
+
+When you add a C++ type that could have **more than one implementation**, **or** a **lifecycle** (start / stop / sleep / bootstrap / setup), use this triad:
+
+| Kind | Prefix | Rule |
+|---|---|---|
+| Interface | `I` | Pure virtuals + virtual destructor. Tiny surface. Example: `IMqttClient`, `IRadioBleProvider` |
+| Abstract base | `Abstract` | Public lifecycle methods are `final`. The subclass only implements `onX()` hooks. Example: `AbstractSystemService` |
+| Concrete | domain noun | Real work. PascalCase, clear, not clever. Example: `SimMqttClient`, `NimBleProvider` |
+
+Do **not** wrap every helper, POD, or C API in `IFoo`. If there is one implementation, no lifecycle and for that class it does not make sure to have multiple implementations, then a single concrete class is enough.
+
+Single concrete classes are good for say singletons, data models, etc.
+
+Any component where the point is the INTERFACE - so that you can easily connect it to other parts of the system - there you must use the "I" (interface) layer, Abstract layer and particular class layer.
+
+#### Template method (`onX` hooks)
+
+The public method owns the invariant (status, locking, “do not start twice”). The hook owns the work.
+
+| Public API | Subclass hook |
+|---|---|
+| `start()` / `stop()` / `sleep()` / `bootstrap()` / `setup()` | `onStart()` / `onStop()` / `onSleep()` / `onBootstrap()` / `onSetup()` |
+| queueing entry (`logMessage`, enqueue, …) | `dispatch…` / handle hook that actually sends or processes |
+
+- Event / callback methods: `on` + what happened — `onIncomingMqttCommand()`, `onMqttMessageReceived`
+- Task **functions**: `task` + verb phrase — `taskProcessQueuedMessages()`, `taskHandleAsyncRx` (the FreeRTOS **name string** is still `hw_…` under 16 chars — see Tasks)
+- ISR: `isrOn…`
+
+Boolean methods: `is` / `has` / `set`. Enum **type** is PascalCase (`MqttConnectionState`). Enum **value** is `TYPE_SCREAMING` (`MQTT_CONNECTION_DISCONNECTED`).
+
+#### Files
+
+- One class → one header named after the class, PascalCase: `DeviceCommandTask.h`
+- You MAY split the `.cpp` by concern. The hyphen is the **concern**, not a kebab-case class name:
+  - `ClassName.cpp` — constructor, shared members, start/stop of tasks
+  - `ClassName-Concern.cpp` — one protocol or feature (`Sim7080Adapter-Mqtt.cpp`)
+  - `ClassName-Worker-Role.cpp` — the FreeRTOS task body for that role (`SimMqttClient-Worker-Queued.cpp`)
+- Split when one `.cpp` would mix a worker loop with setup, or mix two protocols. Do not split a small helper into five files.
+
+Producer / ISR / system callback **only enqueues**. A worker task does the heavy work. That is the same rule as Telemetry — it also applies to logs, commands, and radio.
+
+#### Hungarian member prefixes — IGNORE (not in force)
+
+**IGNORE this subsection. It is NOT a rule. Do not apply it.**
+
+Do not name new members this way. Do not rename existing members to this scheme. The table is commented out on purpose: it is a preservation copy so we can turn it on later without reconstructing it. Until the user explicitly enables it, member names follow Naming (clear, meaningful) and existing connector practice — not Hungarian.
+
+<!--
+INACTIVE — DO NOT APPLY. Hungarian member prefixes (preserved only).
+
+Prefix | Meaning                              | Example
+m      | member object / string / enum        | mDeviceId, mMqttState
+mb     | member bool                          | mbDebugEnabled, mbPreventAnySuspend
+mu     | member unsigned numeric              | muStackSize, muMqttTransmitErrorCount
+mp     | member pointer / shared_ptr          | mpLog, mpAdapter
+mh     | member FreeRTOS handle               | mhAsyncRxTask, mhProcessingTask
+mmx    | member mutex / semaphore             | mmxReadWriteMutex, mmxStorageMutex
+mmap   | member map                           | mmapServices
+g / gp | global / global pointer              | gApp, gpModem, gpLog
+pThis  | local "this" after task-arg cast     | pThis
+
+-->
+
 ## Changelog (mandatory)
 
 [`CHANGELOG.md`](CHANGELOG.md) — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) + **SemVer**. Firmware keeps SemVer; do not tag the connector with cloud CalVer (`v2026.37.4`).

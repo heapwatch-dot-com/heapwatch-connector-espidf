@@ -1,11 +1,9 @@
 #include "heapwatch/StreamIngress/Mux/StreamIngressMux.h"
 
 #include <arpa/inet.h>
-#include <cerrno>
 #include <cstring>
-#include <sys/socket.h>
-#include <unistd.h>
 
+#include "esp_tls.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -27,7 +25,11 @@ uint64_t readU64BE(const uint8_t* in) {
     return value;
 }
 
-bool readExact(int socket_fd, uint8_t* buffer, size_t len) {
+bool readExact(esp_tls_t* tls, uint8_t* buffer, size_t len) {
+    if (tls == nullptr) {
+        return false;
+    }
+
     size_t offset = 0;
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
 
@@ -36,8 +38,7 @@ bool readExact(int socket_fd, uint8_t* buffer, size_t len) {
             return false;
         }
 
-        const ssize_t received =
-            recv(socket_fd, buffer + offset, len - offset, MSG_DONTWAIT);
+        const ssize_t received = esp_tls_conn_read(tls, buffer + offset, len - offset);
         if (received > 0) {
             offset += static_cast<size_t>(received);
             continue;
@@ -47,7 +48,7 @@ bool readExact(int socket_fd, uint8_t* buffer, size_t len) {
             return false;
         }
 
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (received == ESP_TLS_ERR_SSL_WANT_READ || received == ESP_TLS_ERR_SSL_WANT_WRITE) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
@@ -115,13 +116,13 @@ bool encode(const Frame& frame, uint8_t* out_buf, size_t out_cap, size_t* out_le
     return true;
 }
 
-bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t payload_buf_cap) {
-    if (payload_buf == nullptr) {
+bool decodeFromTls(esp_tls_t* tls, Frame& frame, uint8_t* payload_buf, size_t payload_buf_cap) {
+    if (payload_buf == nullptr || tls == nullptr) {
         return false;
     }
 
     uint8_t header[4] = {};
-    if (!readExact(socket_fd, header, sizeof(header))) {
+    if (!readExact(tls, header, sizeof(header))) {
         return false;
     }
 
@@ -140,12 +141,12 @@ bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t 
     }
 
     uint8_t channel_bytes[MAX_CHANNEL_ID_LEN] = {};
-    if (!readExact(socket_fd, channel_bytes, channel_len)) {
+    if (!readExact(tls, channel_bytes, channel_len)) {
         return false;
     }
 
     uint8_t timing[12] = {};
-    if (!readExact(socket_fd, timing, sizeof(timing))) {
+    if (!readExact(tls, timing, sizeof(timing))) {
         return false;
     }
 
@@ -156,7 +157,7 @@ bool decodeFromSocket(int socket_fd, Frame& frame, uint8_t* payload_buf, size_t 
     }
 
     if (payload_len > 0) {
-        if (!readExact(socket_fd, payload_buf, payload_len)) {
+        if (!readExact(tls, payload_buf, payload_len)) {
             return false;
         }
     }
