@@ -28,8 +28,8 @@
 #include "esp_log.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Parameters/ParameterAPI.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Parameters/PowerParameterHelpers.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
 #include "heapwatch/DeviceCommand/SleepHooks/SleepHooks.h"
@@ -52,7 +52,7 @@ bool g_host_keep_running = false;
 __attribute__((used)) static const char EMBEDDED_BUILD_IDENTIFIER[] = HEAPWATCH_BUILD_IDENTIFIER;
 
 esp_err_t require_queue_ready() {
-    if (!HeapwatchConnector::getInstance().isInfrastructureReady()) {
+    if (!MqttTelemetryClient::getInstance().isInfrastructureReady()) {
         return ESP_ERR_HEAPWATCH_NOT_INITIALIZED;
     }
     return ESP_OK;
@@ -76,7 +76,7 @@ esp_err_t heapwatch_notify_app_started(void) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_STARTED_UP);
+    MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_STARTED_UP);
     return ESP_OK;
 }
 
@@ -84,7 +84,7 @@ esp_err_t heapwatch_get_status(heapwatch_status_t* out) {
     if (out == nullptr) {
         return ESP_ERR_HEAPWATCH_INVALID_ARG;
     }
-    const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
+    const HeapwatchConnectorStatus status = MqttTelemetryClient::getInstance().getStatus();
     out->phase = Heapwatch::Lifecycle::getPhase();
     out->initialized = status.initialized;
     out->network_ready = status.network_ready;
@@ -119,7 +119,7 @@ esp_err_t heapwatch_queue_event(int32_t event_type_id, int32_t boot_cycle) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().queueEvent(event_type_id, boot_cycle);
+    MqttTelemetryClient::getInstance().queueEvent(event_type_id, boot_cycle);
     return ESP_OK;
 }
 
@@ -142,7 +142,7 @@ esp_err_t heapwatch_queue_log(HeapwatchConnectorSeverity severity, const char* m
         cpp_ctx_ptr = &cpp_ctx;
     }
 
-    if (!HeapwatchConnector::getInstance().queueLog(severity, message, cpp_ctx_ptr)) {
+    if (!MqttTelemetryClient::getInstance().queueLog(severity, message, cpp_ctx_ptr)) {
         return ESP_ERR_HEAPWATCH_QUEUE_FULL;
     }
     return ESP_OK;
@@ -156,7 +156,7 @@ esp_err_t heapwatch_queue_parameter_int(const char* slug, int64_t value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().queueParameter(slug, value);
+    MqttTelemetryClient::getInstance().queueParameter(slug, value);
     return ESP_OK;
 }
 
@@ -168,7 +168,7 @@ esp_err_t heapwatch_queue_parameter_double(const char* slug, double value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().queueParameter(slug, value);
+    MqttTelemetryClient::getInstance().queueParameter(slug, value);
     return ESP_OK;
 }
 
@@ -180,7 +180,7 @@ esp_err_t heapwatch_update_parameter_int(const char* slug, int64_t value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().updateParameterInt(slug, value);
+    MqttTelemetryClient::getInstance().updateParameterInt(slug, value);
     return ESP_OK;
 }
 
@@ -192,7 +192,7 @@ esp_err_t heapwatch_update_parameter_double(const char* slug, double value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().updateParameterDouble(slug, value);
+    MqttTelemetryClient::getInstance().updateParameterDouble(slug, value);
     return ESP_OK;
 }
 
@@ -205,7 +205,7 @@ esp_err_t heapwatch_update_parameter_int_ranged(const char* slug, int64_t value,
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().updateParameterIntRanged(slug, value, min_value, max_value);
+    MqttTelemetryClient::getInstance().updateParameterIntRanged(slug, value, min_value, max_value);
     return ESP_OK;
 }
 
@@ -218,7 +218,7 @@ esp_err_t heapwatch_update_parameter_double_ranged(const char* slug, double valu
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().updateParameterDoubleRanged(slug, value, min_value, max_value);
+    MqttTelemetryClient::getInstance().updateParameterDoubleRanged(slug, value, min_value, max_value);
     return ESP_OK;
 }
 
@@ -230,7 +230,7 @@ esp_err_t heapwatch_set_parameter_max(const char* slug, int64_t max_value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().setParameterIntMax(slug, max_value);
+    MqttTelemetryClient::getInstance().setParameterIntMax(slug, max_value);
     return ESP_OK;
 }
 
@@ -242,7 +242,7 @@ esp_err_t heapwatch_set_parameter_min(const char* slug, int64_t min_value) {
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().setParameterIntMin(slug, min_value);
+    MqttTelemetryClient::getInstance().setParameterIntMin(slug, min_value);
     return ESP_OK;
 }
 
@@ -254,7 +254,7 @@ esp_err_t heapwatch_set_parameter_double_max(const char* slug, double max_value)
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().setParameterDoubleMax(slug, max_value);
+    MqttTelemetryClient::getInstance().setParameterDoubleMax(slug, max_value);
     return ESP_OK;
 }
 
@@ -266,7 +266,7 @@ esp_err_t heapwatch_set_parameter_double_min(const char* slug, double min_value)
     if (ready != ESP_OK) {
         return ready;
     }
-    HeapwatchConnector::getInstance().setParameterDoubleMin(slug, min_value);
+    MqttTelemetryClient::getInstance().setParameterDoubleMin(slug, min_value);
     return ESP_OK;
 }
 

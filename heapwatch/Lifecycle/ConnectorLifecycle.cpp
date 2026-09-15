@@ -1,11 +1,11 @@
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
 
 #include "heapwatch_build_metadata.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
 #include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
 #include "heapwatch/Lifecycle/BootCycle/BootCycleStore.h"
@@ -83,11 +83,11 @@ bool hasProvisionedCredentialsInNvs() {
  */
 void initBootIdentity() {
     g_boot_state = {};
-    if (!Heapwatch::Lifecycle::BootCycle::onBoot(&g_boot_state)) {
+    if (!Heapwatch::Lifecycle::BootCycle::loadIncrementAndPersistBootCycle(&g_boot_state)) {
         ESP_LOGE(TAG, "Boot cycle store unavailable — telemetry will report boot_cycle 0");
         return;
     }
-    HeapwatchConnector::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
+    MqttTelemetryClient::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
                                                           g_boot_state.last_crash_boot_cycle);
 }
 
@@ -111,7 +111,7 @@ void resumeBootCycleFromServer() {
         return;
     }
 
-    HeapwatchConnector::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
+    MqttTelemetryClient::getInstance().setBootCycleContext(g_boot_state.boot_cycle,
                                                           g_boot_state.last_crash_boot_cycle);
 }
 
@@ -121,7 +121,7 @@ void resumeBootCycleFromServer() {
  * wake attribution does not, because it describes the boot rather than the connector start.
  */
 void queueBootLifecycleTelemetry() {
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
 
     if (!g_wake_telemetry_queued && esp_reset_reason() == ESP_RST_DEEPSLEEP) {
         g_wake_telemetry_queued = true;
@@ -142,7 +142,7 @@ void applyBuildMetadataToConnector() {
     if (is_placeholder_build_identifier(build_id)) {
         return;
     }
-    HeapwatchConnector::getInstance().setCoreDumpBuildIdentifier(build_id);
+    MqttTelemetryClient::getInstance().setCoreDumpBuildIdentifier(build_id);
 }
 
 void bootstrapTask(void*) {
@@ -173,7 +173,7 @@ void bootstrapTask(void*) {
             Heapwatch::Lifecycle::Bootstrap::syncTimeIfManaged();
         }
 
-        if (HeapwatchConnector::getInstance().getStatus().initialized) {
+        if (MqttTelemetryClient::getInstance().getStatus().initialized) {
             if (!g_boot_cycle_resumed) {
                 g_boot_cycle_resumed = true;
                 resumeBootCycleFromServer();
@@ -226,7 +226,7 @@ void setPhase(heapwatch_phase_t phase) { g_phase = phase; }
 heapwatch_phase_t getPhase() { return g_phase; }
 
 void updateMqttPhaseFromStatus() {
-    const HeapwatchConnectorStatus status = HeapwatchConnector::getInstance().getStatus();
+    const HeapwatchConnectorStatus status = MqttTelemetryClient::getInstance().getStatus();
     if (!status.initialized) {
         return;
     }
@@ -245,7 +245,7 @@ void updateMqttPhaseFromStatus() {
 
 void refreshHandoffLed() {
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-    if (!HeapwatchConnector::getInstance().getStatus().initialized) {
+    if (!MqttTelemetryClient::getInstance().getStatus().initialized) {
         return;
     }
     if (Heapwatch::Lifecycle::Bootstrap::isWifiPermanentlyFailed()) {
@@ -267,8 +267,8 @@ void onRuntimeConnectivityChanged() {
 }
 
 bool activateConnectorFromCredentials(const Heapwatch::Lifecycle::Bootstrap::BootCredentials& creds) {
-    auto& connector = HeapwatchConnector::getInstance();
-    if (!connector.ensureInfrastructure()) {
+    auto& connector = MqttTelemetryClient::getInstance();
+    if (!connector.createMqttQueuesAndMutexes()) {
         return false;
     }
 
@@ -332,7 +332,7 @@ esp_err_t initialize() {
     Heapwatch::Lifecycle::Bootstrap::ensureDefaultEventLoop();
     registerHandlersOnSystemEventLoop();
 
-    if (!HeapwatchConnector::getInstance().ensureInfrastructure()) {
+    if (!MqttTelemetryClient::getInstance().createMqttQueuesAndMutexes()) {
         ESP_LOGE(TAG, "FATAL: failed to create connector message queues");
         g_misconfigured = true;
         setPhase(HEAPWATCH_PHASE_MISCONFIGURED);
@@ -371,7 +371,7 @@ void deinitialize() {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
-    HeapwatchConnector::getInstance().deinitialize();
+    MqttTelemetryClient::getInstance().deinitialize();
     Heapwatch::Lifecycle::Bootstrap::stopLogRelay();
     Heapwatch::Lifecycle::Bootstrap::stopTimeSyncIfManaged();
     Heapwatch::Lifecycle::Bootstrap::stopManagedWifi();

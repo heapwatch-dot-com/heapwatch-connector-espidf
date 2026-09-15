@@ -18,7 +18,7 @@ constexpr char KEY_BOOT_CYCLE[] = "boot_cycle";
 constexpr char KEY_LAST_CRASH_BOOT_CYCLE[] = "last_crash_bc";
 }  // namespace
 
-bool onBoot(State* out) {
+bool loadIncrementAndPersistBootCycle(State* out) {
     if (out == nullptr) {
         return false;
     }

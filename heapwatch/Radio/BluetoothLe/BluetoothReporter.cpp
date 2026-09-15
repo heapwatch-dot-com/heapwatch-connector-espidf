@@ -12,9 +12,9 @@
 #include "freertos/task.h"
 #include "heapwatch/Radio/BleDelegate.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Radio/BluetoothLe/IRadioBleProvider.h"
 #include "sdkconfig.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
@@ -106,10 +106,10 @@ void emitStateTransitions(const RadioBleSnapshot& snap) {
     g_prev_scanning = snap.scanning;
 }
 
-void onScanPeer(const ScanPeer& peer, void* /*ctx*/) {
+void onScannedBleDevice(const ScannedBleDevice& peer, void* /*ctx*/) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
     char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
@@ -132,7 +132,7 @@ void onScanPeer(const ScanPeer& peer, void* /*ctx*/) {
 void onScanComplete(bool success, const char* message, void* /*ctx*/) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
     char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
@@ -255,12 +255,12 @@ bool buildPayload(char* out, size_t out_len) {
 
 void emitBleEvent(int32_t event_id, const char* detail, const char* peer_addr) {
 #if CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
-    HeapwatchConnector::getInstance().queueEvent(event_id);
+    MqttTelemetryClient::getInstance().queueEvent(event_id);
 #endif
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
     char line[JSON_LINE_MAX] = {};
     if (peer_addr != nullptr && peer_addr[0] != '\0') {
@@ -285,7 +285,7 @@ void publishFullSync() {
     getBleProvider().fillSnapshot(snap);
     emitStateTransitions(snap);
     g_prev_snapshot = snap;
-    HeapwatchConnector::getInstance().queueBluetoothSnapshot();
+    MqttTelemetryClient::getInstance().queueBluetoothSnapshot();
     ESP_LOGI(TAG, "Queued full /bluetooth sync");
 }
 
@@ -306,7 +306,7 @@ bool startCommandScan(const char* command_id, bool active, uint32_t duration_sec
         ESP_LOGW(TAG, "Stream ingress unavailable for BLE scan");
     }
 
-    return provider.startScan(active, duration_seconds, onScanPeer, onScanComplete, nullptr);
+    return provider.startScan(active, duration_seconds, onScannedBleDevice, onScanComplete, nullptr);
 }
 
 void start() {

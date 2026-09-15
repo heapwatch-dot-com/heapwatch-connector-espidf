@@ -21,7 +21,7 @@ struct FsError {
 bool isAllowedPath(const char* path);
 
 /** Build a file_browser TCP envelope and send it (requires stream ingress session). */
-void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON* result);
+void sendFileBrowserResultOverStream(const char* command_id, bool ok, const FsError* error, cJSON* result);
 
 cJSON* buildVolumesResult();
 

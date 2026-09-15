@@ -399,12 +399,12 @@ menu "Heapwatch Connector"
             help
                 Stack for hw_dispatcher.
 
-        config HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
-            int "Going-dark pipeline task stack (bytes)"
+        config HEAPWATCH_OFFLINE_TASK_STACK_BYTES
+            int "Commanded-offline pipeline task stack (bytes)"
             default 10240
             range 8192 32768
             help
-                Stack for hw_going_dark.
+                Stack for hw_offline.
 
         config HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
             bool "Put as much data as possible in PSRAM (Recommended)"
@@ -419,7 +419,7 @@ menu "Heapwatch Connector"
                 Great for storing lots of pending telemetry during intermittent modem connection disconnects.
                 Recommended for modem applications that face constant signal interruptions.
 
-                The connector working set (MQTT queues, command/stream buffers, metrics
+                The connector memory block (MQTT queues, command/stream buffers, metrics
                 scratch, optional coredump slot) is one allocation. This option chooses
                 PSRAM vs internal DRAM for that block.
 
@@ -428,7 +428,7 @@ menu "Heapwatch Connector"
             default 8192
             range 2048 65536
             help
-                Resettable bump buffer inside the connector working set. Reserved at
+                Resettable bump buffer inside the connector memory block. Reserved at
                 init for cJSON/FS/OTA serialization so those paths do not need extra
                 heap churn. Unused by call sites until they opt in.
 

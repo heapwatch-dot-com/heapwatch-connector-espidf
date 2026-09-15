@@ -10,7 +10,7 @@
 
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
-#include "heapwatch/Fs/DeviceFsService.h"
+#include "heapwatch/Fs/DeviceFilesystemOperations.h"
 
 namespace Heapwatch::Fs {
 
@@ -95,60 +95,60 @@ void processWorkItem(const WorkItem& work) {
     switch (work.kind) {
         case WorkKind::Storage: {
             cJSON* result = buildStorageResult();
-            sendTcpResult(work.command_id, true, nullptr, result);
+            sendFileBrowserResultOverStream(work.command_id, true, nullptr, result);
             break;
         }
         case WorkKind::List: {
             cJSON* result = buildListResult(work.path, work.page, work.per_page, &error);
             if (result == nullptr) {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             } else {
-                sendTcpResult(work.command_id, true, nullptr, result);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, result);
             }
             break;
         }
         case WorkKind::Read: {
             cJSON* result = buildReadResult(work.path, work.from_line, work.to_line, &error);
             if (result == nullptr) {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             } else {
-                sendTcpResult(work.command_id, true, nullptr, result);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, result);
             }
             break;
         }
         case WorkKind::Delete:
             if (deleteEntry(work.path, &error)) {
-                sendTcpResult(work.command_id, true, nullptr, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, nullptr);
             } else {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
         case WorkKind::Rename:
             if (renameEntry(work.path, work.path2, &error)) {
-                sendTcpResult(work.command_id, true, nullptr, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, nullptr);
             } else {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
         case WorkKind::Move:
             if (moveEntry(work.path, work.path2, &error)) {
-                sendTcpResult(work.command_id, true, nullptr, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, nullptr);
             } else {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
         case WorkKind::Mkdir:
             if (mkdirEntry(work.path, &error)) {
-                sendTcpResult(work.command_id, true, nullptr, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, nullptr);
             } else {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
         case WorkKind::Create:
             if (createEmptyFile(work.path, &error)) {
-                sendTcpResult(work.command_id, true, nullptr, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, true, nullptr, nullptr);
             } else {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
         case WorkKind::Upload: {
@@ -163,7 +163,7 @@ void processWorkItem(const WorkItem& work) {
         }
         case WorkKind::Download:
             if (!beginDownloadJob(work.command_id, work.path, &error)) {
-                sendTcpResult(work.command_id, false, &error, nullptr);
+                sendFileBrowserResultOverStream(work.command_id, false, &error, nullptr);
             }
             break;
     }
@@ -367,7 +367,7 @@ bool handleMqttCommand(const char* suffix, const char* command_id, const char* p
 
     if (!enqueueWork(work)) {
         FsError err = {"busy", "Filesystem worker queue is full."};
-        sendTcpResult(work.command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(work.command_id, false, &err, nullptr);
     }
 
     return true;

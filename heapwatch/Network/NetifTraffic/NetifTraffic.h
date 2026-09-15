@@ -11,7 +11,7 @@ namespace Heapwatch::Network::NetifTraffic {
 void start();
 
 /** Bind known if_keys and default netif; install lwIP input/linkoutput byte counters. */
-void ensureTracking();
+void installNetifRxTxHooksIfMissing();
 
 /**
  * Append `dynamic.net.{seg}.rx_bytes` / `.tx_bytes` fields for every tracked netif.

@@ -12,7 +12,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "lwip/ip4_addr.h"
 #if CONFIG_LWIP_IPV6
 #include "lwip/ip6_addr.h"
@@ -221,7 +221,7 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
         }
         copy_key(current_keys[current_count], KEY_LEN, key);
         if (g_have_prev && !key_in_prev(key) && esp_netif_is_netif_up(netif)) {
-            HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
+            MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
         }
         current_count++;
     }
@@ -236,7 +236,7 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
                 }
             }
             if (!still_present) {
-                HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
+                MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
             }
         }
     }
@@ -246,7 +246,7 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
         default_key = "";
     }
     if (g_have_prev && strncmp(g_prev_default_key, default_key, KEY_LEN) != 0) {
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_DEFAULT_ROUTE_CHANGED);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_DEFAULT_ROUTE_CHANGED);
     }
 
     g_prev_key_count = current_count;
@@ -264,7 +264,7 @@ bool buildPayload(char* out, size_t out_len) {
         return false;
     }
 
-    Heapwatch::Network::NetifTraffic::ensureTracking();
+    Heapwatch::Network::NetifTraffic::installNetifRxTxHooksIfMissing();
 
     size_t offset = 0;
     if (!append(out, out_len, &offset, "{\"netifs\":[")) {
@@ -292,13 +292,13 @@ bool buildPayload(char* out, size_t out_len) {
 
 void publishFullSync() {
     emit_events_for_scan(esp_netif_get_default_netif());
-    HeapwatchConnector::getInstance().queueNetwork();
+    MqttTelemetryClient::getInstance().queueNetwork();
     ESP_LOGI(TAG, "Queued full /network sync");
 }
 
 void markTopologyDirty() { g_topology_dirty = true; }
 
-bool consumeTopologyDirty() {
+bool takeAndClearNetworkTopologyChangedFlag() {
     if (!g_topology_dirty) {
         return false;
     }

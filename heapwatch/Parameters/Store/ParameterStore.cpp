@@ -24,7 +24,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 
 namespace Heapwatch::Parameters::Store {
@@ -58,7 +58,7 @@ bool bindSlots() {
         return true;
     }
     Heapwatch::Helpers::MemoryManager::init();
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws == nullptr) {
         return false;
     }
@@ -108,7 +108,7 @@ bool slot_has_publishable_content_locked(const Slot& slot) {
 
 }  // namespace
 
-void unbindWorkingSet() { g_slots = nullptr; }
+void unbindMemoryBlock() { g_slots = nullptr; }
 
 void updateInt(const char* slug, int64_t value) {
     if (!bindSlots()) {
@@ -302,7 +302,7 @@ bool buildFlushPayload(char* out, size_t out_size) {
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
     bool any_publishable = false;
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS; ++i) {

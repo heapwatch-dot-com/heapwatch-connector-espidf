@@ -55,7 +55,7 @@ target_include_directories(${COMPONENT_LIB} PUBLIC "${HEAPWATCH_GENERATED_DIR}")
 
 # Post-link fingerprint refresh rewrites this header; force recompile of TUs that embed it.
 set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/Lifecycle/heapwatch_c_api.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/Lifecycle/PublicCApi.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/Lifecycle/ConnectorLifecycle.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/heapwatch/DeviceCommand/CommandCatalog.cpp"
     PROPERTIES OBJECT_DEPENDS "${HEAPWATCH_METADATA_HEADER}"

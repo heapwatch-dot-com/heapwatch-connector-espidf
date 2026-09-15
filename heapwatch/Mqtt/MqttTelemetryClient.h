@@ -13,8 +13,8 @@
 // For licensing inquiries, please contact: info@heapwatch.com
 //
 
-#ifndef HEAPWATCH_CONNECTOR_H
-#define HEAPWATCH_CONNECTOR_H
+#ifndef MQTT_TELEMETRY_CLIENT_H
+#define MQTT_TELEMETRY_CLIENT_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -92,12 +92,12 @@ struct HeapwatchConnectorStatus {
     uint32_t coredump_queue_depth;
 };
 
-class HeapwatchConnector {
+class MqttTelemetryClient {
 public:
-    static HeapwatchConnector& getInstance();
+    static MqttTelemetryClient& getInstance();
 
     /** Creates MQTT queues/mutex — safe to call before credentials exist. */
-    bool ensureInfrastructure();
+    bool createMqttQueuesAndMutexes();
     bool isInfrastructureReady() const;
 
     /** Starts dispatcher/collector after credentials are applied. */
@@ -179,10 +179,10 @@ public:
     void ensureMetricsCollectorThreadStarted();
 
 private:
-    HeapwatchConnector() = default;
-    ~HeapwatchConnector() = default;
-    HeapwatchConnector(const HeapwatchConnector&) = delete;
-    HeapwatchConnector& operator=(const HeapwatchConnector&) = delete;
+    MqttTelemetryClient() = default;
+    ~MqttTelemetryClient() = default;
+    MqttTelemetryClient(const MqttTelemetryClient&) = delete;
+    MqttTelemetryClient& operator=(const MqttTelemetryClient&) = delete;
 
     void startDispatcherThread();
     void startCollectorThread();
@@ -190,10 +190,10 @@ private:
 
 QueueHandle_t heapwatch_get_tiny_queue();
 QueueHandle_t heapwatch_get_small_queue();
-QueueHandle_t heapwatch_get_queue();  // large tier — kept name for compat (SPECS/TASKS/metrics blob)
-bool heapwatch_outbound_send(QueueHandle_t queue, const void* item, TickType_t wait);
-void heapwatch_outbound_consumed();
-void heapwatch_outbound_wait_for_work();
+QueueHandle_t heapwatch_get_large_mqtt_queue();  // large MQTT tier (SPECS/TASKS/metrics blob)
+bool heapwatch_enqueue_mqtt_queue_message(QueueHandle_t queue, const void* item, TickType_t wait);
+void heapwatch_mark_mqtt_queue_message_published();
+void heapwatch_wait_for_queued_mqtt_message();
 QueueHandle_t heapwatch_get_coredump_queue();
 const char* heapwatch_get_device_uid();
 const char* heapwatch_get_tenant_slug();

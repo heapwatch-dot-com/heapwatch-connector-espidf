@@ -18,7 +18,7 @@
 #include "heapwatch_config.h"
 
 /**
- * Typed power helpers over HeapwatchConnector::updateParameter*().
+ * Typed power helpers over MqttTelemetryClient::updateParameter*().
  * Also exposed as heapwatch_update_power_* in heapwatch.h.
  * The client owns ADC/GPIO/fuel-gauge wiring; the connector never reads peripherals here.
  */

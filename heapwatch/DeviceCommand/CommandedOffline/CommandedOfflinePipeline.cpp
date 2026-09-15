@@ -1,4 +1,4 @@
-#include "heapwatch/DeviceCommand/GoingDark/GoingDarkPipeline.h"
+#include "heapwatch/DeviceCommand/CommandedOffline/CommandedOfflinePipeline.h"
 
 #include <cstdio>
 #include <cstring>
@@ -15,14 +15,14 @@
 #include "heapwatch_config.h"
 #include "heapwatch/Mqtt/HeapwatchDispatcher.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/DeviceCommand/SleepTracking.h"
 #include "heapwatch.h"
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
 #include "heapwatch/DeviceCommand/SleepHooks/SleepHooks.h"
 
-namespace Heapwatch::DeviceCommand::GoingDark {
+namespace Heapwatch::DeviceCommand::CommandedOffline {
 
 namespace {
 
@@ -42,7 +42,7 @@ enum class RequestKind : uint8_t {
     Stop,
 };
 
-struct GoingDarkRequest {
+struct CommandedOfflineRequest {
     char suffix[SUFFIX_MAX] = {};
     char command_id[COMMAND_ID_MAX] = {};
     RequestKind kind = RequestKind::Sleep;
@@ -54,7 +54,7 @@ QueueHandle_t g_request_queue = nullptr;
 volatile bool g_active = false;
 volatile bool g_task_exited = true;
 
-void rejectRequest(const GoingDarkRequest& request, const char* code, const char* message) {
+void rejectRequest(const CommandedOfflineRequest& request, const char* code, const char* message) {
     publishCommandResponse(request.suffix, request.command_id, false, code, message);
     g_active = false;
 }
@@ -62,7 +62,7 @@ void rejectRequest(const GoingDarkRequest& request, const char* code, const char
 void reportLightSleepWakeContext(int64_t sleep_started_us) {
     const int64_t elapsed_ms = (esp_timer_get_time() - sleep_started_us) / 1000;
     const heapwatch_wake_cause_t cause = heapwatch_translate_current_wake_cause();
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
     connector.queueParameter("wake_cause_code", static_cast<int64_t>(cause));
     connector.queueParameter("sleep_duration_ms", elapsed_ms);
 }
@@ -75,7 +75,7 @@ void configureTimerWakeup(uint32_t duration_s) {
     }
 }
 
-void waitOutboxDrained(uint32_t timeout_ms) {
+void waitUntilEspMqttClientOutboxEmpty(uint32_t timeout_ms) {
     const TickType_t start = xTaskGetTickCount();
     while (heapwatch_dispatcher_get_outbox_size() > 0) {
         const TickType_t elapsed_ms =
@@ -89,35 +89,35 @@ void waitOutboxDrained(uint32_t timeout_ms) {
 }
 
 /**
- * Shared going-dark step for every connectivity-terminating command:
+ * Shared commanded-offline step for every connectivity-terminating command:
  * publish command ack → arm shutdown → drain MQTT outbox.
  */
-bool ackAndDrain(const GoingDarkRequest& request, const char* ack_message,
+bool publishCommandAckThenWaitUntilEspMqttOutboxEmpty(const CommandedOfflineRequest& request, const char* ack_message,
                  HeapwatchShutdownAction shutdown_action) {
     if (!publishCommandAck(request.suffix, request.command_id, ack_message)) {
         g_active = false;
-        ESP_LOGE(TAG, "Failed to publish going-dark ack for %s", request.suffix);
+        ESP_LOGE(TAG, "Failed to publish commanded-offline ack for %s", request.suffix);
         return false;
     }
 
     heapwatch_dispatcher_begin_shutdown(shutdown_action);
 
     const uint32_t drain_timeout_ms = Heapwatch::Settings::outboxDrainTimeoutMs();
-    waitOutboxDrained(drain_timeout_ms);
+    waitUntilEspMqttClientOutboxEmpty(drain_timeout_ms);
     return true;
 }
 
-void runRestartPipeline(GoingDarkRequest request) {
-    if (!ackAndDrain(request, "restart accepted", HeapwatchShutdownAction::Restart)) {
+void runRestartPipeline(CommandedOfflineRequest request) {
+    if (!publishCommandAckThenWaitUntilEspMqttOutboxEmpty(request, "restart accepted", HeapwatchShutdownAction::SHUTDOWN_RESTART)) {
         return;
     }
 
-    // Dispatcher reboots once the outbox is empty (Restart action).
+    // Dispatcher reboots once the outbox is empty (SHUTDOWN_RESTART action).
     g_active = false;
 }
 
-void runWifiReconnectPipeline(GoingDarkRequest request) {
-    if (!ackAndDrain(request, "wifi reconnect accepted", HeapwatchShutdownAction::SleepHandoff)) {
+void runWifiReconnectPipeline(CommandedOfflineRequest request) {
+    if (!publishCommandAckThenWaitUntilEspMqttOutboxEmpty(request, "wifi reconnect accepted", HeapwatchShutdownAction::SHUTDOWN_CONTINUE_WITHOUT_REBOOT)) {
         return;
     }
 
@@ -143,7 +143,7 @@ void runWifiReconnectPipeline(GoingDarkRequest request) {
     ESP_LOGI(TAG, "Wi-Fi reconnect pipeline complete");
 }
 
-void runSleepPipeline(GoingDarkRequest request) {
+void runSleepPipeline(CommandedOfflineRequest request) {
     const bool hooks_ok =
         request.sleep_kind == SleepKind::Light ? Heapwatch::DeviceCommand::SleepHooks::runBeforeLightSleepHooks()
                                                : Heapwatch::DeviceCommand::SleepHooks::runBeforeDeepSleepHooks();
@@ -152,7 +152,7 @@ void runSleepPipeline(GoingDarkRequest request) {
         return;
     }
 
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
     if (request.sleep_kind == SleepKind::Light) {
         connector.queueEvent(HEAPWATCH_EVENT_ENTERING_LIGHT_SLEEP);
     } else {
@@ -164,7 +164,7 @@ void runSleepPipeline(GoingDarkRequest request) {
 
     const char* ack_message =
         request.sleep_kind == SleepKind::Light ? "light sleep accepted" : "deep sleep accepted";
-    if (!ackAndDrain(request, ack_message, HeapwatchShutdownAction::SleepHandoff)) {
+    if (!publishCommandAckThenWaitUntilEspMqttOutboxEmpty(request, ack_message, HeapwatchShutdownAction::SHUTDOWN_CONTINUE_WITHOUT_REBOOT)) {
         return;
     }
 
@@ -191,8 +191,8 @@ void runSleepPipeline(GoingDarkRequest request) {
     esp_deep_sleep_start();
 }
 
-void runShutdownPipeline(GoingDarkRequest request) {
-    if (!ackAndDrain(request, "shutdown accepted", HeapwatchShutdownAction::SleepHandoff)) {
+void runShutdownPipeline(CommandedOfflineRequest request) {
+    if (!publishCommandAckThenWaitUntilEspMqttOutboxEmpty(request, "shutdown accepted", HeapwatchShutdownAction::SHUTDOWN_CONTINUE_WITHOUT_REBOOT)) {
         return;
     }
 
@@ -201,8 +201,8 @@ void runShutdownPipeline(GoingDarkRequest request) {
     esp_deep_sleep_start();
 }
 
-void goingDarkTask(void* /*arg*/) {
-    GoingDarkRequest request = {};
+void taskCommandedOffline(void* /*arg*/) {
+    CommandedOfflineRequest request = {};
     while (true) {
         if (xQueueReceive(g_request_queue, &request, portMAX_DELAY) != pdTRUE) {
             continue;
@@ -240,14 +240,14 @@ void init() {
         return;
     }
 
-    g_request_queue = xQueueCreate(1, sizeof(GoingDarkRequest));
+    g_request_queue = xQueueCreate(1, sizeof(CommandedOfflineRequest));
     if (g_request_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create request queue");
         return;
     }
 
     g_task_exited = false;
-    heapwatch_task_create(goingDarkTask, "hw_going_dark", HEAPWATCH_GOING_DARK_TASK_STACK_BYTES, nullptr,
+    heapwatch_task_create(taskCommandedOffline, "hw_offline", HEAPWATCH_OFFLINE_TASK_STACK_BYTES, nullptr,
                           tskIDLE_PRIORITY + 2, nullptr);
 }
 
@@ -256,7 +256,7 @@ void shutdown() {
         return;
     }
 
-    GoingDarkRequest request = {};
+    CommandedOfflineRequest request = {};
     request.kind = RequestKind::Stop;
     (void)xQueueSend(g_request_queue, &request, pdMS_TO_TICKS(200));
 
@@ -265,7 +265,7 @@ void shutdown() {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     if (!g_task_exited) {
-        ESP_LOGE(TAG, "hw_going_dark did not stop in time — leaving it running");
+        ESP_LOGE(TAG, "hw_offline did not stop in time — leaving it running");
         return;
     }
 
@@ -276,7 +276,7 @@ void shutdown() {
 
 bool isActive() { return g_active; }
 
-bool scheduleRequest(const GoingDarkRequest& request) {
+bool scheduleRequest(const CommandedOfflineRequest& request) {
     if (g_request_queue == nullptr) {
         return false;
     }
@@ -298,7 +298,7 @@ bool scheduleRestart(const char* suffix, const char* command_id) {
         return false;
     }
 
-    GoingDarkRequest request = {};
+    CommandedOfflineRequest request = {};
     snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
     snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
     request.kind = RequestKind::Restart;
@@ -311,7 +311,7 @@ bool scheduleShutdown(const char* suffix, const char* command_id) {
         return false;
     }
 
-    GoingDarkRequest request = {};
+    CommandedOfflineRequest request = {};
     snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
     snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
     request.kind = RequestKind::Shutdown;
@@ -324,7 +324,7 @@ bool scheduleSleep(const char* suffix, const char* command_id, SleepKind kind, u
         return false;
     }
 
-    GoingDarkRequest request = {};
+    CommandedOfflineRequest request = {};
     snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
     snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
     request.kind = RequestKind::Sleep;
@@ -339,7 +339,7 @@ bool scheduleWifiReconnect(const char* suffix, const char* command_id, uint32_t 
         return false;
     }
 
-    GoingDarkRequest request = {};
+    CommandedOfflineRequest request = {};
     snprintf(request.suffix, sizeof(request.suffix), "%s", suffix);
     snprintf(request.command_id, sizeof(request.command_id), "%s", command_id);
     request.kind = RequestKind::WifiReconnect;
@@ -348,4 +348,4 @@ bool scheduleWifiReconnect(const char* suffix, const char* command_id, uint32_t 
     return scheduleRequest(request);
 }
 
-}  // namespace Heapwatch::DeviceCommand::GoingDark
+}  // namespace Heapwatch::DeviceCommand::CommandedOffline

@@ -15,15 +15,15 @@ namespace {
 
 const heapwatch_ble_delegate_vtable_t* g_delegate_vtable = nullptr;
 
-ScanPeerCallback g_scan_peer_cb = nullptr;
+ScannedBleDeviceCallback g_scan_peer_cb = nullptr;
 ScanCompleteCallback g_scan_done_cb = nullptr;
 void* g_scan_ctx = nullptr;
 
-void delegateScanPeer(const char* peer_addr, int8_t rssi, const char* name, void* /*ctx*/) {
+void delegateScannedBleDevice(const char* peer_addr, int8_t rssi, const char* name, void* /*ctx*/) {
     if (g_scan_peer_cb == nullptr) {
         return;
     }
-    ScanPeer peer = {};
+    ScannedBleDevice peer = {};
     if (peer_addr != nullptr) {
         snprintf(peer.addr, sizeof(peer.addr), "%s", peer_addr);
     }
@@ -43,7 +43,7 @@ void delegateScanDone(bool success, const char* message, void* /*ctx*/) {
     g_scan_ctx = nullptr;
 }
 
-class DelegateBleProvider final : public IRadioBleProvider {
+class HostAppBleProvider final : public IRadioBleProvider {
 public:
     bool initialize() override { return true; }
     bool isAvailable() const override { return g_delegate_vtable != nullptr; }
@@ -65,7 +65,7 @@ public:
         }
     }
 
-    bool startScan(bool active, uint32_t duration_seconds, ScanPeerCallback on_peer,
+    bool startScan(bool active, uint32_t duration_seconds, ScannedBleDeviceCallback on_peer,
                    ScanCompleteCallback on_complete, void* ctx) override {
         if (g_delegate_vtable == nullptr || g_delegate_vtable->start_scan == nullptr) {
             if (on_complete != nullptr) {
@@ -77,7 +77,7 @@ public:
         g_scan_peer_cb = on_peer;
         g_scan_done_cb = on_complete;
         g_scan_ctx = ctx;
-        return g_delegate_vtable->start_scan(active, duration_seconds, delegateScanPeer,
+        return g_delegate_vtable->start_scan(active, duration_seconds, delegateScannedBleDevice,
                                              delegateScanDone, nullptr);
     }
 
@@ -99,7 +99,7 @@ public:
 
 IRadioBleProvider& getBleProvider() {
     if (g_delegate_vtable != nullptr) {
-        static DelegateBleProvider delegate_provider;
+        static HostAppBleProvider delegate_provider;
         return delegate_provider;
     }
 #if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING && CONFIG_BT_ENABLED

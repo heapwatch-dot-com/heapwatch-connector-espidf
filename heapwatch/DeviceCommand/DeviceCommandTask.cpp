@@ -1,4 +1,4 @@
-#include "heapwatch/DeviceCommand/CommandWorker.h"
+#include "heapwatch/DeviceCommand/DeviceCommandTask.h"
 
 #include <cstdio>
 #include <cstring>
@@ -11,8 +11,8 @@
 
 #include "heapwatch/Enrollment/CredentialRotation/DeviceCredentialRotationClient.h"
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 #include "heapwatch/Mqtt/HeapwatchDispatcher.h"
 #include "heapwatch_endpoints.h"
@@ -26,7 +26,7 @@ constexpr char TAG[] = "HwCmd";
 constexpr uint32_t WORKER_STACK_BYTES = 10240;
 
 QueueHandle_t commandQueue() {
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     return ws != nullptr ? ws->command_inbound_queue : nullptr;
 }
 
@@ -59,14 +59,14 @@ void executeCredentialRotation() {
         return;
     }
 
-    HeapwatchConnector::getInstance().setMqttPassword(updated.mqtt_password);
+    MqttTelemetryClient::getInstance().setMqttPassword(updated.mqtt_password);
     char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
     snprintf(auth_header, sizeof(auth_header), "Bearer %s", updated.device_api_key);
-    HeapwatchConnector::getInstance().setRestApiAuthToken(auth_header);
+    MqttTelemetryClient::getInstance().setRestApiAuthToken(auth_header);
     heapwatch_dispatcher_request_reconnect();
 }
 
-void commandWorkerTask(void* /*arg*/) {
+void taskHandleDeviceCommands(void* /*arg*/) {
     while (true) {
         CommandInboundMessage msg = {};
         if (xQueueReceive(commandQueue(), &msg, portMAX_DELAY) != pdTRUE) {
@@ -90,24 +90,24 @@ void commandWorkerTask(void* /*arg*/) {
 
 }  // namespace
 
-void initCommandWorker() {
+void initCommandTask() {
     if (!g_worker_exited) {
         return;
     }
     if (commandQueue() == nullptr) {
-        ESP_LOGE(TAG, "Command inbound queue missing (working set not inited)");
+        ESP_LOGE(TAG, "Command inbound queue missing (memory block not inited)");
         return;
     }
 
     g_worker_exited = false;
-    if (heapwatch_task_create_dram(commandWorkerTask, "hw_command", WORKER_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
+    if (heapwatch_task_create_dram(taskHandleDeviceCommands, "hw_command", WORKER_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
                                   nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hw_command task");
         g_worker_exited = true;
     }
 }
 
-void shutdownCommandWorker() {
+void shutdownCommandTask() {
     QueueHandle_t queue = commandQueue();
     if (queue == nullptr || g_worker_exited) {
         return;
@@ -127,7 +127,7 @@ void shutdownCommandWorker() {
     }
 }
 
-bool commandWorkerExited() { return g_worker_exited; }
+bool commandTaskExited() { return g_worker_exited; }
 
 bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload, size_t payload_len,
                         int32_t mqtt_retain) {

@@ -14,11 +14,11 @@
 //
 
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Network/DeviceNetworkReporter.h"
 #include "heapwatch/Radio/BluetoothLe/BluetoothReporter.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
 
 #include <cstdarg>
@@ -357,7 +357,7 @@ void ingestLogTextChunk(const char* text) {
     taskEXIT_CRITICAL(&g_log_assembly_lock);
 }
 
-int mqttLogVprintfHook(const char* fmt, va_list args) {
+int captureEspLogLineForForwarding(const char* fmt, va_list args) {
     va_list copy_for_stdout;
     va_copy(copy_for_stdout, args);
     const int printed =
@@ -405,13 +405,13 @@ void logForwardTask(void* arg) {
 
             if (Heapwatch::StreamIngress::isCaptureActive()) {
                 char json[HEAPWATCH_SMALL_PAYLOAD_SIZE] = {};
-                if (HeapwatchConnector::getInstance().formatLogJsonLine(
+                if (MqttTelemetryClient::getInstance().formatLogJsonLine(
                         severity, sanitized_line, &context, json, sizeof(json))) {
                     Heapwatch::StreamIngress::enqueueLogJson(json);
                 }
             } else {
                 const bool queued =
-                    HeapwatchConnector::getInstance().queueLog(severity, sanitized_line, &context);
+                    MqttTelemetryClient::getInstance().queueLog(severity, sanitized_line, &context);
                 if (!queued) {
                     g_log_mqtt_dropped_total++;
                 }
@@ -643,7 +643,7 @@ void syncTimeIfManaged() {
 
 void installLogRelayHookIfEnabled() {
 #if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
-    g_default_log_vprintf = esp_log_set_vprintf(mqttLogVprintfHook);
+    g_default_log_vprintf = esp_log_set_vprintf(captureEspLogLineForForwarding);
 #endif
 }
 

@@ -22,7 +22,7 @@ void publishFullSync();
 void markTopologyDirty();
 
 /** Returns true once per mark — clears the flag. */
-bool consumeTopologyDirty();
+bool takeAndClearNetworkTopologyChangedFlag();
 
 /**
  * Build `{"netifs":[...]}` into out (including braces). Returns false on overflow.

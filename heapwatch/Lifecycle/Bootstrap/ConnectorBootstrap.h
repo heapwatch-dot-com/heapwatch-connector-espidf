@@ -19,7 +19,7 @@
 #include <cstdint>
 
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 
 // Boilerplate a client integration would otherwise write by hand: Wi-Fi bring-up, SNTP time
 // sync, boot-credential resolution (NVS provisioned credentials → device enrollment), and the

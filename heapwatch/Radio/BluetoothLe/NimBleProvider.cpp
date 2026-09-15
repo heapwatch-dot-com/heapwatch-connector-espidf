@@ -33,7 +33,7 @@ char g_mac[BLE_ADDR_LEN] = {};
 
 struct ScanSession {
     bool active = false;
-    ScanPeerCallback on_peer = nullptr;
+    ScannedBleDeviceCallback on_peer = nullptr;
     ScanCompleteCallback on_complete = nullptr;
     void* ctx = nullptr;
 };
@@ -119,7 +119,7 @@ void NimBleProvider::fillSnapshot(RadioBleSnapshot& out) const {
     snprintf(out.mac, sizeof(out.mac), "%s", g_mac);
 }
 
-bool NimBleProvider::startScan(bool active, uint32_t duration_seconds, ScanPeerCallback on_peer,
+bool NimBleProvider::startScan(bool active, uint32_t duration_seconds, ScannedBleDeviceCallback on_peer,
                                ScanCompleteCallback on_complete, void* ctx) {
     if (!g_host_synced) {
         if (on_complete != nullptr) {
@@ -191,7 +191,7 @@ void NimBleProvider::onGapEvent(uint8_t event_type, void* event_ptr) {
             if (!g_scan.active || g_scan.on_peer == nullptr) {
                 break;
             }
-            ScanPeer peer = {};
+            ScannedBleDevice peer = {};
             format_addr(event->disc.addr.val, peer.addr, sizeof(peer.addr));
             peer.rssi = event->disc.rssi;
             if (event->disc.length_data > 0 && event->disc.data != nullptr) {
@@ -242,7 +242,7 @@ bool NimBleProvider::isAvailable() const { return false; }
 void NimBleProvider::fillSnapshot(RadioBleSnapshot& out) const {
     std::memset(&out, 0, sizeof(out));
 }
-bool NimBleProvider::startScan(bool, uint32_t, ScanPeerCallback, ScanCompleteCallback on_complete,
+bool NimBleProvider::startScan(bool, uint32_t, ScannedBleDeviceCallback, ScanCompleteCallback on_complete,
                                void* ctx) {
     if (on_complete != nullptr) {
         on_complete(false, "bluetooth_disabled", ctx);

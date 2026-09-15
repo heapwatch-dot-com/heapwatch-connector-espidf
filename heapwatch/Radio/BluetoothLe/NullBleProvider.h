@@ -12,7 +12,7 @@ public:
     bool initialize() override;
     bool isAvailable() const override;
     void fillSnapshot(RadioBleSnapshot& out) const override;
-    bool startScan(bool active, uint32_t duration_seconds, ScanPeerCallback on_peer,
+    bool startScan(bool active, uint32_t duration_seconds, ScannedBleDeviceCallback on_peer,
                    ScanCompleteCallback on_complete, void* ctx) override;
     void stopScan() override;
     bool isScanning() const override;

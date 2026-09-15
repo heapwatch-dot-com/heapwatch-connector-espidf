@@ -21,8 +21,8 @@
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
 #include "heapwatch_config.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 #include "heapwatch/Helpers/Tls/Tls.h"
 
@@ -62,11 +62,11 @@ void log_phase(int64_t session_id, const char* phase, const char* detail = nullp
 }
 
 void emit_event(int32_t event_type_id) {
-    HeapwatchConnector::getInstance().queueEvent(event_type_id);
+    MqttTelemetryClient::getInstance().queueEvent(event_type_id);
 }
 
 void emit_progress(int64_t session_id, const char* phase, int64_t bytes, int64_t total) {
-    HeapwatchConnector::getInstance().queueOtaProgress(session_id, phase, bytes, total);
+    MqttTelemetryClient::getInstance().queueOtaProgress(session_id, phase, bytes, total);
 }
 
 bool hex_nibble(char c, uint8_t* out) {
@@ -685,7 +685,7 @@ bool handle_confirm(const char* command_id) {
     emit_event(HEAPWATCH_EVENT_FW_UPDATE_CONFIRMED);
     Heapwatch::DeviceCommand::publishCommandResponse("ota/confirm", command_id, true, "",
                                                       "Firmware permanently confirmed");
-    HeapwatchConnector::getInstance().queueSpecs();
+    MqttTelemetryClient::getInstance().queueSpecs();
     return true;
 }
 
@@ -761,7 +761,7 @@ bool handle_rollback(const char* command_id) {
 }  // namespace
 
 void init() {
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws != nullptr) {
         g_job = &ws->ota_job;
         *g_job = OtaJob{};

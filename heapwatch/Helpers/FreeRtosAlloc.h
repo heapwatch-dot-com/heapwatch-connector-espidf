@@ -94,7 +94,7 @@ inline void heapwatch_data_free(void* p) {
 }
 
 /**
- * Static queue whose storage and control block already live in the working set.
+ * Static queue whose storage and control block already live in the memory block.
  * Always vQueueDelete (never WithCaps) — the blob owns the memory.
  * Abort if create fails.
  */

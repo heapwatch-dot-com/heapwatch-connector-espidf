@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-15
+
+### Changed
+- Commanded-offline FreeRTOS task is `hw_offline` (was `hw_going_dark`). Host task snapshots and CPU charts show the new name.
+- **BREAKING (host sdkconfig):** `CONFIG_HEAPWATCH_OFFLINE_TASK_STACK_BYTES` replaces `CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES` (same default 10 KiB). Re-pin in host `sdkconfig` / `sdkconfig.defaults`.
+- Internal clear-naming pass: clearer C++ identifiers and PascalCase paths (`MqttTelemetryClient`, `ConnectorMemoryBlock`, `DeviceCommandTask`, `CommandedOffline`, `DeviceFilesystemOperations`, `OncePerBootTelemetry`, `PublicCApi`, `IngressTimestamps`, `FreeRtosAlloc`). Public `heapwatch.h` is unchanged.
+
 ## [0.17.1] - 2026-09-15
 
 ### Fixed

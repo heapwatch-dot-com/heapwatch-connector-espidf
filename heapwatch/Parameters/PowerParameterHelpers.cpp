@@ -13,12 +13,12 @@
 // For licensing inquiries, please contact: info@heapwatch.com
 //
 
-#include "heapwatch/Parameters/ParameterAPI.h"
+#include "heapwatch/Parameters/PowerParameterHelpers.h"
 
 #include <cstdio>
 #include <cstring>
 
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "heapwatch/Helpers/DynamicParameterSegment.h"
 
 namespace Heapwatch::Parameters {
@@ -44,7 +44,7 @@ void updatePowerMv(const char* source_name, int64_t mv) {
     if (slug[0] == '\0') {
         return;
     }
-    HeapwatchConnector::getInstance().updateParameterInt(slug, mv);
+    MqttTelemetryClient::getInstance().updateParameterInt(slug, mv);
 }
 
 void updatePowerMvRanged(const char* source_name, int64_t mv, int64_t min_mv, int64_t max_mv) {
@@ -53,7 +53,7 @@ void updatePowerMvRanged(const char* source_name, int64_t mv, int64_t min_mv, in
     if (slug[0] == '\0') {
         return;
     }
-    HeapwatchConnector::getInstance().updateParameterIntRanged(slug, mv, min_mv, max_mv);
+    MqttTelemetryClient::getInstance().updateParameterIntRanged(slug, mv, min_mv, max_mv);
 }
 
 void updatePowerPercent(const char* source_name, double percent) {
@@ -62,7 +62,7 @@ void updatePowerPercent(const char* source_name, double percent) {
     if (slug[0] == '\0') {
         return;
     }
-    HeapwatchConnector::getInstance().updateParameterDouble(slug, percent);
+    MqttTelemetryClient::getInstance().updateParameterDouble(slug, percent);
 }
 
 void updatePowerState(const char* source_name, heapwatch_power_state_t state) {
@@ -71,7 +71,7 @@ void updatePowerState(const char* source_name, heapwatch_power_state_t state) {
     if (slug[0] == '\0') {
         return;
     }
-    HeapwatchConnector::getInstance().updateParameterInt(slug, static_cast<int64_t>(state));
+    MqttTelemetryClient::getInstance().updateParameterInt(slug, static_cast<int64_t>(state));
 }
 
 }  // namespace Heapwatch::Parameters

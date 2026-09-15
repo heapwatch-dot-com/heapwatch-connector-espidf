@@ -13,8 +13,8 @@
 #include "esp_tls.h"
 #include "sdkconfig.h"
 
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 #include "heapwatch/Helpers/Tls/Tls.h"
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
@@ -76,9 +76,9 @@ uint8_t* g_inbound_buf = nullptr;
 
 void bindStreamWorkingSet() {
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
-    static_assert(sizeof(OutboundQueued) == sizeof(Heapwatch::Helpers::HeapwatchWorkingSet::StreamOutboundQueued),
-                  "stream outbound queue item size must match the working set");
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    static_assert(sizeof(OutboundQueued) == sizeof(Heapwatch::Helpers::ConnectorMemoryBlock::StreamOutboundQueued),
+                  "stream outbound queue item size must match the memory block");
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws == nullptr) {
         return;
     }

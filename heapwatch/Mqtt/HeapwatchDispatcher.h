@@ -54,16 +54,16 @@ extern volatile bool g_mqtt_connected;
 extern volatile bool g_mqtt_shutting_down;
 
 enum class HeapwatchShutdownAction : uint8_t {
-    Restart = 0,
-    SleepHandoff = 1,
+    SHUTDOWN_RESTART = 0,
+    SHUTDOWN_CONTINUE_WITHOUT_REBOOT = 1,
 };
 
 bool heapwatch_dispatcher_is_shutting_down(void);
 
 /**
  * Arm shutdown: block new connector publishes. On outbox drain:
- * - Restart → esp_restart()
- * - SleepHandoff → going-dark task continues (no reboot)
+ * - SHUTDOWN_RESTART → esp_restart()
+ * - SHUTDOWN_CONTINUE_WITHOUT_REBOOT → commanded-offline task continues (no reboot)
  */
 void heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction action);
 
@@ -129,7 +129,7 @@ bool heapwatch_dispatcher_publish_command_response(const char* suffix, const cha
 /**
  * @brief STAT1: whether the MQTT client currently reports itself connected.
  *
- * Read-only snapshot of g_mqtt_connected for HeapwatchConnector's synchronous
+ * Read-only snapshot of g_mqtt_connected for MqttTelemetryClient's synchronous
  * status API (heapwatch_get_status()) — kept as a function rather than
  * exposing the volatile directly outside this module.
  */

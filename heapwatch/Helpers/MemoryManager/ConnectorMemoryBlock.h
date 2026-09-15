@@ -20,9 +20,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#include "heapwatch/DeviceCommand/CommandWorker.h"
+#include "heapwatch/DeviceCommand/DeviceCommandTask.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "heapwatch/Metrics/MetricsCollector.h"
 #include "heapwatch/Parameters/Store/ParameterStore.h"
 #include "heapwatch/Fs/Volumes/FsVolumeManager.h"
@@ -38,7 +38,7 @@
 
 namespace Heapwatch::Helpers {
 
-struct PublishScratch {
+struct MqttPayloadBuildBuffers {
     TinyMqttMessage tiny;
 #if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION || CONFIG_HEAPWATCH_ENABLE_OTA
     SmallMqttMessage small;
@@ -55,11 +55,11 @@ struct PublishScratch {
 };
 
 /**
- * Single typed working set. One heap_caps/calloc of sizeof(*this) at init.
+ * Single typed memory block. One heap_caps/calloc of sizeof(*this) at init.
  * Queue/semaphore storage is in this struct; handles are filled by Heapwatch::Helpers::MemoryManager::init().
  */
-struct HeapwatchWorkingSet {
-    PublishScratch publish;
+struct ConnectorMemoryBlock {
+    MqttPayloadBuildBuffers mqtt_payload_build_buffers;
 
     char metrics_payload[HEAPWATCH_MAX_PAYLOAD_SIZE];
     MqttMessage metrics_enqueue;
@@ -83,9 +83,9 @@ struct HeapwatchWorkingSet {
     QueueHandle_t large_queue;
 
     StaticSemaphore_t publish_mutex_buf;
-    StaticSemaphore_t outbound_sem_buf;
+    StaticSemaphore_t mqtt_queue_work_sem_buf;
     SemaphoreHandle_t publish_mutex;
-    SemaphoreHandle_t outbound_sem;
+    SemaphoreHandle_t mqtt_queue_work_sem;
 
     alignas(8) uint8_t command_inbound_storage[HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH *
                                                sizeof(Heapwatch::DeviceCommand::CommandInboundMessage)];
@@ -124,8 +124,8 @@ struct HeapwatchWorkingSet {
     Heapwatch::Ota::OtaJob ota_job;
 #endif
 
-    alignas(8) uint8_t scratch[HEAPWATCH_MEM_SCRATCH_BYTES];
-    size_t scratch_used;
+    alignas(8) uint8_t temporary_arena[HEAPWATCH_MEM_SCRATCH_BYTES];
+    size_t temporary_arena_used;
 };
 
 }  // namespace Heapwatch::Helpers

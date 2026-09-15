@@ -26,7 +26,7 @@
  * anywhere in the connector or client app code (metrics collector, POW1
  * power API, CELL1 cellular API, ...) just update the current in-place value
  * for a slug. `buildFlushPayload()` is called once per telemetry round by
- * HeapwatchConnector::flushParameters() and serializes the *entire* current
+ * MqttTelemetryClient::flushParameters() and serializes the *entire* current
  * map as one flat batched JSON object -- this is what the backend's
  * ProcessParameter job actually expects on the wire (one publish = one
  * `{slug: value, ...}` object, not one message per value), and it delivers
@@ -42,7 +42,7 @@ namespace Heapwatch::Parameters::Store {
 
 constexpr size_t MAX_SLUG_LEN = 48;
 
-/** In-RAM parameter row. Lives in the working set, not .bss. */
+/** In-RAM parameter row. Lives in the memory block, not .bss. */
 struct Slot {
     char slug[MAX_SLUG_LEN] = {0};
     int64_t int_value = 0;
@@ -56,7 +56,7 @@ struct Slot {
 };
 
 /** Drop the working-set pointer after MemoryManager::deinit(). */
-void unbindWorkingSet();
+void unbindMemoryBlock();
 
 /** Sets/overwrites a slug's live integer value. No bounds. */
 void updateInt(const char* slug, int64_t value);

@@ -40,29 +40,31 @@ struct HostMapping {
 };
 
 /** Drop working-set pointers after MemoryManager::deinit(). */
-void unbindWorkingSet();
+void unbindMemoryBlock();
 
 /**
  * Map a flash partition label to a VFS path. Safe before or after heapwatch_initialize().
- * After mountAll(), the volume is adopted immediately (or on the next fs command if the
- * path is not a VFS root yet). Does not remount a connector-owned volume to a new path.
+ * After mountAll(), an already-mounted volume is registered immediately (or on the next fs
+ * command if the path is not a VFS root yet). Does not remount a connector-owned volume to a
+ * new path.
  */
 esp_err_t registerVolume(const char* partition_label, const char* mount_path);
 
 /**
  * Host-mounted SD card at an arbitrary VFS path. Safe before or after heapwatch_initialize().
- * Read-only adoption: the connector never touches the bus and never unmounts the card.
+ * Read-only registration of an already-mounted card: the connector never touches the bus and
+ * never unmounts the card.
  */
 esp_err_t registerSdVolume(const char* label, const char* mount_path);
 
-/** Scan flash FS partitions; auto-mount or adopt already-mounted volumes. */
+/** Scan flash FS partitions; auto-mount or register already-mounted volumes. */
 void mountAll();
 
 /**
- * Adopt registered mappings whose VFS roots appeared after mountAll() (host mounted later).
+ * Bind registered mappings whose VFS roots appeared after mountAll() (host mounted later).
  * Safe to call from fs command handlers.
  */
-void tryAdoptPending();
+void tryBindRegisteredVolumesNowMounted();
 
 /** Unmount only connector-owned volumes. Host mappings survive. */
 void unmountConnectorOwned();

@@ -13,7 +13,7 @@
 // For licensing inquiries, please contact: info@heapwatch.com
 //
 
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -38,12 +38,12 @@
 #include "heapwatch/Network/DeviceNetworkReporter.h"
 #include "heapwatch/Radio/BluetoothLe/BluetoothReporter.h"
 #include "heapwatch/Settings/ConnectorSettings.h"
-#include "heapwatch/DeviceCommand/CommandWorker.h"
-#include "heapwatch/DeviceCommand/GoingDark/GoingDarkPipeline.h"
+#include "heapwatch/DeviceCommand/DeviceCommandTask.h"
+#include "heapwatch/DeviceCommand/CommandedOffline/CommandedOfflinePipeline.h"
 #include "heapwatch/DeviceCommand/CommandCatalog.h"
 #include "heapwatch/DeviceCommand/ConfigCatalog.h"
 #include "heapwatch/DeviceCommand/ConfigSnapshot.h"
-#include "heapwatch/Lifecycle/BootSync/ConnectorBootSync.h"
+#include "heapwatch/Lifecycle/OncePerBootTelemetry/OncePerBootTelemetry.h"
 #include "heapwatch/Enrollment/ClaimedIdentitiesBootSync.h"
 #include "heapwatch/Fs/DeviceFsCommandHandler.h"
 #include "heapwatch/Fs/Volumes/FsVolumeManager.h"
@@ -52,8 +52,8 @@
 #endif
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
 #include "heapwatch/Parameters/Store/ParameterStore.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 
 namespace {
@@ -69,7 +69,7 @@ QueueHandle_t g_large_queue = nullptr;
 QueueHandle_t g_coredump_queue = nullptr;
 #endif
 SemaphoreHandle_t g_publish_mutex = nullptr;
-SemaphoreHandle_t g_outbound_sem = nullptr;
+SemaphoreHandle_t g_mqtt_queue_work_sem = nullptr;
 bool g_initialized = false;
 bool g_infrastructure_ready = false;
 volatile bool g_dispatcher_running = false;
@@ -95,28 +95,28 @@ char g_coredump_build_identifier[128] = {0};
 uint32_t g_boot_cycle = 0;
 uint32_t g_crash_boot_cycle = 0;
 
-Heapwatch::Helpers::PublishScratch* g_scratch = nullptr;
+Heapwatch::Helpers::MqttPayloadBuildBuffers* g_mqtt_payload_build_buffers = nullptr;
 
-void bind_working_set_aliases() {
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
-    g_scratch = &ws->publish;
+void bind_memory_block_aliases() {
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
+    g_mqtt_payload_build_buffers = &ws->mqtt_payload_build_buffers;
     g_tiny_queue = ws->tiny_queue;
     g_small_queue = ws->small_queue;
     g_large_queue = ws->large_queue;
     g_publish_mutex = ws->publish_mutex;
-    g_outbound_sem = ws->outbound_sem;
+    g_mqtt_queue_work_sem = ws->mqtt_queue_work_sem;
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     g_coredump_queue = ws->coredump_queue;
 #endif
 }
 
-void clear_working_set_aliases() {
-    g_scratch = nullptr;
+void clear_memory_block_aliases() {
+    g_mqtt_payload_build_buffers = nullptr;
     g_tiny_queue = nullptr;
     g_small_queue = nullptr;
     g_large_queue = nullptr;
     g_publish_mutex = nullptr;
-    g_outbound_sem = nullptr;
+    g_mqtt_queue_work_sem = nullptr;
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     g_coredump_queue = nullptr;
 #endif
@@ -152,8 +152,8 @@ void initConnectorSubsystemsOnce() {
 
     Heapwatch::Fs::Volumes::mountAll();
     Heapwatch::Settings::init();
-    Heapwatch::DeviceCommand::GoingDark::init();
-    Heapwatch::DeviceCommand::initCommandWorker();
+    Heapwatch::DeviceCommand::CommandedOffline::init();
+    Heapwatch::DeviceCommand::initCommandTask();
 #if CONFIG_HEAPWATCH_ENABLE_OTA
     Heapwatch::Ota::init();
 #endif
@@ -178,29 +178,29 @@ void heapwatch_mark_dispatcher_task_exited() { g_dispatcher_exited = true; }
 
 void heapwatch_mark_collector_task_exited() { g_collector_exited = true; }
 
-HeapwatchConnector& HeapwatchConnector::getInstance() {
-    static HeapwatchConnector instance;
+MqttTelemetryClient& MqttTelemetryClient::getInstance() {
+    static MqttTelemetryClient instance;
     return instance;
 }
 
-bool HeapwatchConnector::ensureInfrastructure() {
+bool MqttTelemetryClient::createMqttQueuesAndMutexes() {
     if (g_infrastructure_ready) {
         return true;
     }
 
     Heapwatch::Helpers::MemoryManager::init();
-    bind_working_set_aliases();
+    bind_memory_block_aliases();
     g_infrastructure_ready = true;
     return true;
 }
 
-bool HeapwatchConnector::isInfrastructureReady() const { return g_infrastructure_ready; }
+bool MqttTelemetryClient::isInfrastructureReady() const { return g_infrastructure_ready; }
 
-bool HeapwatchConnector::activateWithBroker(const char* broker_url) {
+bool MqttTelemetryClient::activateWithBroker(const char* broker_url) {
     if (g_initialized) {
         return true;
     }
-    if (!g_infrastructure_ready && !ensureInfrastructure()) {
+    if (!g_infrastructure_ready && !createMqttQueuesAndMutexes()) {
         return false;
     }
 
@@ -219,7 +219,7 @@ bool HeapwatchConnector::activateWithBroker(const char* broker_url) {
     return true;
 }
 
-bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_url) {
+bool MqttTelemetryClient::initialize(const char* device_uid, const char* broker_url) {
     if (g_initialized) {
         return true;
     }
@@ -231,11 +231,11 @@ bool HeapwatchConnector::initialize(const char* device_uid, const char* broker_u
     return activateWithBroker(broker_url);
 }
 
-void HeapwatchConnector::deinitialize() {
+void MqttTelemetryClient::deinitialize() {
     g_collector_running = false;
     g_dispatcher_running = false;
-    if (g_outbound_sem != nullptr) {
-        (void)xSemaphoreGive(g_outbound_sem);
+    if (g_mqtt_queue_work_sem != nullptr) {
+        (void)xSemaphoreGive(g_mqtt_queue_work_sem);
     }
     const bool dispatcher_gone = waitExited(&g_dispatcher_exited, 5000);
     const bool collector_gone = waitExited(&g_collector_exited, 5000);
@@ -243,8 +243,8 @@ void HeapwatchConnector::deinitialize() {
     g_collector_task = nullptr;
 
     heapwatch_dispatcher_shutdown();
-    Heapwatch::DeviceCommand::GoingDark::shutdown();
-    Heapwatch::DeviceCommand::shutdownCommandWorker();
+    Heapwatch::DeviceCommand::CommandedOffline::shutdown();
+    Heapwatch::DeviceCommand::shutdownCommandTask();
 #if CONFIG_HEAPWATCH_ENABLE_OTA
     Heapwatch::Ota::shutdown();
 #endif
@@ -253,34 +253,34 @@ void HeapwatchConnector::deinitialize() {
     Heapwatch::DeviceCommand::resetCommandCatalogBootFlags();
     Heapwatch::DeviceCommand::resetConfigCatalogBootFlags();
     Heapwatch::DeviceCommand::resetConfigSnapshotBootFlags();
-    Heapwatch::Lifecycle::BootSync::resetBootStaticSync();
+    Heapwatch::Lifecycle::OncePerBootTelemetry::resetOncePerBootStaticTelemetry();
     Heapwatch::Enrollment::resetClaimedIdentitiesBootSync();
     g_subsystems_initialized = false;
 
-    // Freeing the working set while a producer/consumer is still alive would be a
+    // Freeing the memory block while a producer/consumer is still alive would be a
     // use-after-free, so keep it (and the ready flag, so a re-init reuses it
     // instead of leaking a second set) when a task overran its stop deadline.
-    const bool command_gone = Heapwatch::DeviceCommand::commandWorkerExited();
+    const bool command_gone = Heapwatch::DeviceCommand::commandTaskExited();
     const bool stream_gone = Heapwatch::StreamIngress::workerExited();
     if (dispatcher_gone && collector_gone && command_gone && stream_gone) {
-        Heapwatch::Parameters::Store::unbindWorkingSet();
-        Heapwatch::Fs::Volumes::unbindWorkingSet();
+        Heapwatch::Parameters::Store::unbindMemoryBlock();
+        Heapwatch::Fs::Volumes::unbindMemoryBlock();
         Heapwatch::Helpers::MemoryManager::deinit();
-        clear_working_set_aliases();
+        clear_memory_block_aliases();
         g_infrastructure_ready = false;
     } else {
         ESP_LOGE(TAG,
                  "hw_dispatcher/hw_metrics/hw_command/hw_streaming did not stop in time — "
-                 "keeping working set allocated");
+                 "keeping memory block allocated");
     }
 
     g_initialized = false;
     g_network_ready = false;
 }
 
-void HeapwatchConnector::setNetworkReady(bool ready) { g_network_ready = ready; }
+void MqttTelemetryClient::setNetworkReady(bool ready) { g_network_ready = ready; }
 
-void HeapwatchConnector::setMqttDeviceUid(const char* uid) {
+void MqttTelemetryClient::setMqttDeviceUid(const char* uid) {
     if (uid == nullptr) {
         g_device_uid[0] = '\0';
         return;
@@ -288,7 +288,7 @@ void HeapwatchConnector::setMqttDeviceUid(const char* uid) {
     snprintf(g_device_uid, sizeof(g_device_uid), "%s", uid);
 }
 
-void HeapwatchConnector::setTenantSlug(const char* slug) {
+void MqttTelemetryClient::setTenantSlug(const char* slug) {
     if (slug == nullptr) {
         g_tenant_slug[0] = '\0';
         return;
@@ -296,7 +296,7 @@ void HeapwatchConnector::setTenantSlug(const char* slug) {
     snprintf(g_tenant_slug, sizeof(g_tenant_slug), "%s", slug);
 }
 
-void HeapwatchConnector::setMqttPassword(const char* password) {
+void MqttTelemetryClient::setMqttPassword(const char* password) {
     if (password == nullptr) {
         g_broker_password[0] = '\0';
         return;
@@ -304,7 +304,7 @@ void HeapwatchConnector::setMqttPassword(const char* password) {
     snprintf(g_broker_password, sizeof(g_broker_password), "%s", password);
 }
 
-void HeapwatchConnector::setCoreDumpUploadUrl(const char* url) {
+void MqttTelemetryClient::setCoreDumpUploadUrl(const char* url) {
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     if (url == nullptr) {
         g_coredump_upload_url[0] = '\0';
@@ -316,7 +316,7 @@ void HeapwatchConnector::setCoreDumpUploadUrl(const char* url) {
 #endif
 }
 
-void HeapwatchConnector::setRestApiAuthToken(const char* token) {
+void MqttTelemetryClient::setRestApiAuthToken(const char* token) {
     if (token == nullptr) {
         g_coredump_auth_token[0] = '\0';
         return;
@@ -324,7 +324,7 @@ void HeapwatchConnector::setRestApiAuthToken(const char* token) {
     snprintf(g_coredump_auth_token, sizeof(g_coredump_auth_token), "%s", token);
 }
 
-void HeapwatchConnector::setCoreDumpBuildIdentifier(const char* build_identifier) {
+void MqttTelemetryClient::setCoreDumpBuildIdentifier(const char* build_identifier) {
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     if (build_identifier == nullptr) {
         g_coredump_build_identifier[0] = '\0';
@@ -337,7 +337,7 @@ void HeapwatchConnector::setCoreDumpBuildIdentifier(const char* build_identifier
 #endif
 }
 
-void HeapwatchConnector::setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
+void MqttTelemetryClient::setBootCycleContext(uint32_t boot_cycle, uint32_t crash_boot_cycle) {
     const bool changed = boot_cycle != g_boot_cycle || crash_boot_cycle != g_crash_boot_cycle;
     g_boot_cycle = boot_cycle;
     g_crash_boot_cycle = crash_boot_cycle;
@@ -389,7 +389,7 @@ static void json_escape_string(const char* input, char* output, size_t output_le
 }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 
-bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
+bool MqttTelemetryClient::formatLogJsonLine(HeapwatchConnectorSeverity severity,
                                            const char* message,
                                            const HeapwatchConnectorLogContext* context,
                                            char* out, size_t out_len) {
@@ -407,42 +407,42 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
-    snprintf(g_scratch->raw_log_line, sizeof(g_scratch->raw_log_line), "%s", message);
-    json_escape_string(g_scratch->raw_log_line, g_scratch->escaped_message,
-                       sizeof(g_scratch->escaped_message));
+    snprintf(g_mqtt_payload_build_buffers->raw_log_line, sizeof(g_mqtt_payload_build_buffers->raw_log_line), "%s", message);
+    json_escape_string(g_mqtt_payload_build_buffers->raw_log_line, g_mqtt_payload_build_buffers->escaped_message,
+                       sizeof(g_mqtt_payload_build_buffers->escaped_message));
 
-    g_scratch->escaped_task[0] = '\0';
-    g_scratch->escaped_tag[0] = '\0';
+    g_mqtt_payload_build_buffers->escaped_task[0] = '\0';
+    g_mqtt_payload_build_buffers->escaped_tag[0] = '\0';
     const bool has_task =
         context != nullptr && context->task != nullptr && context->task[0] != '\0';
     const bool has_tag = context != nullptr && context->tag != nullptr && context->tag[0] != '\0';
     const bool has_core = context != nullptr && context->core >= 0;
 
     if (has_task) {
-        json_escape_string(context->task, g_scratch->escaped_task, sizeof(g_scratch->escaped_task));
+        json_escape_string(context->task, g_mqtt_payload_build_buffers->escaped_task, sizeof(g_mqtt_payload_build_buffers->escaped_task));
     }
     if (has_tag) {
-        json_escape_string(context->tag, g_scratch->escaped_tag, sizeof(g_scratch->escaped_tag));
+        json_escape_string(context->tag, g_mqtt_payload_build_buffers->escaped_tag, sizeof(g_mqtt_payload_build_buffers->escaped_tag));
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    g_scratch->optional[0] = '\0';
+    g_mqtt_payload_build_buffers->optional[0] = '\0';
     size_t optional_json_len = 0;
     if (has_task) {
-        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
-                                      sizeof(g_scratch->optional) - optional_json_len, ",\"task\":\"%s\"",
-                                      g_scratch->escaped_task);
+        optional_json_len += snprintf(g_mqtt_payload_build_buffers->optional + optional_json_len,
+                                      sizeof(g_mqtt_payload_build_buffers->optional) - optional_json_len, ",\"task\":\"%s\"",
+                                      g_mqtt_payload_build_buffers->escaped_task);
     }
     if (has_tag) {
-        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
-                                      sizeof(g_scratch->optional) - optional_json_len, ",\"tag\":\"%s\"",
-                                      g_scratch->escaped_tag);
+        optional_json_len += snprintf(g_mqtt_payload_build_buffers->optional + optional_json_len,
+                                      sizeof(g_mqtt_payload_build_buffers->optional) - optional_json_len, ",\"tag\":\"%s\"",
+                                      g_mqtt_payload_build_buffers->escaped_tag);
     }
     if (has_core) {
-        optional_json_len += snprintf(g_scratch->optional + optional_json_len,
-                                      sizeof(g_scratch->optional) - optional_json_len, ",\"core\":%" PRId32,
+        optional_json_len += snprintf(g_mqtt_payload_build_buffers->optional + optional_json_len,
+                                      sizeof(g_mqtt_payload_build_buffers->optional) - optional_json_len, ",\"core\":%" PRId32,
                                       context->core);
     }
 
@@ -450,7 +450,7 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
         out, out_len,
         "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "%s,\"severity\":\"%s\",\"message\":\"%s\"}",
         static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
-        g_scratch->optional, severity_to_string(severity), g_scratch->escaped_message);
+        g_mqtt_payload_build_buffers->optional, severity_to_string(severity), g_mqtt_payload_build_buffers->escaped_message);
 
     return written > 0 && static_cast<size_t>(written) < out_len;
 #else
@@ -461,7 +461,7 @@ bool HeapwatchConnector::formatLogJsonLine(HeapwatchConnectorSeverity severity,
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 }
 
-bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const char* message,
+bool MqttTelemetryClient::queueLog(HeapwatchConnectorSeverity severity, const char* message,
                                const HeapwatchConnectorLogContext* context) {
 #if !CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION
     (void)severity;
@@ -478,17 +478,17 @@ bool HeapwatchConnector::queueLog(HeapwatchConnectorSeverity severity, const cha
         return false;
     }
 
-    g_scratch->small.type = MQTT_MESSAGE_TYPE_LOG;
-    if (!formatLogJsonLine(severity, message, context, g_scratch->small.payload,
-                           sizeof(g_scratch->small.payload))) {
+    g_mqtt_payload_build_buffers->small.type = MQTT_MESSAGE_TYPE_LOG;
+    if (!formatLogJsonLine(severity, message, context, g_mqtt_payload_build_buffers->small.payload,
+                           sizeof(g_mqtt_payload_build_buffers->small.payload))) {
         return false;
     }
 
-    return heapwatch_outbound_send(g_small_queue, &g_scratch->small, 0);
+    return heapwatch_enqueue_mqtt_queue_message(g_small_queue, &g_mqtt_payload_build_buffers->small, 0);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 }
 
-bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payload_len) {
+bool MqttTelemetryClient::queueCoreDump(const char* base64_payload, size_t payload_len) {
 #if !CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
     (void)base64_payload;
     (void)payload_len;
@@ -501,7 +501,7 @@ bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payloa
         return false;
     }
 
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws == nullptr || ws->coredump_busy) {
         return false;
     }
@@ -520,7 +520,7 @@ bool HeapwatchConnector::queueCoreDump(const char* base64_payload, size_t payloa
 #endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD */
 }
 
-bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
+bool MqttTelemetryClient::uploadCoreDumpFromFlashIfPresent() {
 #if !CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD || !CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
     return false;
 #else
@@ -697,7 +697,7 @@ bool HeapwatchConnector::uploadCoreDumpFromFlashIfPresent() {
 #endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH */
 }
 
-void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
+void MqttTelemetryClient::queueParameter(const char* name, int64_t value) {
     if (!g_infrastructure_ready || g_tiny_queue == nullptr || name == nullptr) {
         return;
     }
@@ -705,27 +705,27 @@ void HeapwatchConnector::queueParameter(const char* name, int64_t value) {
     if (!lock.locked) {
         return;
     }
-    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    g_mqtt_payload_build_buffers->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%" PRId64 "}",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
              static_cast<int64_t>(value));
 #else
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%" PRId64,
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
              static_cast<int64_t>(value));
 #endif
 
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
+    heapwatch_enqueue_mqtt_queue_message(g_tiny_queue, &g_mqtt_payload_build_buffers->tiny, 0);
 }
 
-void HeapwatchConnector::queueParameter(const char* name, double value) {
+void MqttTelemetryClient::queueParameter(const char* name, double value) {
     if (!g_infrastructure_ready || g_tiny_queue == nullptr || name == nullptr) {
         return;
     }
@@ -733,25 +733,25 @@ void HeapwatchConnector::queueParameter(const char* name, double value) {
     if (!lock.locked) {
         return;
     }
-    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    g_mqtt_payload_build_buffers->tiny.type = MQTT_MESSAGE_TYPE_PARAMETER;
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%.6f}",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
 #else
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%.6f",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
 #endif
 
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, 0);
+    heapwatch_enqueue_mqtt_queue_message(g_tiny_queue, &g_mqtt_payload_build_buffers->tiny, 0);
 }
 
-void HeapwatchConnector::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
+void MqttTelemetryClient::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
 #if !CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS
     (void)eventTypeId;
     (void)boot_cycle;
@@ -764,21 +764,21 @@ void HeapwatchConnector::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
     if (!lock.locked) {
         return;
     }
-    g_scratch->tiny.type = MQTT_MESSAGE_TYPE_EVENT;
+    g_mqtt_payload_build_buffers->tiny.type = MQTT_MESSAGE_TYPE_EVENT;
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
     if (boot_cycle < 0) {
         boot_cycle = static_cast<int32_t>(g_boot_cycle);
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"event_type_id\":%" PRId32 ",\"boot_cycle\":%" PRId32 "}",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
              eventTypeId, static_cast<int32_t>(boot_cycle));
 #else
-    snprintf(g_scratch->tiny.payload, sizeof(g_scratch->tiny.payload),
+    snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|event_type_id=%" PRId32 "|boot_cycle=%" PRId32,
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
              eventTypeId, static_cast<int32_t>(boot_cycle));
@@ -788,11 +788,11 @@ void HeapwatchConnector::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
         eventTypeId >= HEAPWATCH_EVENT_FW_UPDATE_STARTED &&
         eventTypeId <= HEAPWATCH_EVENT_FW_UPDATE_FAILED;
     const TickType_t send_wait = fw_ota_event ? OTA_MQTT_QUEUE_WAIT : 0;
-    heapwatch_outbound_send(g_tiny_queue, &g_scratch->tiny, send_wait);
+    heapwatch_enqueue_mqtt_queue_message(g_tiny_queue, &g_mqtt_payload_build_buffers->tiny, send_wait);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_STANDARD_EVENTS */
 }
 
-void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* phase, int64_t bytes,
+void MqttTelemetryClient::queueOtaProgress(int64_t ota_session_id, const char* phase, int64_t bytes,
                                           int64_t total) {
 #if !CONFIG_HEAPWATCH_ENABLE_OTA
     (void)ota_session_id;
@@ -809,31 +809,31 @@ void HeapwatchConnector::queueOtaProgress(int64_t ota_session_id, const char* ph
         return;
     }
 
-    g_scratch->small.type = MQTT_MESSAGE_TYPE_OTA_PROGRESS;
+    g_mqtt_payload_build_buffers->small.type = MQTT_MESSAGE_TYPE_OTA_PROGRESS;
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
+    snprintf(g_mqtt_payload_build_buffers->small.payload, sizeof(g_mqtt_payload_build_buffers->small.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"ota_session_id\":%" PRId64 ",\"phase\":\"%s\",\"bytes\":%" PRId64 ","
              "\"total\":%" PRId64 "}",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
              static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
              static_cast<int64_t>(total));
 #else
-    snprintf(g_scratch->small.payload, sizeof(g_scratch->small.payload),
+    snprintf(g_mqtt_payload_build_buffers->small.payload, sizeof(g_mqtt_payload_build_buffers->small.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|ota_session_id=%" PRId64 "|phase=%s|bytes=%" PRId64 "|total=%" PRId64,
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
              static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
              static_cast<int64_t>(total));
 #endif
 
-    heapwatch_outbound_send(g_small_queue, &g_scratch->small, OTA_MQTT_QUEUE_WAIT);
+    heapwatch_enqueue_mqtt_queue_message(g_small_queue, &g_mqtt_payload_build_buffers->small, OTA_MQTT_QUEUE_WAIT);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_OTA */
 }
 
-void HeapwatchConnector::queueSpecs() {
+void MqttTelemetryClient::queueSpecs() {
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
@@ -843,33 +843,33 @@ void HeapwatchConnector::queueSpecs() {
         return;
     }
 
-    g_scratch->large.type = MQTT_MESSAGE_TYPE_SPECS;
+    g_mqtt_payload_build_buffers->large.type = MQTT_MESSAGE_TYPE_SPECS;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
-    if (!Heapwatch::DeviceSpecs::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
+    if (!Heapwatch::DeviceSpecs::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device specs payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s",
              static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
-             static_cast<uint32_t>(g_boot_cycle), g_scratch->specs_body + 1);
+             static_cast<uint32_t>(g_boot_cycle), g_mqtt_payload_build_buffers->specs_body + 1);
 #else
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", static_cast<uint64_t>(tsms),
              static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
-             g_scratch->specs_body + 1);
+             g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
+    heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
-void HeapwatchConnector::queueNetwork() {
+void MqttTelemetryClient::queueNetwork() {
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
@@ -879,31 +879,31 @@ void HeapwatchConnector::queueNetwork() {
         return;
     }
 
-    g_scratch->large.type = MQTT_MESSAGE_TYPE_NETWORK;
+    g_mqtt_payload_build_buffers->large.type = MQTT_MESSAGE_TYPE_NETWORK;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
-    if (!Heapwatch::Network::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
+    if (!Heapwatch::Network::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device network payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
+             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
 #else
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
+             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
+    heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
-void HeapwatchConnector::queueBluetoothSnapshot() {
+void MqttTelemetryClient::queueBluetoothSnapshot() {
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
@@ -913,65 +913,65 @@ void HeapwatchConnector::queueBluetoothSnapshot() {
         return;
     }
 
-    g_scratch->large.type = MQTT_MESSAGE_TYPE_BLUETOOTH;
+    g_mqtt_payload_build_buffers->large.type = MQTT_MESSAGE_TYPE_BLUETOOTH;
 
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
-    if (!Heapwatch::Radio::BluetoothLe::buildPayload(g_scratch->specs_body, sizeof(g_scratch->specs_body))) {
+    if (!Heapwatch::Radio::BluetoothLe::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device bluetooth payload");
         return;
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
+             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
 #else
-    snprintf(g_scratch->large.payload, sizeof(g_scratch->large.payload),
+    snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
              "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_scratch->specs_body + 1);
+             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
 
-    heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT);
+    heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT);
 }
 
-void HeapwatchConnector::updateParameterInt(const char* slug, int64_t value) {
+void MqttTelemetryClient::updateParameterInt(const char* slug, int64_t value) {
     Heapwatch::Parameters::Store::updateInt(slug, value);
 }
 
-void HeapwatchConnector::updateParameterDouble(const char* slug, double value) {
+void MqttTelemetryClient::updateParameterDouble(const char* slug, double value) {
     Heapwatch::Parameters::Store::updateDouble(slug, value);
 }
 
-void HeapwatchConnector::updateParameterIntRanged(const char* slug, int64_t value,
+void MqttTelemetryClient::updateParameterIntRanged(const char* slug, int64_t value,
                                                    int64_t min_value, int64_t max_value) {
     Heapwatch::Parameters::Store::updateIntRanged(slug, value, min_value, max_value);
 }
 
-void HeapwatchConnector::updateParameterDoubleRanged(const char* slug, double value,
+void MqttTelemetryClient::updateParameterDoubleRanged(const char* slug, double value,
                                                       double min_value, double max_value) {
     Heapwatch::Parameters::Store::updateDoubleRanged(slug, value, min_value, max_value);
 }
 
-void HeapwatchConnector::setParameterIntMax(const char* slug, int64_t max_value) {
+void MqttTelemetryClient::setParameterIntMax(const char* slug, int64_t max_value) {
     Heapwatch::Parameters::Store::setIntMax(slug, max_value);
 }
 
-void HeapwatchConnector::setParameterIntMin(const char* slug, int64_t min_value) {
+void MqttTelemetryClient::setParameterIntMin(const char* slug, int64_t min_value) {
     Heapwatch::Parameters::Store::setIntMin(slug, min_value);
 }
 
-void HeapwatchConnector::setParameterDoubleMax(const char* slug, double max_value) {
+void MqttTelemetryClient::setParameterDoubleMax(const char* slug, double max_value) {
     Heapwatch::Parameters::Store::setDoubleMax(slug, max_value);
 }
 
-void HeapwatchConnector::setParameterDoubleMin(const char* slug, double min_value) {
+void MqttTelemetryClient::setParameterDoubleMin(const char* slug, double min_value) {
     Heapwatch::Parameters::Store::setDoubleMin(slug, min_value);
 }
 
-void HeapwatchConnector::flushParameters() {
+void MqttTelemetryClient::flushParameters() {
     if (!g_infrastructure_ready || g_large_queue == nullptr) {
         return;
     }
@@ -981,22 +981,22 @@ void HeapwatchConnector::flushParameters() {
         return;
     }
 
-    if (!Heapwatch::Parameters::Store::buildFlushPayload(g_scratch->large.payload,
-                                                        sizeof(g_scratch->large.payload))) {
+    if (!Heapwatch::Parameters::Store::buildFlushPayload(g_mqtt_payload_build_buffers->large.payload,
+                                                        sizeof(g_mqtt_payload_build_buffers->large.payload))) {
         return;  // Nothing has ever been set via updateParameter*() this boot.
     }
 
-    g_scratch->large.type = MQTT_MESSAGE_TYPE_PARAMETER;
-    if (heapwatch_outbound_send(g_large_queue, &g_scratch->large, BOOT_CRITICAL_QUEUE_WAIT)) {
+    g_mqtt_payload_build_buffers->large.type = MQTT_MESSAGE_TYPE_PARAMETER;
+    if (heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT)) {
         Heapwatch::Parameters::Store::acknowledgeBoundsSent();
     }
 }
 
-void HeapwatchConnector::flushParameterBounds() {
+void MqttTelemetryClient::flushParameterBounds() {
     flushParameters();
 }
 
-HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {
+HeapwatchConnectorStatus MqttTelemetryClient::getStatus() const {
     HeapwatchConnectorStatus status = {};
     status.initialized = g_initialized;
     status.network_ready = g_network_ready;
@@ -1020,14 +1020,14 @@ HeapwatchConnectorStatus HeapwatchConnector::getStatus() const {
     return status;
 }
 
-void HeapwatchConnector::startDispatcherThread() {
+void MqttTelemetryClient::startDispatcherThread() {
     g_dispatcher_running = true;
     g_dispatcher_exited = false;
     heapwatch_task_create_dram(heapwatch_dispatch_task, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
                                nullptr, tskIDLE_PRIORITY + 3, &g_dispatcher_task);
 }
 
-void HeapwatchConnector::startCollectorThread() {
+void MqttTelemetryClient::startCollectorThread() {
     g_collector_running = true;
     g_collector_exited = false;
     heapwatch_task_create(Heapwatch::Metrics::collectTask, "hw_metrics",
@@ -1035,7 +1035,7 @@ void HeapwatchConnector::startCollectorThread() {
                          &g_collector_task);
 }
 
-void HeapwatchConnector::ensureMetricsCollectorThreadStarted() {
+void MqttTelemetryClient::ensureMetricsCollectorThreadStarted() {
     if (g_collector_running) {
         return;
     }
@@ -1044,28 +1044,28 @@ void HeapwatchConnector::ensureMetricsCollectorThreadStarted() {
 
 QueueHandle_t heapwatch_get_tiny_queue() { return g_tiny_queue; }
 QueueHandle_t heapwatch_get_small_queue() { return g_small_queue; }
-QueueHandle_t heapwatch_get_queue() { return g_large_queue; }
+QueueHandle_t heapwatch_get_large_mqtt_queue() { return g_large_queue; }
 
-bool heapwatch_outbound_send(QueueHandle_t queue, const void* item, TickType_t wait) {
+bool heapwatch_enqueue_mqtt_queue_message(QueueHandle_t queue, const void* item, TickType_t wait) {
     if (queue == nullptr || item == nullptr) {
         return false;
     }
     if (xQueueSend(queue, item, wait) != pdTRUE) {
         return false;
     }
-    if (g_outbound_sem != nullptr) {
-        (void)xSemaphoreGive(g_outbound_sem);
+    if (g_mqtt_queue_work_sem != nullptr) {
+        (void)xSemaphoreGive(g_mqtt_queue_work_sem);
     }
     return true;
 }
 
-void heapwatch_outbound_consumed() {
-    if (g_outbound_sem != nullptr) {
-        (void)xSemaphoreTake(g_outbound_sem, 0);
+void heapwatch_mark_mqtt_queue_message_published() {
+    if (g_mqtt_queue_work_sem != nullptr) {
+        (void)xSemaphoreTake(g_mqtt_queue_work_sem, 0);
     }
 }
 
-void heapwatch_outbound_wait_for_work() {
+void heapwatch_wait_for_queued_mqtt_message() {
     const UBaseType_t waiting =
         (g_tiny_queue != nullptr ? uxQueueMessagesWaiting(g_tiny_queue) : 0) +
         (g_small_queue != nullptr ? uxQueueMessagesWaiting(g_small_queue) : 0) +
@@ -1074,12 +1074,12 @@ void heapwatch_outbound_wait_for_work() {
         vTaskDelay(pdMS_TO_TICKS(50));
         return;
     }
-    if (g_outbound_sem == nullptr) {
+    if (g_mqtt_queue_work_sem == nullptr) {
         vTaskDelay(pdMS_TO_TICKS(50));
         return;
     }
-    xSemaphoreTake(g_outbound_sem, portMAX_DELAY);
-    xSemaphoreGive(g_outbound_sem);
+    xSemaphoreTake(g_mqtt_queue_work_sem, portMAX_DELAY);
+    xSemaphoreGive(g_mqtt_queue_work_sem);
 }
 
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD

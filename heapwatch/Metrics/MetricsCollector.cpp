@@ -28,14 +28,14 @@
 #include "esp_wifi.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
 #include "heapwatch/Helpers/DynamicParameterSegment.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Mqtt/HeapwatchDispatcher.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Lifecycle/BootSync/ConnectorBootSync.h"
+#include "heapwatch/Lifecycle/OncePerBootTelemetry/OncePerBootTelemetry.h"
 #include "heapwatch/Settings/ConnectorSettings.h"
 #include "heapwatch/Fs/Volumes/FsVolumeManager.h"
 #include "heapwatch/Network/DeviceNetworkReporter.h"
@@ -159,9 +159,9 @@ void enqueue_mqtt_message(MqttMessageType type, const char* payload) {
     g_mqtt_enqueue_msg->type = type;
     snprintf(g_mqtt_enqueue_msg->payload, sizeof(g_mqtt_enqueue_msg->payload), "%s", payload);
 
-    QueueHandle_t queue = heapwatch_get_queue();
+    QueueHandle_t queue = heapwatch_get_large_mqtt_queue();
     if (queue != nullptr) {
-        if (!heapwatch_outbound_send(queue, g_mqtt_enqueue_msg, 0)) {
+        if (!heapwatch_enqueue_mqtt_queue_message(queue, g_mqtt_enqueue_msg, 0)) {
             ESP_LOGW(TAG, "large MQTT queue full — dropped %s payload",
                      type == MQTT_MESSAGE_TYPE_TASKS ? "TASKS" : "PARAMETER");
         }
@@ -356,7 +356,7 @@ void tasks_publish_append(
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
 void refresh_connector_gauge_limits(size_t core_count) {
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
     const int64_t internal_total =
         static_cast<int64_t>(heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
@@ -479,7 +479,7 @@ bool run_freertos_metrics_scan(
     (void)utms;
     return false;
 #else
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     UBaseType_t task_table_len =
         static_cast<UBaseType_t>(uxTaskGetNumberOfTasks()) + 4U;
     if (task_table_len > HEAPWATCH_MAX_TASK_STATUS_SCAN) {
@@ -708,7 +708,7 @@ void refreshConnectorGaugeLimits() {
 
 void init() {
     g_start_time_us = static_cast<uint64_t>(esp_timer_get_time());
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     g_payload_buf = ws->metrics_payload;
     g_mqtt_enqueue_msg = &ws->metrics_enqueue;
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
@@ -747,12 +747,12 @@ void collectTask(void* arg) {
 
     while (heapwatch_collector_running()) {
         const bool mqtt_now = g_mqtt_connected;
-        if (heapwatch_should_enqueue_boot_static(prev_mqtt_connected, mqtt_now, boot_static_enqueued)) {
-            Heapwatch::Lifecycle::BootSync::runBootStaticSync();
+        if (heapwatch_should_enqueue_once_per_boot_static_telemetry(prev_mqtt_connected, mqtt_now, boot_static_enqueued)) {
+            Heapwatch::Lifecycle::OncePerBootTelemetry::enqueueOncePerBootStaticTelemetry();
             boot_static_enqueued = true;
         } else if (prev_mqtt_connected && !mqtt_now) {
-            HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_DISCONNECTED);
-        } else if (Heapwatch::Network::consumeTopologyDirty() && mqtt_now) {
+            MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_DISCONNECTED);
+        } else if (Heapwatch::Network::takeAndClearNetworkTopologyChangedFlag() && mqtt_now) {
             Heapwatch::Network::publishFullSync();
         }
         prev_mqtt_connected = mqtt_now;
@@ -776,7 +776,7 @@ void collectTask(void* arg) {
             (static_cast<uint64_t>(esp_timer_get_time()) - g_start_time_us) / 1000000ULL);
         uint64_t tsms = 0;
         uint64_t utms = 0;
-        heapwatch_get_ingress_timing_ms(&tsms, &utms);
+        heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 #if CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS
         g_dirty_task_stack_max_count = 0;
 #endif
@@ -936,14 +936,14 @@ void collectTask(void* arg) {
         // power API, CELL1 cellular signal, connector gauge limits, any other
         // updateParameter*() / setParameter*Max call site) as its own batched
         // publish. No-op if nothing is due this round.
-        HeapwatchConnector::getInstance().flushParameters();
+        MqttTelemetryClient::getInstance().flushParameters();
 
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
         // HEAP1: default-off proactive corruption check — heap_caps_check_integrity() walks
         // the full heap, so this has a real CPU cost and stays opt-in.
         if (!heap_caps_check_integrity(MALLOC_CAP_DEFAULT, true)) {
             ESP_LOGE(TAG, "Heap corruption detected by heap_caps_check_integrity()");
-            HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
+            MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
         }
 #endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
     }

@@ -169,7 +169,7 @@ void start() {
 #endif
 }
 
-void ensureTracking() {
+void installNetifRxTxHooksIfMissing() {
 #ifdef HEAPWATCH_NETIF_TRAFFIC_ACTIVE
     hook_known_netifs();
 #else

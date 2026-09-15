@@ -26,7 +26,7 @@
 #include "heapwatch.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "heapwatch/Network/DeviceNetworkReporter.h"
 #include "sdkconfig.h"
 
@@ -146,7 +146,7 @@ void unregisterOne(esp_event_base_t base, int32_t event_id, esp_event_handler_in
 }
 
 void applyGotIp() {
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
     connector.setNetworkReady(true);
     Heapwatch::Lifecycle::Bootstrap::clearWifiPermanentlyFailed();
     Heapwatch::Network::markTopologyDirty();
@@ -159,7 +159,7 @@ void applyGotIp() {
 }
 
 void applyLostIp() {
-    auto& connector = HeapwatchConnector::getInstance();
+    auto& connector = MqttTelemetryClient::getInstance();
     connector.setNetworkReady(false);
     Heapwatch::Network::markTopologyDirty();
     connector.queueEvent(HEAPWATCH_EVENT_NETIF_LOST_IP);
@@ -248,13 +248,13 @@ void handleNotificationsFromSystemEventLoop() {
     }
     if ((bits & SYSTEM_EVENT_LOOP_STA_CONNECTED) != 0) {
         Heapwatch::Network::markTopologyDirty();
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
     }
     if ((bits & SYSTEM_EVENT_LOOP_STA_DISCONNECTED) != 0) {
         Heapwatch::Network::markTopologyDirty();
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
         Heapwatch::Lifecycle::Bootstrap::handleManagedWifiDisconnected();
 #endif
     }
@@ -266,11 +266,11 @@ void handleNotificationsFromSystemEventLoop() {
     }
     if ((bits & SYSTEM_EVENT_LOOP_NETIF_UP) != 0) {
         Heapwatch::Network::markTopologyDirty();
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
     }
     if ((bits & SYSTEM_EVENT_LOOP_NETIF_DOWN) != 0) {
         Heapwatch::Network::markTopologyDirty();
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
+        MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
     }
 
     if (g_apply_mutex != nullptr) {

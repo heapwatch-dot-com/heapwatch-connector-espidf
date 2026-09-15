@@ -21,23 +21,23 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 
 #if !configSUPPORT_STATIC_ALLOCATION
-#error "Heapwatch working set requires configSUPPORT_STATIC_ALLOCATION"
+#error "Heapwatch memory block requires configSUPPORT_STATIC_ALLOCATION"
 #endif
 
 namespace Heapwatch::Helpers::MemoryManager {
 namespace {
 
-constexpr char kTag[] = "HwMem";
+constexpr char TAG[] = "HwMem";
 
-HeapwatchWorkingSet* g_ws = nullptr;
+ConnectorMemoryBlock* g_ws = nullptr;
 
 SemaphoreHandle_t create_mutex_static(StaticSemaphore_t* buf, const char* name) {
     SemaphoreHandle_t sem = xSemaphoreCreateMutexStatic(buf);
     if (sem == nullptr) {
-        ESP_LOGE(kTag, "FATAL: static mutex %s failed", name);
+        ESP_LOGE(TAG, "FATAL: static mutex %s failed", name);
         abort();
     }
     return sem;
@@ -47,13 +47,13 @@ SemaphoreHandle_t create_counting_static(UBaseType_t max_count, StaticSemaphore_
                                          const char* name) {
     SemaphoreHandle_t sem = xSemaphoreCreateCountingStatic(max_count, 0, buf);
     if (sem == nullptr) {
-        ESP_LOGE(kTag, "FATAL: static counting sem %s failed", name);
+        ESP_LOGE(TAG, "FATAL: static counting sem %s failed", name);
         abort();
     }
     return sem;
 }
 
-void create_rtos_objects(HeapwatchWorkingSet* ws) {
+void create_rtos_objects(ConnectorMemoryBlock* ws) {
     ws->tiny_queue =
         heapwatch_queue_create_static(HEAPWATCH_TINY_QUEUE_LEN, sizeof(TinyMqttMessage),
                                       ws->tiny_queue_storage, &ws->tiny_queue_ctrl, "tiny");
@@ -71,7 +71,7 @@ void create_rtos_objects(HeapwatchWorkingSet* ws) {
 #if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION || CONFIG_HEAPWATCH_ENABLE_OTA
     outbound_max += HEAPWATCH_SMALL_QUEUE_LEN;
 #endif
-    ws->outbound_sem = create_counting_static(outbound_max, &ws->outbound_sem_buf, "outbound");
+    ws->mqtt_queue_work_sem = create_counting_static(outbound_max, &ws->mqtt_queue_work_sem_buf, "outbound");
 
     ws->command_inbound_queue = heapwatch_queue_create_static(
         HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH, sizeof(Heapwatch::DeviceCommand::CommandInboundMessage),
@@ -85,13 +85,13 @@ void create_rtos_objects(HeapwatchWorkingSet* ws) {
 
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
     ws->stream_outbound_queue = heapwatch_queue_create_static(
-        HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH, sizeof(HeapwatchWorkingSet::StreamOutboundQueued),
+        HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH, sizeof(ConnectorMemoryBlock::StreamOutboundQueued),
         ws->stream_outbound_queue_storage, &ws->stream_outbound_queue_ctrl, "stream");
     ws->stream_mutex = create_mutex_static(&ws->stream_mutex_buf, "stream");
 #endif
 }
 
-void delete_rtos_objects(HeapwatchWorkingSet* ws) {
+void delete_rtos_objects(ConnectorMemoryBlock* ws) {
     heapwatch_queue_delete_static(ws->tiny_queue);
 #if CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION || CONFIG_HEAPWATCH_ENABLE_OTA
     heapwatch_queue_delete_static(ws->small_queue);
@@ -105,9 +105,9 @@ void delete_rtos_objects(HeapwatchWorkingSet* ws) {
         vSemaphoreDelete(ws->publish_mutex);
         ws->publish_mutex = nullptr;
     }
-    if (ws->outbound_sem != nullptr) {
-        vSemaphoreDelete(ws->outbound_sem);
-        ws->outbound_sem = nullptr;
+    if (ws->mqtt_queue_work_sem != nullptr) {
+        vSemaphoreDelete(ws->mqtt_queue_work_sem);
+        ws->mqtt_queue_work_sem = nullptr;
     }
 
     heapwatch_queue_delete_static(ws->command_inbound_queue);
@@ -141,13 +141,13 @@ void init() {
         return;
     }
 
-    g_ws = static_cast<HeapwatchWorkingSet*>(heapwatch_data_alloc(sizeof(HeapwatchWorkingSet)));
+    g_ws = static_cast<ConnectorMemoryBlock*>(heapwatch_data_alloc(sizeof(ConnectorMemoryBlock)));
     create_rtos_objects(g_ws);
 
-    ESP_LOGI(kTag, "working set %" PRIu32 " bytes (%s)", static_cast<uint32_t>(sizeof(HeapwatchWorkingSet)),
+    ESP_LOGI(TAG, "memory block %" PRIu32 " bytes (%s)", static_cast<uint32_t>(sizeof(ConnectorMemoryBlock)),
              HEAPWATCH_ALLOCATE_DATA_IN_PSRAM ? "PSRAM" : "DRAM");
 #if HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
-    ESP_LOGI(kTag, "internal free=%" PRIu32 " largest=%" PRIu32,
+    ESP_LOGI(TAG, "internal free=%" PRIu32 " largest=%" PRIu32,
              static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
              static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
 #endif
@@ -162,25 +162,25 @@ void deinit() {
     g_ws = nullptr;
 }
 
-HeapwatchWorkingSet* get() { return g_ws; }
+ConnectorMemoryBlock* get() { return g_ws; }
 
-void* scratchAlloc(size_t bytes) {
+void* temporaryArenaAlloc(size_t bytes) {
     if (g_ws == nullptr || bytes == 0) {
         return nullptr;
     }
     const size_t aligned = (bytes + 7U) & ~static_cast<size_t>(7U);
-    if (g_ws->scratch_used > HEAPWATCH_MEM_SCRATCH_BYTES ||
-        aligned > HEAPWATCH_MEM_SCRATCH_BYTES - g_ws->scratch_used) {
+    if (g_ws->temporary_arena_used > HEAPWATCH_MEM_SCRATCH_BYTES ||
+        aligned > HEAPWATCH_MEM_SCRATCH_BYTES - g_ws->temporary_arena_used) {
         return nullptr;
     }
-    void* p = g_ws->scratch + g_ws->scratch_used;
-    g_ws->scratch_used += aligned;
+    void* p = g_ws->temporary_arena + g_ws->temporary_arena_used;
+    g_ws->temporary_arena_used += aligned;
     return p;
 }
 
-void scratchReset() {
+void temporaryArenaReset() {
     if (g_ws != nullptr) {
-        g_ws->scratch_used = 0;
+        g_ws->temporary_arena_used = 0;
     }
 }
 

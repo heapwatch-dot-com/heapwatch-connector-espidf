@@ -70,7 +70,7 @@
 
 /**
  * When enabled (Kconfig + SPIRAM), flash-safe hw_* stacks (metrics, log forward,
- * going-dark, enroll LED, BLE reporter) are allocated in PSRAM. Tasks that call
+ * commanded-offline, enroll LED, BLE reporter) are allocated in PSRAM. Tasks that call
  * NVS / OTA / coredump / on-flash VFS stay in internal DRAM. Default off.
  */
 #ifdef CONFIG_HEAPWATCH_STACKS_IN_PSRAM
@@ -103,10 +103,10 @@
 #else
 #define HEAPWATCH_DISPATCHER_TASK_STACK_BYTES   12288
 #endif
-#ifdef CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
-#define HEAPWATCH_GOING_DARK_TASK_STACK_BYTES     CONFIG_HEAPWATCH_GOING_DARK_TASK_STACK_BYTES
+#ifdef CONFIG_HEAPWATCH_OFFLINE_TASK_STACK_BYTES
+#define HEAPWATCH_OFFLINE_TASK_STACK_BYTES     CONFIG_HEAPWATCH_OFFLINE_TASK_STACK_BYTES
 #else
-#define HEAPWATCH_GOING_DARK_TASK_STACK_BYTES     10240
+#define HEAPWATCH_OFFLINE_TASK_STACK_BYTES     10240
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ typedef enum {
  *    line can be JSON-escaped to up to 2x its raw length (worst case every
  *    character needs a "\\" or "\\uXXXX" escape) plus ~320B of JSON framing
  *    headroom (timestamps, escaped task/tag fields up to 64B each, core,
- *    severity — see the g_scratch_optional sizing in HeapwatchConnector.cpp)
+ *    severity — see the g_mqtt_payload_build_buffers optional sizing in MqttTelemetryClient.cpp)
  *  - large: SPECS/TASKS messages and MetricsCollector's still-unrefactored
  *    hand-rolled periodic PARAMETER blob (heap/Wi-Fi/FreeRTOS-count fields —
  *    Phase 5c/PARAM1 will eventually split this into real per-slug tiny
@@ -365,7 +365,7 @@ typedef enum {
 
 /**
  * Fixed capacity of the in-RAM sparse parameter map (slug -> value/min/max)
- * that HeapwatchConnector::flushParameters() batches into one publish per
+ * that MqttTelemetryClient::flushParameters() batches into one publish per
  * telemetry round. No malloc/free — a slug simply fails to register once this
  * many distinct slugs are live in a boot (auto-provisioned per-power-source
  * slugs and connector gauge limits count against this same budget). Per-task

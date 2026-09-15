@@ -115,7 +115,7 @@ do with POP3 or IMAP! you MUST NEVER make confusing naming like this
 | `HwLife` | Bootstrap, lifecycle, C API, settings, boot cycle, MQTT-up boot sync |
 | `HwMqtt` | MQTT queues, coredump HTTP, dispatcher |
 | `HwEnroll` | Enrollment, LED, self-intel, NVS credentials, credential rotation |
-| `HwCmd` | Commands, catalogs, config catalog/snapshot, going-dark, sleep hooks |
+| `HwCmd` | Commands, catalogs, config catalog/snapshot, commanded-offline, sleep hooks |
 | `HwFs` | Device filesystem |
 | `HwOta` | OTA (FreeRTOS task name stays `hw_ota`) |
 | `HwStream` | Stream ingress TCP/mux |

@@ -1,4 +1,4 @@
-#include "heapwatch/Fs/DeviceFsService.h"
+#include "heapwatch/Fs/DeviceFilesystemOperations.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -270,7 +270,7 @@ void finalizeUpload() {
         FsError err = {"size_mismatch", "Uploaded byte count does not match expected size."};
         unlink(temp_path);
         resetUploadState();
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 
@@ -280,7 +280,7 @@ void finalizeUpload() {
         FsError err = {"io_error", "Failed to hash uploaded temp file."};
         unlink(temp_path);
         resetUploadState();
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 
@@ -291,7 +291,7 @@ void finalizeUpload() {
         FsError err = {"checksum_mismatch", "SHA256 checksum mismatch on uploaded file."};
         unlink(temp_path);
         resetUploadState();
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 
@@ -316,7 +316,7 @@ void finalizeUpload() {
         FsError err = {"io_error", rename_msg};
         unlink(temp_path);
         resetUploadState();
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 
@@ -327,14 +327,14 @@ void finalizeUpload() {
     cJSON_AddNumberToObject(result, "size", static_cast<double>(actual_size));
 
     resetUploadState();
-    sendTcpResult(command_id, true, nullptr, result);
+    sendFileBrowserResultOverStream(command_id, true, nullptr, result);
 }
 
 void downloadOnStreamTask(const char* command_id, const char* path) {
     FILE* fp = fopen(path, "rb");
     if (fp == nullptr) {
         FsError err = {"not_found", "File not found for download."};
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 
@@ -349,7 +349,7 @@ void downloadOnStreamTask(const char* command_id, const char* path) {
             FsError err = {"io_error", "Failed to stream download chunk to ingress."};
             fclose(fp);
             mbedtls_sha256_free(&ctx);
-            sendTcpResult(command_id, false, &err, nullptr);
+            sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
             return;
         }
         // Same task as TCP writer — push bytes out before next fread.
@@ -372,7 +372,7 @@ void downloadOnStreamTask(const char* command_id, const char* path) {
     cJSON_AddStringToObject(result, "sha256", sha_hex);
     cJSON_AddNumberToObject(result, "size", static_cast<double>(total_size));
 
-    sendTcpResult(command_id, true, nullptr, result);
+    sendFileBrowserResultOverStream(command_id, true, nullptr, result);
     Heapwatch::StreamIngress::flushOutbound();
 }
 
@@ -388,7 +388,7 @@ bool isAllowedPath(const char* path) {
     return Heapwatch::Fs::Volumes::pathIsAllowed(path);
 }
 
-void sendTcpResult(const char* command_id, bool ok, const FsError* error, cJSON* result) {
+void sendFileBrowserResultOverStream(const char* command_id, bool ok, const FsError* error, cJSON* result) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "command_id", command_id != nullptr ? command_id : "");
     cJSON_AddBoolToObject(root, "ok", ok);
@@ -1103,7 +1103,7 @@ bool beginUploadJob(const char* command_id, const char* path, const char* temp_p
                  command_id != nullptr ? command_id : "");
         cancelActiveUpload();
         FsError cancelled = {"cancelled", "Upload superseded by a newer filesystem upload."};
-        sendTcpResult(old_command_id, false, &cancelled, nullptr);
+        sendFileBrowserResultOverStream(old_command_id, false, &cancelled, nullptr);
     }
 
     if (!isAllowedPath(path) || !isAllowedPath(temp_path)) {
@@ -1227,7 +1227,7 @@ void handleUploadChunk(const uint8_t* data, size_t len) {
         unlink(g_upload.temp_path);
         resetUploadState();
         g_logged_inactive_upload_drop = false;
-        sendTcpResult(command_id, false, &err, nullptr);
+        sendFileBrowserResultOverStream(command_id, false, &err, nullptr);
         return;
     }
 

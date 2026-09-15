@@ -10,8 +10,8 @@
 #include "esp_log.h"
 
 #include "heapwatch/Mqtt/HeapwatchDispatcher.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_connector_timing.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Fs/DeviceFsCommandHandler.h"
 #if CONFIG_HEAPWATCH_ENABLE_OTA
 #include "heapwatch/Ota/OtaService.h"
@@ -23,7 +23,7 @@
 #include "heapwatch/DeviceCommand/ConfigCatalog.h"
 #include "heapwatch/DeviceCommand/ConfigSnapshot.h"
 #include "heapwatch/DeviceCommand/CommandCatalog.h"
-#include "heapwatch/DeviceCommand/GoingDark/GoingDarkPipeline.h"
+#include "heapwatch/DeviceCommand/CommandedOffline/CommandedOfflinePipeline.h"
 #include "heapwatch/DeviceCommand/SleepCommands.h"
 
 namespace Heapwatch::DeviceCommand {
@@ -92,7 +92,7 @@ bool publish_phased_message(const char* suffix, const char* command_id, const ch
                             const char* code, const char* message, cJSON* result) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
-    heapwatch_get_ingress_timing_ms(&tsms, &utms);
+    heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "command_id", command_id != nullptr ? command_id : "");
@@ -206,14 +206,14 @@ void handle_ping(const char* suffix, char* command_id) {
 }
 
 void handle_specs_refresh(const char* suffix, char* command_id) {
-    HeapwatchConnector::getInstance().queueSpecs();
+    MqttTelemetryClient::getInstance().queueSpecs();
     publish_ack(suffix, command_id, "specs queued");
     free(command_id);
 }
 
 void handle_restart(const char* suffix, char* command_id) {
-    if (!Heapwatch::DeviceCommand::GoingDark::scheduleRestart(suffix, command_id)) {
-        publish_response(suffix, command_id, false, "busy", "Going-dark pipeline busy");
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleRestart(suffix, command_id)) {
+        publish_response(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);
         return;
     }
@@ -222,8 +222,8 @@ void handle_restart(const char* suffix, char* command_id) {
 }
 
 void handle_shutdown(const char* suffix, char* command_id) {
-    if (!Heapwatch::DeviceCommand::GoingDark::scheduleShutdown(suffix, command_id)) {
-        publish_response(suffix, command_id, false, "busy", "Going-dark pipeline busy");
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleShutdown(suffix, command_id)) {
+        publish_response(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);
         return;
     }
@@ -412,9 +412,9 @@ void handleMqttMessage(const char* topic, size_t topic_len, const char* payload,
 
     ESP_LOGI(TAG, "Command received: %s", suffix);
 
-    if (Heapwatch::DeviceCommand::GoingDark::isActive()) {
-        ESP_LOGW(TAG, "Rejecting command '%s' — going-dark pipeline active", suffix);
-        publish_response(suffix, command_id, false, "busy", "Rejected: going-dark pipeline active");
+    if (Heapwatch::DeviceCommand::CommandedOffline::isActive()) {
+        ESP_LOGW(TAG, "Rejecting command '%s' — commanded-offline pipeline active", suffix);
+        publish_response(suffix, command_id, false, "busy", "Rejected: commanded-offline pipeline active");
         free(command_id);
         return;
     }

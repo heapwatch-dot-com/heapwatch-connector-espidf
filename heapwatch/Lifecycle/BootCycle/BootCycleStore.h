@@ -19,7 +19,7 @@ struct State {
  * Read NVS, apply PANIC attribution, increment boot_cycle, persist.
  * Must be called once per boot after nvs_flash_init().
  */
-bool onBoot(State* out);
+bool loadIncrementAndPersistBootCycle(State* out);
 
 /** Clear last_crash_boot_cycle after a successful core-dump upload. */
 bool clearLastCrash();

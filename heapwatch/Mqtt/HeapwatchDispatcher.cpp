@@ -32,11 +32,11 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "mqtt_client.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 #include "heapwatch/Enrollment/ClaimedIdentitiesBootSync.h"
-#include "heapwatch/Lifecycle/BootSync/ConnectorBootSync.h"
-#include "heapwatch/DeviceCommand/CommandWorker.h"
+#include "heapwatch/Lifecycle/OncePerBootTelemetry/OncePerBootTelemetry.h"
+#include "heapwatch/DeviceCommand/DeviceCommandTask.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
 #include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 #include "heapwatch_config.h"
@@ -64,7 +64,7 @@ static char g_command_topic[128] = {};
 static constexpr uint64_t MQTT_OUTBOX_LIMIT_BYTES = 16 * 1024;
 static constexpr uint32_t MQTT_OUTBOX_FULL_BACKOFF_MS = 10;
 
-static HeapwatchShutdownAction g_shutdown_action = HeapwatchShutdownAction::Restart;
+static HeapwatchShutdownAction g_shutdown_action = HeapwatchShutdownAction::SHUTDOWN_RESTART;
 
 // STAT1: -1 means "no successful publish yet this boot".
 static volatile int64_t g_last_publish_unix_ms = -1;
@@ -122,7 +122,7 @@ static void try_publish_queue_head(QueueHandle_t queue) {
     }
 
     if (xQueueReceive(queue, &msg, 0) == pdTRUE) {
-        heapwatch_outbound_consumed();
+        heapwatch_mark_mqtt_queue_message_published();
     }
     g_publish_blocked_queue = nullptr;
 }
@@ -260,7 +260,7 @@ static void mqtt_event_handler(void*, esp_event_base_t, int32_t event_id, void* 
 // which already loops on connectivity state — a natural fit for "wait for network, then
 // act." Runs once MQTT is connected, retries indefinitely with backoff on failure, and
 // never blocks MQTT publishing (each attempt is now a single HTTP try, see
-// HeapwatchConnector::uploadCoreDumpFromFlashIfPresent()).
+// MqttTelemetryClient::uploadCoreDumpFromFlashIfPresent()).
 static bool g_coredump_upload_done = false;
 static TickType_t g_coredump_next_attempt_tick = 0;
 
@@ -274,7 +274,7 @@ static void service_coredump_upload_if_due() {
         return;
     }
 
-    if (HeapwatchConnector::getInstance().uploadCoreDumpFromFlashIfPresent()) {
+    if (MqttTelemetryClient::getInstance().uploadCoreDumpFromFlashIfPresent()) {
         g_coredump_upload_done = true;
     } else {
         g_coredump_next_attempt_tick = now + pdMS_TO_TICKS(HEAPWATCH_COREDUMP_RETRY_INTERVAL_MS);
@@ -367,7 +367,7 @@ void heapwatch_dispatch_task(void* arg) {
                 continue;
             }
 
-            HeapwatchConnector::getInstance().ensureMetricsCollectorThreadStarted();
+            MqttTelemetryClient::getInstance().ensureMetricsCollectorThreadStarted();
 
             ESP_LOGI(TAG, "MQTT client started (awaiting broker connection)");
         }
@@ -386,7 +386,7 @@ void heapwatch_dispatch_task(void* arg) {
 
         if (!dispatcher_prev_mqtt_connected && !g_mqtt_shutting_down) {
             subscribe_command_topics();
-            Heapwatch::Lifecycle::BootSync::runBootStaticSync();
+            Heapwatch::Lifecycle::OncePerBootTelemetry::enqueueOncePerBootStaticTelemetry();
             ESP_LOGI(TAG, "MQTT connected — draining outbound queues");
         }
         dispatcher_prev_mqtt_connected = true;
@@ -394,7 +394,7 @@ void heapwatch_dispatch_task(void* arg) {
         if (g_mqtt_shutting_down) {
             const int32_t outbox_bytes = esp_mqtt_client_get_outbox_size(g_mqtt_client);
             if (outbox_bytes <= 0) {
-                if (g_shutdown_action == HeapwatchShutdownAction::Restart) {
+                if (g_shutdown_action == HeapwatchShutdownAction::SHUTDOWN_RESTART) {
                     ESP_LOGI(TAG, "MQTT outbox drained — restarting");
                     esp_restart();
                 }
@@ -444,7 +444,7 @@ void heapwatch_dispatch_task(void* arg) {
 
         QueueHandle_t tiny_queue = heapwatch_get_tiny_queue();
         QueueHandle_t small_queue = heapwatch_get_small_queue();
-        QueueHandle_t large_queue = heapwatch_get_queue();
+        QueueHandle_t large_queue = heapwatch_get_large_mqtt_queue();
 
         if (g_publish_blocked_queue != nullptr && g_mqtt_client != nullptr) {
             const TickType_t now = xTaskGetTickCount();
@@ -475,7 +475,7 @@ void heapwatch_dispatch_task(void* arg) {
         if (small_queue != nullptr) {
             try_publish_queue_head<SmallMqttMessage>(small_queue);
         }
-        heapwatch_outbound_wait_for_work();
+        heapwatch_wait_for_queued_mqtt_message();
     }
     heapwatch_mark_dispatcher_task_exited();
     heapwatch_task_delete_dram(nullptr);
@@ -491,7 +491,7 @@ bool heapwatch_dispatcher_init() {
     g_mqtt_client = nullptr;
     g_mqtt_connected = false;
     g_mqtt_shutting_down = false;
-    g_shutdown_action = HeapwatchShutdownAction::Restart;
+    g_shutdown_action = HeapwatchShutdownAction::SHUTDOWN_RESTART;
     g_publish_blocked_queue = nullptr;
     g_mqtt_username.clear();
     return true;
@@ -506,7 +506,7 @@ void heapwatch_dispatcher_shutdown() {
     g_mqtt_connected = false;
     g_mqtt_reconnect_requested = false;
     g_mqtt_shutting_down = false;
-    g_shutdown_action = HeapwatchShutdownAction::Restart;
+    g_shutdown_action = HeapwatchShutdownAction::SHUTDOWN_RESTART;
     g_publish_blocked_queue = nullptr;
 }
 
@@ -533,12 +533,12 @@ void heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction action) {
 }
 
 void heapwatch_dispatcher_begin_shutdown(void) {
-    heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction::Restart);
+    heapwatch_dispatcher_begin_shutdown(HeapwatchShutdownAction::SHUTDOWN_RESTART);
 }
 
 void heapwatch_dispatcher_disarm_shutdown(void) {
     g_mqtt_shutting_down = false;
-    g_shutdown_action = HeapwatchShutdownAction::Restart;
+    g_shutdown_action = HeapwatchShutdownAction::SHUTDOWN_RESTART;
     ESP_LOGI(TAG, "Shutdown disarmed");
 }
 

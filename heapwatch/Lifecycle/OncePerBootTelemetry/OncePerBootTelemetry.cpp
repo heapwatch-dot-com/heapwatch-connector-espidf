@@ -1,4 +1,4 @@
-#include "heapwatch/Lifecycle/BootSync/ConnectorBootSync.h"
+#include "heapwatch/Lifecycle/OncePerBootTelemetry/OncePerBootTelemetry.h"
 
 #include "esp_log.h"
 #include "sdkconfig.h"
@@ -6,11 +6,11 @@
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
 #include "heapwatch/Network/DeviceNetworkReporter.h"
 #include "heapwatch/Radio/BluetoothLe/BluetoothReporter.h"
-#include "heapwatch/Mqtt/HeapwatchConnector.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 #include "heapwatch_config.h"
 #include "heapwatch/Metrics/MetricsCollector.h"
 
-namespace Heapwatch::Lifecycle::BootSync {
+namespace Heapwatch::Lifecycle::OncePerBootTelemetry {
 
 namespace {
 
@@ -19,25 +19,25 @@ bool g_boot_static_sync_done = false;
 
 }  // namespace
 
-void runBootStaticSync() {
+void enqueueOncePerBootStaticTelemetry() {
     if (g_boot_static_sync_done) {
         return;
     }
     g_boot_static_sync_done = true;
 
-    ESP_LOGI(TAG, "MQTT-up boot sync — enqueueing static payloads");
+    ESP_LOGI(TAG, "MQTT-up once-per-boot static telemetry — enqueueing static payloads");
 
     Heapwatch::Metrics::refreshConnectorGaugeLimits();
-    HeapwatchConnector::getInstance().queueSpecs();
-    HeapwatchConnector::getInstance().flushParameterBounds();
+    MqttTelemetryClient::getInstance().queueSpecs();
+    MqttTelemetryClient::getInstance().flushParameterBounds();
     Heapwatch::Network::publishFullSync();
 #if CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
     Heapwatch::Radio::BluetoothLe::publishFullSync();
 #endif
-    HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_CONNECTED);
+    MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_MQTT_CONNECTED);
     Heapwatch::StreamIngress::requestBootStreamUploads();
 }
 
-void resetBootStaticSync() { g_boot_static_sync_done = false; }
+void resetOncePerBootStaticTelemetry() { g_boot_static_sync_done = false; }
 
-}  // namespace Heapwatch::Lifecycle::BootSync
+}  // namespace Heapwatch::Lifecycle::OncePerBootTelemetry

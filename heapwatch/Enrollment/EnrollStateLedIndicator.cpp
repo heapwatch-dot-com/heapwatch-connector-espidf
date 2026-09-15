@@ -8,7 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "heapwatch_config.h"
-#include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
+#include "heapwatch/Helpers/FreeRtosAlloc.h"
 
 namespace Heapwatch::Enrollment {
 
@@ -149,7 +149,7 @@ void runKeyExpiredPattern(EnrollStateLedPhase phase) {
     }
 }
 
-void indicatorTaskEntry(void* /*param*/) {
+void taskBlinkEnrollLed(void* /*param*/) {
     while (!g_stop_requested) {
         const EnrollStateLedPhase phase = g_phase;
 
@@ -216,7 +216,7 @@ void startIndicator() {
 
     g_stop_requested = false;
     g_task_exited = false;
-    if (heapwatch_task_create(indicatorTaskEntry, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
+    if (heapwatch_task_create(taskBlinkEnrollLed, "hw_enroll_led", 2048, nullptr, tskIDLE_PRIORITY + 1,
                               nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to start enroll state LED task");
         g_task_exited = true;

@@ -22,13 +22,13 @@ struct CommandInboundMessage {
     char payload[HEAPWATCH_COMMAND_PAYLOAD_MAX] = {};
 };
 
-/** Create hw_command task (idempotent). Queue storage lives in the working set. */
-void initCommandWorker();
+/** Create hw_command task (idempotent). Queue storage lives in the memory block. */
+void initCommandTask();
 
-void shutdownCommandWorker();
+void shutdownCommandTask();
 
 /** True when hw_command is not running (never started, or stopped). */
-bool commandWorkerExited();
+bool commandTaskExited();
 
 /**
  * Enqueue an MQTT command for hw_command (non-blocking).

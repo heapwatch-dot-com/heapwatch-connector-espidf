@@ -7,7 +7,7 @@
 
 #include "heapwatch/Settings/ConnectorSettings.h"
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
-#include "heapwatch/DeviceCommand/GoingDark/GoingDarkPipeline.h"
+#include "heapwatch/DeviceCommand/CommandedOffline/CommandedOfflinePipeline.h"
 
 namespace Heapwatch::DeviceCommand {
 
@@ -239,9 +239,9 @@ void handleWifiReconnect(const char* suffix, char* command_id, const char* paylo
     }
 
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
-    if (!Heapwatch::DeviceCommand::GoingDark::scheduleWifiReconnect(suffix, command_id, duration_s)) {
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleWifiReconnect(suffix, command_id, duration_s)) {
         publishWithResult(suffix, command_id, false, "busy",
-                          "Going-dark pipeline busy or unavailable", nullptr);
+                          "Commanded-offline pipeline busy or unavailable", nullptr);
         free(command_id);
         return;
     }

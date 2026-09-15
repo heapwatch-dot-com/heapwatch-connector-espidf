@@ -16,7 +16,7 @@ void NullBleProvider::fillSnapshot(RadioBleSnapshot& out) const {
 }
 
 bool NullBleProvider::startScan(bool /*active*/, uint32_t /*duration_seconds*/,
-                                ScanPeerCallback /*on_peer*/, ScanCompleteCallback on_complete,
+                                ScannedBleDeviceCallback /*on_peer*/, ScanCompleteCallback on_complete,
                                 void* ctx) {
     if (on_complete != nullptr) {
         on_complete(false, "bluetooth_disabled", ctx);

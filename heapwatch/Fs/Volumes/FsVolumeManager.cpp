@@ -45,7 +45,7 @@ void bindVolumeTables() {
         return;
     }
     Heapwatch::Helpers::MemoryManager::init();
-    Heapwatch::Helpers::HeapwatchWorkingSet* ws = Heapwatch::Helpers::MemoryManager::get();
+    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws == nullptr) {
         return;
     }
@@ -186,7 +186,7 @@ void defaultMountPath(const char* label, char* out, size_t out_len) {
     snprintf(out, out_len, "/%s", label);
 }
 
-bool formatIfFailed() {
+bool formatFilesystemIfMountFailed() {
 #if CONFIG_HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
     return true;
 #else
@@ -242,7 +242,7 @@ MountOutcome mountSpiffs(const char* label, const char* mount_path) {
     conf.base_path = mount_path;
     conf.partition_label = label;
     conf.max_files = 4;
-    conf.format_if_mount_failed = formatIfFailed();
+    conf.format_if_mount_failed = formatFilesystemIfMountFailed();
     const esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_OK) {
         return MountOutcome::ConnectorOwned;
@@ -261,7 +261,7 @@ MountOutcome mountLittlefs(const char* label, const char* mount_path) {
     conf.base_path = mount_path;
     conf.partition_label = label;
     conf.partition = part;
-    conf.format_if_mount_failed = formatIfFailed();
+    conf.format_if_mount_failed = formatFilesystemIfMountFailed();
     conf.dont_mount = false;
     const esp_err_t err = esp_vfs_littlefs_register(&conf);
     if (err == ESP_OK) {
@@ -282,7 +282,7 @@ MountOutcome mountFat(Volume* volume) {
         return MountOutcome::HostOwned;
     }
     esp_vfs_fat_mount_config_t cfg = {};
-    cfg.format_if_mount_failed = formatIfFailed();
+    cfg.format_if_mount_failed = formatFilesystemIfMountFailed();
     cfg.max_files = 4;
     cfg.allocation_unit_size = 4096;
     const esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl(volume->mount_path, volume->label, &cfg,
@@ -314,7 +314,7 @@ MountOutcome doMount(Volume* volume) {
     return MountOutcome::Failed;
 }
 
-void adoptVolume(Kind kind, const char* label, const char* mount_path, bool connector_mounted,
+void registerAlreadyMountedVolume(Kind kind, const char* label, const char* mount_path, bool connector_mounted,
                  wl_handle_t fat_wl, bool browsable, bool external = false) {
     Volume* existing = findVolumeByLabelLocked(label);
     if (existing != nullptr) {
@@ -365,7 +365,7 @@ void mountConnectorSdCard() {
                  "'%s' is already mounted -- disable the SD take-over option and call "
                  "heapwatch_register_sd_volume() instead",
                  CONNECTOR_SD_MOUNT_PATH);
-        adoptVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, false, WL_INVALID_HANDLE,
+        registerAlreadyMountedVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, false, WL_INVALID_HANDLE,
                     true, true);
         return;
     }
@@ -405,7 +405,7 @@ void mountConnectorSdCard() {
         return;
     }
 
-    adoptVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, true, WL_INVALID_HANDLE, true,
+    registerAlreadyMountedVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, true, WL_INVALID_HANDLE, true,
                 true);
 }
 
@@ -423,8 +423,8 @@ void unmountConnectorSdCard(const char* mount_path) {
 }
 #endif  // CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
 
-/** Adopt host-mounted SD cards. They are never discovered — only registered. */
-void adoptSdVolumes() {
+/** Register host-mounted SD cards. They are never discovered — only registered. */
+void registerAlreadyMountedSdVolumes() {
 #if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
     mountConnectorSdCard();
 #endif
@@ -439,7 +439,7 @@ void adoptSdVolumes() {
                      mapping.mount_path);
             continue;
         }
-        adoptVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
+        registerAlreadyMountedVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
                     true);
     }
 }
@@ -467,7 +467,7 @@ void processPartition(const esp_partition_t* part) {
             return;
         }
         if (dirExists(intended)) {
-            adoptVolume(kind, label, intended, false, WL_INVALID_HANDLE, true);
+            registerAlreadyMountedVolume(kind, label, intended, false, WL_INVALID_HANDLE, true);
         } else {
             ESP_LOGW(TAG, "Registered volume '%s' at '%s' is not mounted", label, intended);
         }
@@ -483,7 +483,7 @@ void processPartition(const esp_partition_t* part) {
                      "call heapwatch_register_fs_volume() with the real mount path",
                      label, intended);
         }
-        adoptVolume(kind, label, intended, false, WL_INVALID_HANDLE, browsable);
+        registerAlreadyMountedVolume(kind, label, intended, false, WL_INVALID_HANDLE, browsable);
         return;
     }
 
@@ -496,7 +496,7 @@ void processPartition(const esp_partition_t* part) {
     if (outcome == MountOutcome::Failed) {
         return;
     }
-    adoptVolume(kind, label, intended, outcome == MountOutcome::ConnectorOwned, pending.fat_wl,
+    registerAlreadyMountedVolume(kind, label, intended, outcome == MountOutcome::ConnectorOwned, pending.fat_wl,
                dirExists(intended));
 }
 
@@ -530,11 +530,11 @@ esp_err_t applySdMappingLocked(const HostMapping& mapping) {
         return ESP_OK;
     }
     if (!dirExists(mapping.mount_path)) {
-        ESP_LOGI(TAG, "SD volume '%s' at '%s' is not mounted yet — will adopt when present",
+        ESP_LOGI(TAG, "SD volume '%s' at '%s' is not mounted yet — will register when present",
                  mapping.label, mapping.mount_path);
         return ESP_OK;
     }
-    adoptVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
+    registerAlreadyMountedVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
                 true);
     return ESP_OK;
 }
@@ -579,7 +579,7 @@ esp_err_t applyFlashMappingLocked(const HostMapping& mapping) {
     return ESP_OK;
 }
 
-void tryAdoptPendingLocked() {
+void tryBindRegisteredVolumesNowMountedLocked() {
     if (!g_mount_all_done) {
         return;
     }
@@ -597,7 +597,7 @@ void tryAdoptPendingLocked() {
 
 }  // namespace
 
-void unbindWorkingSet() {
+void unbindMemoryBlock() {
     g_host_map = nullptr;
     g_sd_map = nullptr;
     g_volumes = nullptr;
@@ -637,9 +637,9 @@ esp_err_t registerSdVolume(const char* label, const char* mount_path) {
     return applySdMappingLocked(*slot);
 }
 
-void tryAdoptPending() {
+void tryBindRegisteredVolumesNowMounted() {
     TableLock lock;
-    tryAdoptPendingLocked();
+    tryBindRegisteredVolumesNowMountedLocked();
 }
 
 void mountAll() {
@@ -657,9 +657,9 @@ void mountAll() {
         it = esp_partition_next(it);
     }
 
-    adoptSdVolumes();
+    registerAlreadyMountedSdVolumes();
     g_mount_all_done = true;
-    tryAdoptPendingLocked();
+    tryBindRegisteredVolumesNowMountedLocked();
 }
 
 void unmountConnectorOwned() {
@@ -709,13 +709,13 @@ void unmountConnectorOwned() {
 
 size_t mountedCount() {
     TableLock lock;
-    tryAdoptPendingLocked();
+    tryBindRegisteredVolumesNowMountedLocked();
     return g_volume_count;
 }
 
 const Volume* volumeAt(size_t index) {
     TableLock lock;
-    tryAdoptPendingLocked();
+    tryBindRegisteredVolumesNowMountedLocked();
     if (index >= g_volume_count) {
         return nullptr;
     }
@@ -724,7 +724,7 @@ const Volume* volumeAt(size_t index) {
 
 const Volume* findByPath(const char* path) {
     TableLock lock;
-    tryAdoptPendingLocked();
+    tryBindRegisteredVolumesNowMountedLocked();
     const Volume* best = nullptr;
     size_t best_len = 0;
     for (size_t i = 0; i < g_volume_count; ++i) {
@@ -841,7 +841,7 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
     size_t count = 0;
     {
         TableLock lock;
-        tryAdoptPendingLocked();
+        tryBindRegisteredVolumesNowMountedLocked();
         count = g_volume_count;
         if (count > MAX_VOLUMES) {
             count = MAX_VOLUMES;

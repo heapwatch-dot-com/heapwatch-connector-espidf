@@ -5,7 +5,7 @@
 #include "cJSON.h"
 
 #include "heapwatch/DeviceCommand/DeviceCommandHandler.h"
-#include "heapwatch/DeviceCommand/GoingDark/GoingDarkPipeline.h"
+#include "heapwatch/DeviceCommand/CommandedOffline/CommandedOfflinePipeline.h"
 
 namespace Heapwatch::DeviceCommand {
 
@@ -46,9 +46,9 @@ void handleSleepLight(const char* suffix, char* command_id, const char* payload,
         return;
     }
 
-    if (!Heapwatch::DeviceCommand::GoingDark::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::GoingDark::SleepKind::Light,
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::Light,
                                               duration_s)) {
-        publishCommandResponse(suffix, command_id, false, "busy", "Going-dark pipeline busy");
+        publishCommandResponse(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);
         return;
     }
@@ -64,9 +64,9 @@ void handleSleepDeep(const char* suffix, char* command_id, const char* payload, 
         return;
     }
 
-    if (!Heapwatch::DeviceCommand::GoingDark::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::GoingDark::SleepKind::Deep,
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::Deep,
                                               duration_s)) {
-        publishCommandResponse(suffix, command_id, false, "busy", "Going-dark pipeline busy");
+        publishCommandResponse(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);
         return;
     }
