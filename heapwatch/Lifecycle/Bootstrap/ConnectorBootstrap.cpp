@@ -28,7 +28,6 @@
 #include <cinttypes>
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
 #include "freertos/task.h"
 
 #include "esp_event.h"
@@ -47,23 +46,21 @@
 #include "heapwatch.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
+#include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 
 namespace Heapwatch::Lifecycle::Bootstrap {
 
 constexpr char TAG[] = "HwLife";
 
-constexpr EventBits_t WIFI_CONNECTED_EVENT_BIT = BIT0;
-constexpr EventBits_t WIFI_FAIL_EVENT_BIT = BIT1;
+#if CONFIG_HEAPWATCH_MANAGE_WIFI
 constexpr int32_t WIFI_CONNECT_MAX_RETRY = 10;
+#endif
 
-EventGroupHandle_t g_wifi_event_group = nullptr;
 int32_t g_wifi_retry = 0;
 uint32_t g_wifi_reconnects_total = 0;
 volatile bool g_wifi_permanently_failed = false;
 volatile bool g_command_wifi_reconnect_active = false;
 bool g_wifi_driver_inited = false;
-bool g_wifi_handler_registered = false;
-esp_event_handler_instance_t g_wifi_handler_instance = nullptr;
 
 namespace {
 
@@ -437,37 +434,6 @@ void logForwardTask(void* arg) {
 }
 #endif /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
 
-#if CONFIG_HEAPWATCH_MANAGE_WIFI
-void wifiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id,
-                       void* event_data) {
-    (void)arg;
-    (void)event_data;
-
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
-        g_wifi_reconnects_total++;
-        if (g_command_wifi_reconnect_active) {
-            ESP_LOGI(TAG, "Wi-Fi disconnected (commanded reconnect — deferring auto-reconnect)");
-            return;
-        }
-        if (g_wifi_retry < WIFI_CONNECT_MAX_RETRY) {
-            g_wifi_retry++;
-            esp_wifi_connect();
-            ESP_LOGW(TAG, "Wi-Fi reconnect attempt %" PRId32 "/%" PRId32, g_wifi_retry, WIFI_CONNECT_MAX_RETRY);
-        } else {
-            xEventGroupSetBits(g_wifi_event_group, WIFI_FAIL_EVENT_BIT);
-            g_wifi_permanently_failed = true;
-            Heapwatch::Lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
-            Heapwatch::Enrollment::setIndicatorPhase(
-                Heapwatch::Enrollment::EnrollStateLedPhase::kWifiFailed);
-            ESP_LOGE(TAG, "Wi-Fi connect failed after %" PRId32 " retries", WIFI_CONNECT_MAX_RETRY);
-        }
-    }
-}
-#endif /* CONFIG_HEAPWATCH_MANAGE_WIFI (wifiEventHandler) */
-
 }  // namespace
 
 void setCoredumpAuthHeader(BootCredentials* creds) {
@@ -550,6 +516,34 @@ void clearWifiPermanentlyFailed() {
     g_wifi_retry = 0;
 }
 
+void connectManagedWifi() {
+#if CONFIG_HEAPWATCH_MANAGE_WIFI
+    esp_wifi_connect();
+#endif
+}
+
+void handleManagedWifiDisconnected() {
+#if CONFIG_HEAPWATCH_MANAGE_WIFI
+    g_wifi_reconnects_total++;
+    if (g_command_wifi_reconnect_active) {
+        ESP_LOGI(TAG, "Wi-Fi disconnected (commanded reconnect — deferring auto-reconnect)");
+        return;
+    }
+    if (g_wifi_retry < WIFI_CONNECT_MAX_RETRY) {
+        g_wifi_retry++;
+        esp_wifi_connect();
+        ESP_LOGW(TAG, "Wi-Fi reconnect attempt %" PRId32 "/%" PRId32, g_wifi_retry,
+                 WIFI_CONNECT_MAX_RETRY);
+    } else {
+        g_wifi_permanently_failed = true;
+        Heapwatch::Lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
+        Heapwatch::Enrollment::setIndicatorPhase(
+            Heapwatch::Enrollment::EnrollStateLedPhase::kWifiFailed);
+        ESP_LOGE(TAG, "Wi-Fi connect failed after %" PRId32 " retries", WIFI_CONNECT_MAX_RETRY);
+    }
+#endif
+}
+
 bool requestWifiReconnect(uint32_t duration_s) {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
     g_command_wifi_reconnect_active = true;
@@ -592,9 +586,6 @@ void startWifiIfManaged() {
 #endif
     g_wifi_permanently_failed = false;
     g_wifi_retry = 0;
-    if (g_wifi_event_group == nullptr) {
-        g_wifi_event_group = xEventGroupCreate();
-    }
     ESP_ERROR_CHECK(esp_netif_init());
     if (!g_wifi_driver_inited) {
         esp_netif_create_default_wifi_sta();
@@ -602,12 +593,6 @@ void startWifiIfManaged() {
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
         g_wifi_driver_inited = true;
-    }
-
-    if (!g_wifi_handler_registered) {
-        ESP_ERROR_CHECK(esp_event_handler_instance_register(
-            WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr, &g_wifi_handler_instance));
-        g_wifi_handler_registered = true;
     }
 
     wifi_config_t wifi_config = {};
@@ -649,7 +634,7 @@ void syncTimeIfManaged() {
         }
         checks++;
         ESP_LOGI(TAG, "Waiting for SNTP sync... (%" PRId32 "/%" PRId32 ")", checks, MAX_CHECKS);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(1000);
     }
 
     ESP_LOGW(TAG, "SNTP sync timeout, continuing with current system time");
@@ -694,12 +679,6 @@ void stopLogRelay() {
 
 void stopManagedWifi() {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
-    if (g_wifi_handler_registered) {
-        (void)esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                 g_wifi_handler_instance);
-        g_wifi_handler_instance = nullptr;
-        g_wifi_handler_registered = false;
-    }
     if (g_wifi_driver_inited) {
         (void)esp_wifi_stop();
     }

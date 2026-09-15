@@ -60,6 +60,12 @@ bool runFactoryEnrollment(BootCredentials* creds);
 /** Disconnect and reconnect Wi-Fi when HEAPWATCH_MANAGE_WIFI=y. Optional offline duration. */
 bool requestWifiReconnect(uint32_t duration_s);
 
+/** `esp_wifi_connect()` when HEAPWATCH_MANAGE_WIFI=y. Call from handleNotificationsFromSystemEventLoop only. */
+void connectManagedWifi();
+
+/** Retry / give-up after STA_DISCONNECTED. Call from handleNotificationsFromSystemEventLoop only. */
+void handleManagedWifiDisconnected();
+
 /**
  * Blocks (bounded, ~20s) until SNTP time sync succeeds when HEAPWATCH_MANAGE_TIME_SYNC=y.
  * Intended for the bootstrap task only — never call from app_main.

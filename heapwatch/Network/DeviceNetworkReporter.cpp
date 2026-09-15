@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstring>
 
-#include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -258,55 +257,6 @@ void emit_events_for_scan(esp_netif_t* default_netif) {
     g_have_prev = true;
 }
 
-void on_ip_or_wifi_event(void* /*arg*/, esp_event_base_t event_base, int32_t event_id,
-                         void* /*event_data*/) {
-#ifdef IP_EVENT_TX_RX
-    if (event_base == IP_EVENT && event_id == IP_EVENT_TX_RX) {
-        return;
-    }
-#endif
-    if (event_base == IP_EVENT) {
-        switch (event_id) {
-            case IP_EVENT_STA_GOT_IP:
-#ifdef IP_EVENT_ETH_GOT_IP
-            case IP_EVENT_ETH_GOT_IP:
-#endif
-#ifdef IP_EVENT_PPP_GOT_IP
-            case IP_EVENT_PPP_GOT_IP:
-#endif
-                HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_GOT_IP);
-                break;
-            case IP_EVENT_STA_LOST_IP:
-#ifdef IP_EVENT_ETH_LOST_IP
-            case IP_EVENT_ETH_LOST_IP:
-#endif
-#ifdef IP_EVENT_PPP_LOST_IP
-            case IP_EVENT_PPP_LOST_IP:
-#endif
-                HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_LOST_IP);
-                break;
-#ifdef IP_EVENT_NETIF_UP
-            case IP_EVENT_NETIF_UP:
-                HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
-                break;
-#endif
-#ifdef IP_EVENT_NETIF_DOWN
-            case IP_EVENT_NETIF_DOWN:
-                HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
-                break;
-#endif
-            default:
-                break;
-        }
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_DOWN);
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
-        HeapwatchConnector::getInstance().queueEvent(HEAPWATCH_EVENT_NETIF_UP);
-    }
-
-    markTopologyDirty();
-}
-
 }  // namespace
 
 bool buildPayload(char* out, size_t out_len) {
@@ -362,12 +312,6 @@ void start() {
     }
     g_started = true;
 
-    ESP_ERROR_CHECK_WITHOUT_ABORT(
-        esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &on_ip_or_wifi_event, nullptr));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED,
-                                                             &on_ip_or_wifi_event, nullptr));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_event_handler_register(
-        WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_ip_or_wifi_event, nullptr));
     Heapwatch::Network::NetifTraffic::start();
     ESP_LOGI(TAG, "Network reporter started");
 }
@@ -376,9 +320,6 @@ void stop() {
     if (!g_started) {
         return;
     }
-    (void)esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &on_ip_or_wifi_event);
-    (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &on_ip_or_wifi_event);
-    (void)esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_ip_or_wifi_event);
     g_started = false;
 }
 

@@ -3,6 +3,7 @@
 #include "heapwatch/Enrollment/Credentials/DeviceCredentialsStore.h"
 #include "heapwatch/Enrollment/EnrollStateLedIndicator.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
+#include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 
 #include <cstdio>
 #include <cstring>
@@ -489,7 +490,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                         ESP_LOGE(TAG, "Enrollment terminal status %" PRId32 " for %s, retrying in %" PRIu32 " ms",
                                  static_cast<int32_t>(enroll_status), device_uid,
                                  static_cast<uint32_t>(poll_interval_ms));
-                        vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                        Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                            poll_interval_ms);
                         continue;
                     }
 
@@ -504,7 +506,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
                 setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
 #endif
-                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                    poll_interval_ms);
             }
         } else {
             ESP_LOGI(TAG, "Resuming enrollment for pending device %s", device_uid);
@@ -525,7 +528,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                          static_cast<int32_t>(status), device_uid,
                          static_cast<uint32_t>(poll_interval_ms));
                 Heapwatch::Enrollment::Credentials::clearPendingDeviceUid();
-                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                    poll_interval_ms);
                 break;
             }
             if (status == Status::kProvisioned) {
@@ -536,7 +540,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 }
                 ESP_LOGW(TAG, "Provisioning fetch failed for provisioned %s, retrying in %" PRIu32 " ms",
                          device_uid, static_cast<uint32_t>(poll_interval_ms));
-                vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+                Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                    poll_interval_ms);
                 continue;
             }
             if (status == Status::kError) {
@@ -552,7 +557,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                          static_cast<uint32_t>(poll_interval_ms));
             }
 
-            vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+            Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                poll_interval_ms);
         }
 
         if (!accepted_awaiting_provision) {
@@ -569,7 +575,8 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
             setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
 #endif
-            vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+            Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
+                poll_interval_ms);
         }
     }
 }

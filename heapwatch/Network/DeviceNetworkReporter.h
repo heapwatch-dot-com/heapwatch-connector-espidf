@@ -7,7 +7,7 @@
 
 namespace Heapwatch::Network {
 
-/** Start listening for IP/WiFi netif lifecycle events (idempotent). */
+/** Start netif traffic counters (idempotent). Topology flags are set from sys_evt notifications. */
 void start();
 
 void stop();

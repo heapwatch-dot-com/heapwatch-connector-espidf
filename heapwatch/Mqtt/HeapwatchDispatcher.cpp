@@ -37,6 +37,7 @@
 #include "heapwatch/Lifecycle/BootSync/ConnectorBootSync.h"
 #include "heapwatch/DeviceCommand/CommandWorker.h"
 #include "heapwatch/Lifecycle/ConnectorLifecycle.h"
+#include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 #include "heapwatch_config.h"
 #include "heapwatch_endpoints.h"
 #include "sdkconfig.h"
@@ -327,8 +328,10 @@ void heapwatch_dispatch_task(void* arg) {
         if (!heapwatch_dispatcher_running()) {
             break;
         }
+        Heapwatch::Lifecycle::handleNotificationsFromSystemEventLoop();
         if (!heapwatch_network_ready()) {
-            vTaskDelay(pdMS_TO_TICKS(HEAPWATCH_MQTT_RETRY_INTERVAL_MS));
+            Heapwatch::Lifecycle::waitForNotificationFromSystemEventLoop(
+                HEAPWATCH_MQTT_RETRY_INTERVAL_MS);
             continue;
         }
 

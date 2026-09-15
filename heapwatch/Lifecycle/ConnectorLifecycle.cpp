@@ -4,6 +4,7 @@
 #include "heapwatch/Helpers/heapwatch_freertos_alloc.h"
 #include "heapwatch.h"
 #include "heapwatch/Lifecycle/Bootstrap/ConnectorBootstrap.h"
+#include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 #include "heapwatch/Mqtt/HeapwatchConnector.h"
 #include "heapwatch_endpoints.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
@@ -18,9 +19,7 @@
 #include <cstring>
 #include <cinttypes>
 
-#include "esp_event.h"
 #include "esp_log.h"
-#include "esp_netif.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -48,11 +47,6 @@ volatile bool g_boot_cycle_resumed = false;
 volatile bool g_wake_telemetry_queued = false;
 Heapwatch::Lifecycle::BootCycle::State g_boot_state = {};
 TaskHandle_t g_bootstrap_task = nullptr;
-bool g_ip_handlers_registered = false;
-esp_event_handler_instance_t g_ip_sta_got = nullptr;
-esp_event_handler_instance_t g_ip_eth_got = nullptr;
-esp_event_handler_instance_t g_ip_sta_lost = nullptr;
-esp_event_handler_instance_t g_ip_eth_lost = nullptr;
 
 bool is_placeholder_build_identifier(const char* value) {
     if (value == nullptr || std::strncmp(value, "sha256:", 7) != 0) {
@@ -151,66 +145,13 @@ void applyBuildMetadataToConnector() {
     HeapwatchConnector::getInstance().setCoreDumpBuildIdentifier(build_id);
 }
 
-void onNetIpEvent(void*, esp_event_base_t event_base, int32_t event_id, void*) {
-    if (event_base != IP_EVENT) {
-        return;
-    }
-
-    auto& connector = HeapwatchConnector::getInstance();
-    if (event_id == IP_EVENT_STA_GOT_IP || event_id == IP_EVENT_ETH_GOT_IP) {
-        connector.setNetworkReady(true);
-        Heapwatch::Lifecycle::Bootstrap::clearWifiPermanentlyFailed();
-        if (connector.getStatus().initialized) {
-            connector.queueEvent(HEAPWATCH_EVENT_INTERNET_CONNECTED);
-        }
-        ESP_LOGI(TAG, "Network IP acquired (event %" PRId32 ")", static_cast<int32_t>(event_id));
-        onRuntimeConnectivityChanged();
-    } else if (event_id == IP_EVENT_STA_LOST_IP || event_id == IP_EVENT_ETH_LOST_IP) {
-        connector.setNetworkReady(false);
-        if (connector.getStatus().initialized) {
-            connector.queueEvent(HEAPWATCH_EVENT_INTERNET_DISCONNECTED);
-        }
-        ESP_LOGI(TAG, "Network IP lost (event %" PRId32 ")", static_cast<int32_t>(event_id));
-        onRuntimeConnectivityChanged();
-    }
-}
-
-void registerNetIpEventHandlers() {
-    if (g_ip_handlers_registered) {
-        return;
-    }
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        onNetIpEvent, nullptr, &g_ip_sta_got));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_ETH_GOT_IP,
-                                                        onNetIpEvent, nullptr, &g_ip_eth_got));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_LOST_IP,
-                                                        onNetIpEvent, nullptr, &g_ip_sta_lost));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_ETH_LOST_IP,
-                                                        onNetIpEvent, nullptr, &g_ip_eth_lost));
-    g_ip_handlers_registered = true;
-}
-
-void unregisterNetIpEventHandlers() {
-    if (!g_ip_handlers_registered) {
-        return;
-    }
-    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, g_ip_sta_got);
-    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, g_ip_eth_got);
-    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, g_ip_sta_lost);
-    (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_ETH_LOST_IP, g_ip_eth_lost);
-    g_ip_sta_got = nullptr;
-    g_ip_eth_got = nullptr;
-    g_ip_sta_lost = nullptr;
-    g_ip_eth_lost = nullptr;
-    g_ip_handlers_registered = false;
-}
-
 void bootstrapTask(void*) {
     setPhase(HEAPWATCH_PHASE_STARTING);
     Heapwatch::Lifecycle::Bootstrap::startWifiIfManaged();
     Heapwatch::Lifecycle::Bootstrap::startNetworkReporters();
 
     while (!g_bootstrap_stop) {
+        handleNotificationsFromSystemEventLoop();
         updateMqttPhaseFromStatus();
 
         if (!heapwatch_network_ready()) {
@@ -223,7 +164,7 @@ void bootstrapTask(void*) {
                     setPhase(HEAPWATCH_PHASE_AWAITING_NETWORK);
                 }
             }
-            vTaskDelay(pdMS_TO_TICKS(500));
+            waitForNotificationFromSystemEventLoop(500);
             continue;
         }
 
@@ -244,7 +185,7 @@ void bootstrapTask(void*) {
         }
 
         if (g_enrollment_cycle_active) {
-            vTaskDelay(pdMS_TO_TICKS(200));
+            waitWhileHandlingNotificationsFromSystemEventLoop(200);
             continue;
         }
 
@@ -254,7 +195,7 @@ void bootstrapTask(void*) {
                 setPhase(HEAPWATCH_PHASE_READY);
                 continue;
             }
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            waitWhileHandlingNotificationsFromSystemEventLoop(1000);
             continue;
         }
 
@@ -270,7 +211,7 @@ void bootstrapTask(void*) {
                                                   ? static_cast<uint32_t>(
                                                         CONFIG_HEAPWATCH_ENROLLMENT_POLL_INTERVAL_MS)
                                                   : 60000U;
-            vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
+            waitWhileHandlingNotificationsFromSystemEventLoop(poll_interval_ms);
         }
     }
     g_bootstrap_exited = true;
@@ -389,7 +330,7 @@ esp_err_t initialize() {
     }
 
     Heapwatch::Lifecycle::Bootstrap::ensureDefaultEventLoop();
-    registerNetIpEventHandlers();
+    registerHandlersOnSystemEventLoop();
 
     if (!HeapwatchConnector::getInstance().ensureInfrastructure()) {
         ESP_LOGE(TAG, "FATAL: failed to create connector message queues");
@@ -434,7 +375,7 @@ void deinitialize() {
     Heapwatch::Lifecycle::Bootstrap::stopLogRelay();
     Heapwatch::Lifecycle::Bootstrap::stopTimeSyncIfManaged();
     Heapwatch::Lifecycle::Bootstrap::stopManagedWifi();
-    unregisterNetIpEventHandlers();
+    unregisterHandlersOnSystemEventLoop();
     Heapwatch::Enrollment::stopIndicator();
     Heapwatch::Network::stop();
     Heapwatch::Fs::Volumes::unmountConnectorOwned();

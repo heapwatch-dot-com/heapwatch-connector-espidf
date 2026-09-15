@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-15
+
+### Changed
+- Wi-Fi and IP `sys_evt` callbacks only record what happened (event-group bits). `esp_wifi_connect()`, MQTT events, LED, and phase updates run on Heapwatch tasks via `handleNotificationsFromSystemEventLoop()`.
+
 ## [0.16.1] - 2026-09-14
 
 ### Changed
