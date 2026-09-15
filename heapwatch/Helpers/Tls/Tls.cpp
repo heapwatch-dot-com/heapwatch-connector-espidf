@@ -39,18 +39,18 @@ size_t localCaPemBytes() {
 
 const char* serverName(Server server) {
     switch (server) {
-        case Server::Api:
+        case Server::SERVER_API:
             return HEAPWATCH_API_TLS_SERVER_NAME;
-        case Server::Mqtt:
+        case Server::SERVER_MQTT:
             return HEAPWATCH_MQTT_TLS_SERVER_NAME;
-        case Server::Stream:
+        case Server::SERVER_STREAM:
             return HEAPWATCH_STREAM_TLS_SERVER_NAME;
     }
     return HEAPWATCH_API_TLS_SERVER_NAME;
 }
 
 void applyToHttpClient(esp_http_client_config_t& config) {
-    config.common_name = serverName(Server::Api);
+    config.common_name = serverName(Server::SERVER_API);
     config.skip_cert_common_name_check = false;
 
     if (skipServerCertVerify()) {
@@ -73,7 +73,7 @@ void applyToHttpClient(esp_http_client_config_t& config) {
 }
 
 void applyToMqtt(esp_mqtt_client_config_t& config) {
-    const char* name = serverName(Server::Mqtt);
+    const char* name = serverName(Server::SERVER_MQTT);
     config.broker.verification.common_name = name;
     config.broker.verification.skip_cert_common_name_check = false;
 

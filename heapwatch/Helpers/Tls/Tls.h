@@ -8,9 +8,9 @@
 namespace Heapwatch::Helpers::Tls {
 
 enum class Server {
-    Api,
-    Mqtt,
-    Stream,
+    SERVER_API,
+    SERVER_MQTT,
+    SERVER_STREAM,
 };
 
 /** SNI / certificate name for this Heapwatch edge (`.local` in development, `.com` in production). */

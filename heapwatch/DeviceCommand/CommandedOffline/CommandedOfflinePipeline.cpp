@@ -46,7 +46,7 @@ struct CommandedOfflineRequest {
     char suffix[SUFFIX_MAX] = {};
     char command_id[COMMAND_ID_MAX] = {};
     RequestKind kind = RequestKind::Sleep;
-    SleepKind sleep_kind = SleepKind::Light;
+    SleepKind sleep_kind = SleepKind::SLEEP_KIND_LIGHT;
     uint32_t duration_s = 0;
 };
 
@@ -145,7 +145,7 @@ void runWifiReconnectPipeline(CommandedOfflineRequest request) {
 
 void runSleepPipeline(CommandedOfflineRequest request) {
     const bool hooks_ok =
-        request.sleep_kind == SleepKind::Light ? Heapwatch::DeviceCommand::SleepHooks::runBeforeLightSleepHooks()
+        request.sleep_kind == SleepKind::SLEEP_KIND_LIGHT ? Heapwatch::DeviceCommand::SleepHooks::runBeforeLightSleepHooks()
                                                : Heapwatch::DeviceCommand::SleepHooks::runBeforeDeepSleepHooks();
     if (!hooks_ok || Heapwatch::DeviceCommand::SleepHooks::isMustStayAwake() || heapwatch_keep_running()) {
         rejectRequest(request, "interlock", "Sleep blocked by hook or keep_running");
@@ -153,7 +153,7 @@ void runSleepPipeline(CommandedOfflineRequest request) {
     }
 
     auto& connector = MqttTelemetryClient::getInstance();
-    if (request.sleep_kind == SleepKind::Light) {
+    if (request.sleep_kind == SleepKind::SLEEP_KIND_LIGHT) {
         connector.queueEvent(HEAPWATCH_EVENT_ENTERING_LIGHT_SLEEP);
     } else {
         connector.queueEvent(HEAPWATCH_EVENT_ENTERING_DEEP_SLEEP);
@@ -163,14 +163,14 @@ void runSleepPipeline(CommandedOfflineRequest request) {
     vTaskDelay(pdMS_TO_TICKS(EVENT_PUBLISH_GRACE_MS));
 
     const char* ack_message =
-        request.sleep_kind == SleepKind::Light ? "light sleep accepted" : "deep sleep accepted";
+        request.sleep_kind == SleepKind::SLEEP_KIND_LIGHT ? "light sleep accepted" : "deep sleep accepted";
     if (!publishCommandAckThenWaitUntilEspMqttOutboxEmpty(request, ack_message, HeapwatchShutdownAction::SHUTDOWN_CONTINUE_WITHOUT_REBOOT)) {
         return;
     }
 
     configureTimerWakeup(request.duration_s);
 
-    if (request.sleep_kind == SleepKind::Light) {
+    if (request.sleep_kind == SleepKind::SLEEP_KIND_LIGHT) {
         const int64_t sleep_started_us = esp_timer_get_time();
         ESP_LOGI(TAG, "Entering light sleep (duration_s=%" PRIu32 ")",
                  static_cast<uint32_t>(request.duration_s));

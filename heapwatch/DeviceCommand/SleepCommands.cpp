@@ -46,7 +46,7 @@ void handleSleepLight(const char* suffix, char* command_id, const char* payload,
         return;
     }
 
-    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::Light,
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::SLEEP_KIND_LIGHT,
                                               duration_s)) {
         publishCommandResponse(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);
@@ -64,7 +64,7 @@ void handleSleepDeep(const char* suffix, char* command_id, const char* payload, 
         return;
     }
 
-    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::Deep,
+    if (!Heapwatch::DeviceCommand::CommandedOffline::scheduleSleep(suffix, command_id, Heapwatch::DeviceCommand::CommandedOffline::SleepKind::SLEEP_KIND_DEEP,
                                               duration_s)) {
         publishCommandResponse(suffix, command_id, false, "busy", "Commanded-offline pipeline busy");
         free(command_id);

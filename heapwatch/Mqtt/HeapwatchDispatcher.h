@@ -94,7 +94,7 @@ void heapwatch_dispatcher_begin_shutdown(void);
  * 
  * @param arg Task argument (unused, set to nullptr)
  */
-void heapwatch_dispatch_task(void* arg);
+void taskDispatchMqttQueue(void* arg);
 
 /* ============================================================================
    Initialization Functions

@@ -145,7 +145,7 @@ void applyBuildMetadataToConnector() {
     MqttTelemetryClient::getInstance().setCoreDumpBuildIdentifier(build_id);
 }
 
-void bootstrapTask(void*) {
+void taskBootstrapConnector(void*) {
     setPhase(HEAPWATCH_PHASE_STARTING);
     Heapwatch::Lifecycle::Bootstrap::startWifiIfManaged();
     Heapwatch::Lifecycle::Bootstrap::startNetworkReporters();
@@ -250,13 +250,13 @@ void refreshHandoffLed() {
     }
     if (Heapwatch::Lifecycle::Bootstrap::isWifiPermanentlyFailed()) {
         Heapwatch::Enrollment::setIndicatorPhase(
-            Heapwatch::Enrollment::EnrollStateLedPhase::kWifiFailed);
+            Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_WIFI_FAILED);
     } else if (!heapwatch_network_ready()) {
         Heapwatch::Enrollment::setIndicatorPhase(
-            Heapwatch::Enrollment::EnrollStateLedPhase::kNetworkError);
+            Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR);
     } else {
         Heapwatch::Enrollment::setIndicatorPhase(
-            Heapwatch::Enrollment::EnrollStateLedPhase::kProvisioned);
+            Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_PROVISIONED);
     }
 #endif
 }
@@ -349,7 +349,7 @@ esp_err_t initialize() {
         g_bootstrap_stop = false;
         g_bootstrap_exited = false;
         constexpr uint32_t BOOTSTRAP_STACK_BYTES = 10240;
-        if (heapwatch_task_create_dram(bootstrapTask, "hw_bootstrap", BOOTSTRAP_STACK_BYTES, nullptr,
+        if (heapwatch_task_create_dram(taskBootstrapConnector, "hw_bootstrap", BOOTSTRAP_STACK_BYTES, nullptr,
                                          tskIDLE_PRIORITY + 2, &g_bootstrap_task) != pdPASS) {
             ESP_LOGE(TAG, "FATAL: failed to start hw_bootstrap task");
             g_bootstrap_started = false;

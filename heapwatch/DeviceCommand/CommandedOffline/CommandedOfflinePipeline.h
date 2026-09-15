@@ -6,8 +6,8 @@
 namespace Heapwatch::DeviceCommand::CommandedOffline {
 
 enum class SleepKind : uint8_t {
-    Light,
-    Deep,
+    SLEEP_KIND_LIGHT,
+    SLEEP_KIND_DEEP,
 };
 
 /** Start the commanded-offline pipeline for restart. Returns false if busy. */

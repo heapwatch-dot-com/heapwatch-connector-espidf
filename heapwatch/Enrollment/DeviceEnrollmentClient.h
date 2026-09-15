@@ -8,14 +8,14 @@
 namespace Heapwatch::Enrollment {
 
 enum class Status {
-    kPending = 0,
-    kAcceptedAwaitingProvision = 1,
-    kProvisioned = 2,
-    kRejected = 3,
-    kReEnrollBlocked = 4,
-    kBlockedForever = 5,
-    kKeyExpired = 6,
-    kError = 7,
+    STATUS_PENDING = 0,
+    STATUS_ACCEPTED_AWAITING_PROVISION = 1,
+    STATUS_PROVISIONED = 2,
+    STATUS_REJECTED = 3,
+    STATUS_RE_ENROLL_BLOCKED = 4,
+    STATUS_BLOCKED_FOREVER = 5,
+    STATUS_KEY_EXPIRED = 6,
+    STATUS_ERROR = 7,
 };
 
 /** POST /api/device-enrollment/enroll — server mints device_uid. */

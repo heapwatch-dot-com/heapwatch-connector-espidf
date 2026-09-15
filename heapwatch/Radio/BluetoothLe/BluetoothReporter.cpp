@@ -154,7 +154,7 @@ void onScanComplete(bool success, const char* message, void* /*ctx*/) {
     publishFullSync();
 }
 
-void telemetryTask(void* /*arg*/) {
+void taskReportBluetooth(void* /*arg*/) {
 #if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
     const TickType_t interval =
         pdMS_TO_TICKS(CONFIG_HEAPWATCH_BLE_TELEMETRY_INTERVAL_SEC * 1000);
@@ -327,7 +327,7 @@ void start() {
     g_stop_requested = false;
 #if defined(CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED) && CONFIG_HEAPWATCH_BLE_TELEMETRY_ENABLED
     g_task_exited = false;
-    heapwatch_task_create(telemetryTask, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+    heapwatch_task_create(taskReportBluetooth, "hw_ble_report", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 #else
     g_task_exited = true;
 #endif

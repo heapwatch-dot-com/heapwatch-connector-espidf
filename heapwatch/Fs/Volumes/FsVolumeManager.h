@@ -16,15 +16,15 @@ constexpr size_t LABEL_MAX = 17;
 constexpr size_t MOUNT_PATH_MAX = 64;
 
 enum class Kind : uint8_t {
-    Spiffs = 0,
-    Littlefs,
-    Fat,
+    KIND_SPIFFS = 0,
+    KIND_LITTLEFS,
+    KIND_FAT,
 };
 
 struct Volume {
     char label[LABEL_MAX] = {};
     char mount_path[MOUNT_PATH_MAX] = {};
-    Kind kind = Kind::Spiffs;
+    Kind kind = Kind::KIND_SPIFFS;
     bool mounted = false;
     bool browsable = false;
     bool connector_mounted = false;

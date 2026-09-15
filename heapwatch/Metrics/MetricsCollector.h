@@ -69,6 +69,6 @@ void refreshConnectorGaugeLimits();
  *
  * @param arg Task argument (unused, set to nullptr)
  */
-void collectTask(void* arg);
+void taskCollectMetrics(void* arg);
 
 }  // namespace Heapwatch::Metrics

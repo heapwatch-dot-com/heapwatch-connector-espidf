@@ -1,4 +1,5 @@
 #include "heapwatch/Ota/OtaService.h"
+#include "heapwatch/Ota/OtaServiceInternal.h"
 #include "sdkconfig.h"
 
 #if CONFIG_HEAPWATCH_ENABLE_OTA
@@ -28,21 +29,10 @@
 
 namespace Heapwatch::Ota {
 
-namespace {
-
-constexpr size_t DOWNLOAD_CHUNK = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
-constexpr uint32_t OTA_TASK_STACK_BYTES = 8192;
-// BSS — keeps download chunk RAM off the hw_ota task stack. Flash I/O: stay in DRAM.
 uint8_t g_ota_io_buf[DOWNLOAD_CHUNK] = {};
 constexpr size_t MQTT_YIELD_EVERY_BYTES = DOWNLOAD_CHUNK;
 constexpr size_t PROGRESS_EVERY_BYTES = 128 * 1024;
 constexpr int32_t HTTP_TIMEOUT_MS = 15000;
-
-enum class Phase : uint8_t {
-    Idle = 0,
-    Running,
-    BootPointerSwitched,
-};
 
 SemaphoreHandle_t g_mutex = nullptr;
 TaskHandle_t g_ota_task = nullptr;
@@ -524,27 +514,6 @@ void runOtaJob(const OtaJob& job) {
     }
 }
 
-void otaWorkerTask(void* /*arg*/) {
-    while (!g_stop_requested) {
-        // Block until hw_command arms a job (task notification — lighter than a binary
-        // semaphore and cannot accumulate stray wake counts). shutdown() notifies too,
-        // so this stays a zero-wakeup idle rather than a poll.
-        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (g_stop_requested) {
-            break;
-        }
-        if (g_phase != Phase::Running || g_job == nullptr) {
-            continue;
-        }
-
-        OtaJob job = *g_job;
-        runOtaJob(job);
-    }
-    g_task_exited = true;
-    g_ota_task = nullptr;
-    heapwatch_task_delete_dram(nullptr);
-}
-
 bool parse_start_payload(const char* payload, size_t payload_len, OtaJob* job) {
     cJSON* root = cJSON_ParseWithLength(payload, payload_len);
     if (root == nullptr || job == nullptr) {
@@ -758,8 +727,6 @@ bool handle_rollback(const char* command_id) {
     return true;
 }
 
-}  // namespace
-
 void init() {
     Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
     if (ws != nullptr) {
@@ -774,7 +741,7 @@ void init() {
     if (g_ota_task == nullptr) {
         g_stop_requested = false;
         g_task_exited = false;
-        if (heapwatch_task_create_dram(otaWorkerTask, "hw_ota", OTA_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 3,
+        if (heapwatch_task_create_dram(taskPerformOta, "hw_ota", OTA_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 3,
                                        &g_ota_task) != pdPASS) {
             ESP_LOGE(TAG, "FATAL: failed to create hw_ota task");
             g_ota_task = nullptr;

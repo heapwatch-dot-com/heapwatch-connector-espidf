@@ -18,7 +18,7 @@ namespace {
 
 constexpr char TAG[] = "HwEnroll";
 
-volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::kWifiConnecting;
+volatile EnrollStateLedPhase g_phase = EnrollStateLedPhase::ENROLL_LED_WIFI_CONNECTING;
 
 bool g_started = false;
 volatile bool g_stop_requested = false;
@@ -154,40 +154,40 @@ void taskBlinkEnrollLed(void* /*param*/) {
         const EnrollStateLedPhase phase = g_phase;
 
         switch (phase) {
-            case EnrollStateLedPhase::kOff:
+            case EnrollStateLedPhase::ENROLL_LED_OFF:
                 driveLed(false);
                 sleepMs(200);
                 break;
-            case EnrollStateLedPhase::kWifiConnecting:
+            case EnrollStateLedPhase::ENROLL_LED_WIFI_CONNECTING:
                 blinkEqualOnOff(500, 500, phase);
                 break;
-            case EnrollStateLedPhase::kWifiFailed:
-            case EnrollStateLedPhase::kNetworkError:
+            case EnrollStateLedPhase::ENROLL_LED_WIFI_FAILED:
+            case EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR:
                 blinkEqualOnOff(100, 100, phase);
                 break;
-            case EnrollStateLedPhase::kEnrolling:
+            case EnrollStateLedPhase::ENROLL_LED_ENROLLING:
                 blinkEqualOnOff(250, 250, phase);
                 break;
-            case EnrollStateLedPhase::kPending:
+            case EnrollStateLedPhase::ENROLL_LED_PENDING:
                 runDoubleBlink(phase);
                 break;
-            case EnrollStateLedPhase::kAcceptedAwaitingProvision:
+            case EnrollStateLedPhase::ENROLL_LED_ACCEPTED_AWAITING_PROVISION:
                 runTripleBlink(phase);
                 break;
-            case EnrollStateLedPhase::kProvisioned:
+            case EnrollStateLedPhase::ENROLL_LED_PROVISIONED:
                 driveLed(true);
                 sleepMs(500);
                 break;
-            case EnrollStateLedPhase::kRejected:
+            case EnrollStateLedPhase::ENROLL_LED_REJECTED:
                 runRejectedPattern(phase);
                 break;
-            case EnrollStateLedPhase::kReEnrollBlocked:
+            case EnrollStateLedPhase::ENROLL_LED_RE_ENROLL_BLOCKED:
                 runSosPattern(phase);
                 break;
-            case EnrollStateLedPhase::kBlockedForever:
+            case EnrollStateLedPhase::ENROLL_LED_BLOCKED_FOREVER:
                 blinkEqualOnOff(50, 50, phase);
                 break;
-            case EnrollStateLedPhase::kKeyExpired:
+            case EnrollStateLedPhase::ENROLL_LED_KEY_EXPIRED:
                 runKeyExpiredPattern(phase);
                 break;
         }
@@ -250,25 +250,25 @@ void setIndicatorPhase(EnrollStateLedPhase phase) { g_phase = phase; }
 
 EnrollStateLedPhase indicatorPhaseFromEnrollmentStatus(Status status) {
     switch (status) {
-        case Status::kPending:
-            return EnrollStateLedPhase::kPending;
-        case Status::kAcceptedAwaitingProvision:
-            return EnrollStateLedPhase::kAcceptedAwaitingProvision;
-        case Status::kProvisioned:
-            return EnrollStateLedPhase::kProvisioned;
-        case Status::kRejected:
-            return EnrollStateLedPhase::kRejected;
-        case Status::kReEnrollBlocked:
-            return EnrollStateLedPhase::kReEnrollBlocked;
-        case Status::kBlockedForever:
-            return EnrollStateLedPhase::kBlockedForever;
-        case Status::kKeyExpired:
-            return EnrollStateLedPhase::kKeyExpired;
-        case Status::kError:
-            return EnrollStateLedPhase::kNetworkError;
+        case Status::STATUS_PENDING:
+            return EnrollStateLedPhase::ENROLL_LED_PENDING;
+        case Status::STATUS_ACCEPTED_AWAITING_PROVISION:
+            return EnrollStateLedPhase::ENROLL_LED_ACCEPTED_AWAITING_PROVISION;
+        case Status::STATUS_PROVISIONED:
+            return EnrollStateLedPhase::ENROLL_LED_PROVISIONED;
+        case Status::STATUS_REJECTED:
+            return EnrollStateLedPhase::ENROLL_LED_REJECTED;
+        case Status::STATUS_RE_ENROLL_BLOCKED:
+            return EnrollStateLedPhase::ENROLL_LED_RE_ENROLL_BLOCKED;
+        case Status::STATUS_BLOCKED_FOREVER:
+            return EnrollStateLedPhase::ENROLL_LED_BLOCKED_FOREVER;
+        case Status::STATUS_KEY_EXPIRED:
+            return EnrollStateLedPhase::ENROLL_LED_KEY_EXPIRED;
+        case Status::STATUS_ERROR:
+            return EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR;
     }
 
-    return EnrollStateLedPhase::kNetworkError;
+    return EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR;
 }
 
 #endif

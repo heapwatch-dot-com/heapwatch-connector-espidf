@@ -115,38 +115,38 @@ bool copy_json_string(const cJSON* object, const char* key, char* out, size_t ou
 
 Status parse_enrollment_status(const char* status) {
     if (status == nullptr) {
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     if (std::strcmp(status, "pending") == 0) {
-        return Status::kPending;
+        return Status::STATUS_PENDING;
     }
     if (std::strcmp(status, "accepted_awaiting_provision") == 0) {
-        return Status::kAcceptedAwaitingProvision;
+        return Status::STATUS_ACCEPTED_AWAITING_PROVISION;
     }
     if (std::strcmp(status, "provisioned") == 0) {
-        return Status::kProvisioned;
+        return Status::STATUS_PROVISIONED;
     }
     if (std::strcmp(status, "rejected") == 0) {
-        return Status::kRejected;
+        return Status::STATUS_REJECTED;
     }
     if (std::strcmp(status, "re_enroll_blocked") == 0) {
-        return Status::kReEnrollBlocked;
+        return Status::STATUS_RE_ENROLL_BLOCKED;
     }
     if (std::strcmp(status, "blocked_forever") == 0) {
-        return Status::kBlockedForever;
+        return Status::STATUS_BLOCKED_FOREVER;
     }
     if (std::strcmp(status, "key_expired") == 0) {
-        return Status::kKeyExpired;
+        return Status::STATUS_KEY_EXPIRED;
     }
 
-    return Status::kError;
+    return Status::STATUS_ERROR;
 }
 
 Status parse_status_payload(const cJSON* data) {
     char status[48] = {};
     if (!copy_json_string(data, "enrollment_status", status, sizeof(status))) {
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     return parse_enrollment_status(status);
@@ -182,12 +182,12 @@ bool fill_credentials_from_fetch(const cJSON* data,
 }
 
 bool is_terminal_failure(Status status) {
-    return status == Status::kRejected || status == Status::kBlockedForever ||
-           status == Status::kKeyExpired;
+    return status == Status::STATUS_REJECTED || status == Status::STATUS_BLOCKED_FOREVER ||
+           status == Status::STATUS_KEY_EXPIRED;
 }
 
 bool is_waiting_for_operator(Status status) {
-    return status == Status::kPending || status == Status::kReEnrollBlocked;
+    return status == Status::STATUS_PENDING || status == Status::STATUS_RE_ENROLL_BLOCKED;
 }
 
 bool fetchSaveAndConfirmProvisioning(const char* api_base, const char* enrollment_key,
@@ -229,7 +229,7 @@ void updateLifecyclePhaseForEnrollmentStatus(Status status) {
         Heapwatch::Lifecycle::setPhase(HEAPWATCH_PHASE_WAITING_ACCEPT);
         return;
     }
-    if (status == Status::kAcceptedAwaitingProvision || status == Status::kProvisioned) {
+    if (status == Status::STATUS_ACCEPTED_AWAITING_PROVISION || status == Status::STATUS_PROVISIONED) {
         Heapwatch::Lifecycle::setPhase(HEAPWATCH_PHASE_PROVISIONING);
         return;
     }
@@ -243,8 +243,8 @@ void updateIndicatorForEnrollmentStatus(Status status) {
         return;
     }
 
-    if (status == Status::kAcceptedAwaitingProvision) {
-        setIndicatorPhase(EnrollStateLedPhase::kAcceptedAwaitingProvision);
+    if (status == Status::STATUS_ACCEPTED_AWAITING_PROVISION) {
+        setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_ACCEPTED_AWAITING_PROVISION);
         return;
     }
 
@@ -253,12 +253,12 @@ void updateIndicatorForEnrollmentStatus(Status status) {
         return;
     }
 
-    if (status == Status::kError) {
-        setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+    if (status == Status::STATUS_ERROR) {
+        setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR);
         return;
     }
 
-    setIndicatorPhase(EnrollStateLedPhase::kEnrolling);
+    setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_ENROLLING);
 #endif
     updateLifecyclePhaseForEnrollmentStatus(status);
 }
@@ -333,7 +333,7 @@ bool enroll(const char* api_base, const char* enrollment_key, const char* claime
 Status pollStatus(const char* api_base, const char* enrollment_key, const char* device_uid) {
     if (api_base == nullptr || enrollment_key == nullptr || device_uid == nullptr ||
         enrollment_key[0] == '\0' || device_uid[0] == '\0') {
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     char url[HTTP_URL_MAX] = {};
@@ -343,18 +343,18 @@ Status pollStatus(const char* api_base, const char* enrollment_key, const char* 
 
     HttpResponseBuffer response = {};
     if (!http_request(url, HTTP_METHOD_GET, nullptr, nullptr, &response)) {
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     cJSON* root = cJSON_Parse(response.data);
     if (root == nullptr) {
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     const cJSON* data = cJSON_GetObjectItem(root, "data");
     if (data == nullptr || !cJSON_IsObject(data)) {
         cJSON_Delete(root);
-        return Status::kError;
+        return Status::STATUS_ERROR;
     }
 
     const Status status = parse_status_payload(data);
@@ -479,9 +479,9 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
         if (!Heapwatch::Enrollment::Credentials::loadPendingDeviceUid(device_uid, sizeof(device_uid))) {
             while (true) {
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-                setIndicatorPhase(EnrollStateLedPhase::kEnrolling);
+                setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_ENROLLING);
 #endif
-                Status enroll_status = Status::kError;
+                Status enroll_status = Status::STATUS_ERROR;
                 if (enroll(api_base, enrollment_key, claimed_mac, claimed_uid128, build_identifier,
                            build_environment, device_uid, sizeof(device_uid), &enroll_status)) {
                     updateIndicatorForEnrollmentStatus(enroll_status);
@@ -504,7 +504,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                 ESP_LOGW(TAG, "Enrollment submit failed, retrying in %" PRIu32 " ms",
                          static_cast<uint32_t>(poll_interval_ms));
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-                setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+                setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR);
 #endif
                 Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
                     poll_interval_ms);
@@ -519,7 +519,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
 
             updateIndicatorForEnrollmentStatus(status);
 
-            if (status == Status::kAcceptedAwaitingProvision) {
+            if (status == Status::STATUS_ACCEPTED_AWAITING_PROVISION) {
                 accepted_awaiting_provision = true;
                 break;
             }
@@ -532,7 +532,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                     poll_interval_ms);
                 break;
             }
-            if (status == Status::kProvisioned) {
+            if (status == Status::STATUS_PROVISIONED) {
                 ESP_LOGW(TAG, "Device %s already provisioned — fetching credentials into NVS",
                          device_uid);
                 if (fetchAndSaveProvisioning(api_base, enrollment_key, device_uid, out)) {
@@ -544,7 +544,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
                     poll_interval_ms);
                 continue;
             }
-            if (status == Status::kError) {
+            if (status == Status::STATUS_ERROR) {
                 ESP_LOGW(TAG, "Enrollment status poll error for %s, retrying in %" PRIu32 " ms", device_uid,
                          static_cast<uint32_t>(poll_interval_ms));
             } else if (is_waiting_for_operator(status)) {
@@ -573,7 +573,7 @@ bool runUntilProvisioned(const char* api_base, const char* enrollment_key, const
             ESP_LOGW(TAG, "Provisioning fetch/save/confirm failed for %s, retrying in %" PRIu32 " ms",
                      device_uid, static_cast<uint32_t>(poll_interval_ms));
 #if CONFIG_HEAPWATCH_ENROLL_STATE_LED_INDICATOR
-            setIndicatorPhase(EnrollStateLedPhase::kNetworkError);
+            setIndicatorPhase(EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR);
 #endif
             Heapwatch::Lifecycle::waitWhileHandlingNotificationsFromSystemEventLoop(
                 poll_interval_ms);

@@ -286,7 +286,7 @@ static void service_claimed_identities_post_if_due() {
     (void)Heapwatch::Enrollment::serviceClaimedIdentitiesBootPostIfDue();
 }
 
-void heapwatch_dispatch_task(void* arg) {
+void taskDispatchMqttQueue(void* arg) {
     (void)arg;  // Unused parameter
     
     ESP_LOGI(TAG, "MQTT dispatcher thread started");

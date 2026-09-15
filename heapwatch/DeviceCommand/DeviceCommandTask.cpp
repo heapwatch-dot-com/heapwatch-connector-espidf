@@ -73,11 +73,11 @@ void taskHandleDeviceCommands(void* /*arg*/) {
             continue;
         }
 
-        if (msg.kind == InboundKind::Stop) {
+        if (msg.kind == InboundKind::INBOUND_STOP) {
             break;
         }
 
-        if (msg.kind == InboundKind::CredentialRotation) {
+        if (msg.kind == InboundKind::INBOUND_CREDENTIAL_ROTATION) {
             executeCredentialRotation();
             continue;
         }
@@ -114,7 +114,7 @@ void shutdownCommandTask() {
     }
 
     CommandInboundMessage msg = {};
-    msg.kind = InboundKind::Stop;
+    msg.kind = InboundKind::INBOUND_STOP;
     (void)xQueueSend(queue, &msg, pdMS_TO_TICKS(200));
 
     // Generous: a queued command may still be doing HTTP (credential rotation).
@@ -143,7 +143,7 @@ bool enqueueMqttCommand(const char* topic, size_t topic_len, const char* payload
     }
 
     CommandInboundMessage msg = {};
-    msg.kind = InboundKind::MqttCommand;
+    msg.kind = InboundKind::INBOUND_MQTT_COMMAND;
     msg.mqtt_retain = static_cast<uint8_t>(mqtt_retain);
     msg.topic_len = static_cast<uint16_t>(topic_len);
     msg.payload_len = static_cast<uint16_t>(payload_len);
@@ -167,7 +167,7 @@ bool enqueueCredentialRotation() {
     }
 
     CommandInboundMessage msg = {};
-    msg.kind = InboundKind::CredentialRotation;
+    msg.kind = InboundKind::INBOUND_CREDENTIAL_ROTATION;
     if (xQueueSend(queue, &msg, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Inbound command queue full — dropping credential rotation");
         return false;

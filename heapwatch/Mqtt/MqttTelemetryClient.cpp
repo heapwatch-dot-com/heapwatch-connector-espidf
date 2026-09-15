@@ -1023,14 +1023,14 @@ HeapwatchConnectorStatus MqttTelemetryClient::getStatus() const {
 void MqttTelemetryClient::startDispatcherThread() {
     g_dispatcher_running = true;
     g_dispatcher_exited = false;
-    heapwatch_task_create_dram(heapwatch_dispatch_task, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
+    heapwatch_task_create_dram(taskDispatchMqttQueue, "hw_dispatcher", HEAPWATCH_DISPATCHER_TASK_STACK_BYTES,
                                nullptr, tskIDLE_PRIORITY + 3, &g_dispatcher_task);
 }
 
 void MqttTelemetryClient::startCollectorThread() {
     g_collector_running = true;
     g_collector_exited = false;
-    heapwatch_task_create(Heapwatch::Metrics::collectTask, "hw_metrics",
+    heapwatch_task_create(Heapwatch::Metrics::taskCollectMetrics, "hw_metrics",
                          HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
                          &g_collector_task);
 }

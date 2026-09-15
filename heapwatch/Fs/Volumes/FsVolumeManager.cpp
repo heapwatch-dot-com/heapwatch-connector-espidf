@@ -1,26 +1,19 @@
 #include "heapwatch/Fs/Volumes/FsVolumeManager.h"
+#include "heapwatch/Fs/Volumes/FsVolumeManager-Internal.h"
 
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
 
-#include "esp_littlefs.h"
 #include "esp_log.h"
-#include "esp_partition.h"
+#include "esp_littlefs.h"
 #include "esp_spiffs.h"
 #include "esp_vfs_fat.h"
 #include "sdkconfig.h"
 
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-#include "driver/sdspi_host.h"
-#include "driver/spi_common.h"
-#include "sdmmc_cmd.h"
-#endif
-
 #include "heapwatch/Helpers/DynamicParameterSegment.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
-#include "heapwatch/Fs/HeapwatchFsPartition.h"
 #include "heapwatch.h"
 #include "heapwatch_config.h"
 
@@ -29,9 +22,9 @@
 
 namespace Heapwatch::Fs::Volumes {
 
-namespace {
+namespace Internal {
 
-constexpr char TAG[] = "HwFs";
+static constexpr char TAG[] = "HwFs";
 
 HostMapping* g_host_map = nullptr;
 HostMapping* g_sd_map = nullptr;
@@ -78,12 +71,6 @@ void unlockTable() {
     }
 }
 
-struct TableLock {
-    TableLock() { lockTable(); }
-    ~TableLock() { unlockTable(); }
-    TableLock(const TableLock&) = delete;
-    TableLock& operator=(const TableLock&) = delete;
-};
 
 void copyLabel(char* dest, size_t dest_len, const char* src) {
     if (dest == nullptr || dest_len == 0) {
@@ -186,136 +173,8 @@ void defaultMountPath(const char* label, char* out, size_t out_len) {
     snprintf(out, out_len, "/%s", label);
 }
 
-bool formatFilesystemIfMountFailed() {
-#if CONFIG_HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool autoMountEnabled() {
-#if CONFIG_HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool kindFromPartition(const esp_partition_t* part, Kind* kind) {
-    if (part == nullptr || kind == nullptr || part->type != ESP_PARTITION_TYPE_DATA) {
-        return false;
-    }
-    if (part->subtype == ESP_PARTITION_SUBTYPE_DATA_SPIFFS) {
-        *kind = Kind::Spiffs;
-        return true;
-    }
-    if (heapwatchIsLittlefsSubtype(part->subtype)) {
-        *kind = Kind::Littlefs;
-        return true;
-    }
-    if (part->subtype == ESP_PARTITION_SUBTYPE_DATA_FAT) {
-        *kind = Kind::Fat;
-        return true;
-    }
-    return false;
-}
-
-bool driverSaysMounted(Kind kind, const char* label) {
-    size_t total = 0;
-    size_t used = 0;
-    switch (kind) {
-        case Kind::Spiffs:
-            return esp_spiffs_info(label, &total, &used) == ESP_OK;
-        case Kind::Littlefs:
-            return esp_littlefs_info(label, &total, &used) == ESP_OK;
-        case Kind::Fat:
-            return false;
-    }
-    return false;
-}
-
-enum class MountOutcome : uint8_t { Failed, ConnectorOwned, HostOwned };
-
-MountOutcome mountSpiffs(const char* label, const char* mount_path) {
-    esp_vfs_spiffs_conf_t conf = {};
-    conf.base_path = mount_path;
-    conf.partition_label = label;
-    conf.max_files = 4;
-    conf.format_if_mount_failed = formatFilesystemIfMountFailed();
-    const esp_err_t err = esp_vfs_spiffs_register(&conf);
-    if (err == ESP_OK) {
-        return MountOutcome::ConnectorOwned;
-    }
-    if (err == ESP_ERR_INVALID_STATE && dirExists(mount_path)) {
-        return MountOutcome::HostOwned;
-    }
-    ESP_LOGW(TAG, "SPIFFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
-    return MountOutcome::Failed;
-}
-
-MountOutcome mountLittlefs(const char* label, const char* mount_path) {
-    const esp_partition_t* part =
-        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, label);
-    esp_vfs_littlefs_conf_t conf = {};
-    conf.base_path = mount_path;
-    conf.partition_label = label;
-    conf.partition = part;
-    conf.format_if_mount_failed = formatFilesystemIfMountFailed();
-    conf.dont_mount = false;
-    const esp_err_t err = esp_vfs_littlefs_register(&conf);
-    if (err == ESP_OK) {
-        return MountOutcome::ConnectorOwned;
-    }
-    if (err == ESP_ERR_INVALID_STATE && dirExists(mount_path)) {
-        return MountOutcome::HostOwned;
-    }
-    ESP_LOGW(TAG, "LittleFS mount '%s' at '%s' failed: %s", label, mount_path, esp_err_to_name(err));
-    return MountOutcome::Failed;
-}
-
-MountOutcome mountFat(Volume* volume) {
-    if (volume == nullptr) {
-        return MountOutcome::Failed;
-    }
-    if (dirExists(volume->mount_path)) {
-        return MountOutcome::HostOwned;
-    }
-    esp_vfs_fat_mount_config_t cfg = {};
-    cfg.format_if_mount_failed = formatFilesystemIfMountFailed();
-    cfg.max_files = 4;
-    cfg.allocation_unit_size = 4096;
-    const esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl(volume->mount_path, volume->label, &cfg,
-                                                            &volume->fat_wl);
-    if (err == ESP_OK) {
-        return MountOutcome::ConnectorOwned;
-    }
-    if ((err == ESP_ERR_INVALID_STATE || err == ESP_ERR_INVALID_ARG) && dirExists(volume->mount_path)) {
-        volume->fat_wl = WL_INVALID_HANDLE;
-        return MountOutcome::HostOwned;
-    }
-    ESP_LOGW(TAG, "FatFS mount '%s' at '%s' failed: %s", volume->label, volume->mount_path,
-             esp_err_to_name(err));
-    return MountOutcome::Failed;
-}
-
-MountOutcome doMount(Volume* volume) {
-    if (volume == nullptr) {
-        return MountOutcome::Failed;
-    }
-    switch (volume->kind) {
-        case Kind::Spiffs:
-            return mountSpiffs(volume->label, volume->mount_path);
-        case Kind::Littlefs:
-            return mountLittlefs(volume->label, volume->mount_path);
-        case Kind::Fat:
-            return mountFat(volume);
-    }
-    return MountOutcome::Failed;
-}
-
 void registerAlreadyMountedVolume(Kind kind, const char* label, const char* mount_path, bool connector_mounted,
-                 wl_handle_t fat_wl, bool browsable, bool external = false) {
+                                  wl_handle_t fat_wl, bool browsable, bool external) {
     Volume* existing = findVolumeByLabelLocked(label);
     if (existing != nullptr) {
         snprintf(existing->mount_path, sizeof(existing->mount_path), "%s", mount_path);
@@ -345,240 +204,6 @@ void registerAlreadyMountedVolume(Kind kind, const char* label, const char* moun
              connector_mounted ? "connector-mounted" : "host-owned");
 }
 
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-constexpr char CONNECTOR_SD_LABEL[] = "sd";
-constexpr char CONNECTOR_SD_MOUNT_PATH[] = "/sd";
-sdmmc_card_t* g_connector_sd_card = nullptr;
-
-/**
- * Connector-owned SD mount: only for hosts that do not use the card themselves. Takes over the
- * SPI bus, so it must stay off whenever the host already mounted the card (register it instead).
- */
-void mountConnectorSdCard() {
-    if (CONFIG_HEAPWATCH_SD_CARD_CS_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_MOSI_GPIO < 0 ||
-        CONFIG_HEAPWATCH_SD_CARD_MISO_GPIO < 0 || CONFIG_HEAPWATCH_SD_CARD_SCK_GPIO < 0) {
-        ESP_LOGI(TAG, "SD take-over enabled but pins unconfigured (-1) -- skipping mount");
-        return;
-    }
-    if (dirExists(CONNECTOR_SD_MOUNT_PATH)) {
-        ESP_LOGW(TAG,
-                 "'%s' is already mounted -- disable the SD take-over option and call "
-                 "heapwatch_register_sd_volume() instead",
-                 CONNECTOR_SD_MOUNT_PATH);
-        registerAlreadyMountedVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, false, WL_INVALID_HANDLE,
-                    true, true);
-        return;
-    }
-
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-
-    spi_bus_config_t bus_cfg = {};
-    bus_cfg.mosi_io_num = CONFIG_HEAPWATCH_SD_CARD_MOSI_GPIO;
-    bus_cfg.miso_io_num = CONFIG_HEAPWATCH_SD_CARD_MISO_GPIO;
-    bus_cfg.sclk_io_num = CONFIG_HEAPWATCH_SD_CARD_SCK_GPIO;
-    bus_cfg.quadwp_io_num = -1;
-    bus_cfg.quadhd_io_num = -1;
-
-    esp_err_t err = spi_bus_initialize(static_cast<spi_host_device_t>(host.slot), &bus_cfg,
-                                       SDSPI_DEFAULT_DMA);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "SD card SPI bus init failed: %s -- no card mounted", esp_err_to_name(err));
-        return;
-    }
-
-    sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_cfg.gpio_cs = static_cast<gpio_num_t>(CONFIG_HEAPWATCH_SD_CARD_CS_GPIO);
-    slot_cfg.host_id = static_cast<spi_host_device_t>(host.slot);
-
-    esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {};
-    mount_cfg.format_if_mount_failed = false;
-    mount_cfg.max_files = 4;
-    mount_cfg.allocation_unit_size = 16 * 1024;
-
-    err = esp_vfs_fat_sdspi_mount(CONNECTOR_SD_MOUNT_PATH, &host, &slot_cfg, &mount_cfg,
-                                  &g_connector_sd_card);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "SD card mount failed (no card present?): %s -- skipping",
-                 esp_err_to_name(err));
-        spi_bus_free(static_cast<spi_host_device_t>(host.slot));
-        g_connector_sd_card = nullptr;
-        return;
-    }
-
-    registerAlreadyMountedVolume(Kind::Fat, CONNECTOR_SD_LABEL, CONNECTOR_SD_MOUNT_PATH, true, WL_INVALID_HANDLE, true,
-                true);
-}
-
-void unmountConnectorSdCard(const char* mount_path) {
-    if (g_connector_sd_card == nullptr) {
-        return;
-    }
-    const sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    const esp_err_t err = esp_vfs_fat_sdcard_unmount(mount_path, g_connector_sd_card);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "SD card unmount failed: %s", esp_err_to_name(err));
-    }
-    spi_bus_free(static_cast<spi_host_device_t>(host.slot));
-    g_connector_sd_card = nullptr;
-}
-#endif  // CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-
-/** Register host-mounted SD cards. They are never discovered — only registered. */
-void registerAlreadyMountedSdVolumes() {
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-    mountConnectorSdCard();
-#endif
-
-    for (size_t i = 0; i < MAX_SD_VOLUMES; ++i) {
-        const HostMapping& mapping = g_sd_map[i];
-        if (!mapping.used) {
-            continue;
-        }
-        if (!dirExists(mapping.mount_path)) {
-            ESP_LOGW(TAG, "SD volume '%s' at '%s' is not mounted -- skipping", mapping.label,
-                     mapping.mount_path);
-            continue;
-        }
-        registerAlreadyMountedVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
-                    true);
-    }
-}
-
-void processPartition(const esp_partition_t* part) {
-    Kind kind = Kind::Spiffs;
-    if (!kindFromPartition(part, &kind)) {
-        return;
-    }
-    const char* label = part->label[0] != '\0' ? part->label : nullptr;
-    if (!validLabel(label)) {
-        return;
-    }
-
-    char intended[MOUNT_PATH_MAX] = {};
-    const HostMapping* mapping = findHostMapping(label);
-    if (mapping != nullptr) {
-        snprintf(intended, sizeof(intended), "%s", mapping->mount_path);
-    } else {
-        defaultMountPath(label, intended, sizeof(intended));
-    }
-
-    if (!autoMountEnabled()) {
-        if (mapping == nullptr) {
-            return;
-        }
-        if (dirExists(intended)) {
-            registerAlreadyMountedVolume(kind, label, intended, false, WL_INVALID_HANDLE, true);
-        } else {
-            ESP_LOGW(TAG, "Registered volume '%s' at '%s' is not mounted", label, intended);
-        }
-        return;
-    }
-
-    const bool already = driverSaysMounted(kind, label) || dirExists(intended);
-    if (already) {
-        const bool browsable = dirExists(intended);
-        if (!browsable) {
-            ESP_LOGW(TAG,
-                     "Partition '%s' is mounted by the host but '%s' is not a VFS root — "
-                     "call heapwatch_register_fs_volume() with the real mount path",
-                     label, intended);
-        }
-        registerAlreadyMountedVolume(kind, label, intended, false, WL_INVALID_HANDLE, browsable);
-        return;
-    }
-
-    Volume pending = {};
-    copyLabel(pending.label, sizeof(pending.label), label);
-    snprintf(pending.mount_path, sizeof(pending.mount_path), "%s", intended);
-    pending.kind = kind;
-    pending.fat_wl = WL_INVALID_HANDLE;
-    const MountOutcome outcome = doMount(&pending);
-    if (outcome == MountOutcome::Failed) {
-        return;
-    }
-    registerAlreadyMountedVolume(kind, label, intended, outcome == MountOutcome::ConnectorOwned, pending.fat_wl,
-               dirExists(intended));
-}
-
-esp_err_t applySdMappingLocked(const HostMapping& mapping) {
-    Volume* existing = findVolumeByLabelLocked(mapping.label);
-    if (existing != nullptr) {
-        if (strcmp(existing->mount_path, mapping.mount_path) == 0) {
-            if (dirExists(mapping.mount_path)) {
-                existing->browsable = true;
-                existing->mounted = true;
-            }
-            return ESP_OK;
-        }
-        if (existing->connector_mounted) {
-            ESP_LOGE(TAG,
-                     "Cannot move connector-owned volume '%s' from '%s' to '%s'",
-                     mapping.label, existing->mount_path, mapping.mount_path);
-            return ESP_ERR_HEAPWATCH_INVALID_ARG;
-        }
-        if (!dirExists(mapping.mount_path)) {
-            return ESP_OK;
-        }
-        snprintf(existing->mount_path, sizeof(existing->mount_path), "%s", mapping.mount_path);
-        existing->browsable = true;
-        existing->mounted = true;
-        existing->external = true;
-        return ESP_OK;
-    }
-
-    if (!g_mount_all_done) {
-        return ESP_OK;
-    }
-    if (!dirExists(mapping.mount_path)) {
-        ESP_LOGI(TAG, "SD volume '%s' at '%s' is not mounted yet — will register when present",
-                 mapping.label, mapping.mount_path);
-        return ESP_OK;
-    }
-    registerAlreadyMountedVolume(Kind::Fat, mapping.label, mapping.mount_path, false, WL_INVALID_HANDLE, true,
-                true);
-    return ESP_OK;
-}
-
-esp_err_t applyFlashMappingLocked(const HostMapping& mapping) {
-    Volume* existing = findVolumeByLabelLocked(mapping.label);
-    if (existing != nullptr) {
-        if (strcmp(existing->mount_path, mapping.mount_path) == 0) {
-            if (dirExists(mapping.mount_path)) {
-                existing->browsable = true;
-                existing->mounted = true;
-            }
-            return ESP_OK;
-        }
-        if (existing->connector_mounted) {
-            ESP_LOGE(TAG,
-                     "Cannot remount connector-owned flash volume '%s' from '%s' to '%s' — "
-                     "register the custom path before the connector mounts it, or disable auto-mount",
-                     mapping.label, existing->mount_path, mapping.mount_path);
-            return ESP_ERR_HEAPWATCH_INVALID_ARG;
-        }
-        if (!dirExists(mapping.mount_path)) {
-            return ESP_OK;
-        }
-        snprintf(existing->mount_path, sizeof(existing->mount_path), "%s", mapping.mount_path);
-        existing->browsable = true;
-        existing->mounted = true;
-        return ESP_OK;
-    }
-
-    if (!g_mount_all_done) {
-        return ESP_OK;
-    }
-
-    const esp_partition_t* part =
-        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, mapping.label);
-    if (part == nullptr) {
-        ESP_LOGW(TAG, "No flash data partition labelled '%s'", mapping.label);
-        return ESP_ERR_HEAPWATCH_INVALID_ARG;
-    }
-    processPartition(part);
-    return ESP_OK;
-}
-
 void tryBindRegisteredVolumesNowMountedLocked() {
     if (!g_mount_all_done) {
         return;
@@ -595,144 +220,47 @@ void tryBindRegisteredVolumesNowMountedLocked() {
     }
 }
 
-}  // namespace
+}  // namespace Internal
 
 void unbindMemoryBlock() {
-    g_host_map = nullptr;
-    g_sd_map = nullptr;
-    g_volumes = nullptr;
-    g_volume_count = 0;
-    g_mount_all_done = false;
-}
-
-esp_err_t registerVolume(const char* partition_label, const char* mount_path) {
-    if (!validLabel(partition_label) || !validMountPath(mount_path)) {
-        return ESP_ERR_HEAPWATCH_INVALID_ARG;
-    }
-
-    TableLock lock;
-    HostMapping* slot = claimMappingSlot(g_host_map, MAX_FLASH_VOLUMES, partition_label);
-    if (slot == nullptr) {
-        return ESP_ERR_HEAPWATCH_NO_SPACE;
-    }
-    slot->used = true;
-    copyLabel(slot->label, sizeof(slot->label), partition_label);
-    snprintf(slot->mount_path, sizeof(slot->mount_path), "%s", mount_path);
-    return applyFlashMappingLocked(*slot);
-}
-
-esp_err_t registerSdVolume(const char* label, const char* mount_path) {
-    if (!validLabel(label) || !validMountPath(mount_path)) {
-        return ESP_ERR_HEAPWATCH_INVALID_ARG;
-    }
-
-    TableLock lock;
-    HostMapping* slot = claimMappingSlot(g_sd_map, MAX_SD_VOLUMES, label);
-    if (slot == nullptr) {
-        return ESP_ERR_HEAPWATCH_NO_SPACE;
-    }
-    slot->used = true;
-    copyLabel(slot->label, sizeof(slot->label), label);
-    snprintf(slot->mount_path, sizeof(slot->mount_path), "%s", mount_path);
-    return applySdMappingLocked(*slot);
+    Internal::g_host_map = nullptr;
+    Internal::g_sd_map = nullptr;
+    Internal::g_volumes = nullptr;
+    Internal::g_volume_count = 0;
+    Internal::g_mount_all_done = false;
 }
 
 void tryBindRegisteredVolumesNowMounted() {
-    TableLock lock;
-    tryBindRegisteredVolumesNowMountedLocked();
-}
-
-void mountAll() {
-    TableLock lock;
-    g_volume_count = 0;
-    for (size_t i = 0; i < MAX_VOLUMES; ++i) {
-        g_volumes[i] = {};
-    }
-
-    esp_partition_iterator_t it =
-        esp_partition_find(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, nullptr);
-    while (it != nullptr) {
-        const esp_partition_t* part = esp_partition_get(it);
-        processPartition(part);
-        it = esp_partition_next(it);
-    }
-
-    registerAlreadyMountedSdVolumes();
-    g_mount_all_done = true;
-    tryBindRegisteredVolumesNowMountedLocked();
-}
-
-void unmountConnectorOwned() {
-    TableLock lock;
-    for (size_t i = 0; i < g_volume_count; ++i) {
-        Volume& vol = g_volumes[i];
-        if (!vol.connector_mounted) {
-            continue;
-        }
-        esp_err_t err = ESP_OK;
-#if CONFIG_HEAPWATCH_ENABLE_SD_CARD_STATS
-        if (vol.external) {
-            unmountConnectorSdCard(vol.mount_path);
-            ESP_LOGI(TAG, "Unmounted connector volume '%s'", vol.label);
-            continue;
-        }
-#endif
-        switch (vol.kind) {
-            case Kind::Spiffs:
-                err = esp_vfs_spiffs_unregister(vol.label);
-                break;
-            case Kind::Littlefs:
-                err = esp_vfs_littlefs_unregister(vol.label);
-                break;
-            case Kind::Fat:
-                if (vol.fat_wl != WL_INVALID_HANDLE) {
-                    err = esp_vfs_fat_spiflash_unmount_rw_wl(vol.mount_path, vol.fat_wl);
-                } else {
-                    ESP_LOGW(TAG, "Skipping FatFS unmount of '%s' (no wear-levelling handle)",
-                             vol.label);
-                    err = ESP_ERR_INVALID_STATE;
-                }
-                break;
-        }
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Unmount '%s' failed: %s", vol.label, esp_err_to_name(err));
-        } else {
-            ESP_LOGI(TAG, "Unmounted connector volume '%s'", vol.label);
-        }
-    }
-    g_volume_count = 0;
-    for (size_t i = 0; i < MAX_VOLUMES; ++i) {
-        g_volumes[i] = {};
-    }
-    g_mount_all_done = false;
+    Internal::TableLock lock;
+    Internal::tryBindRegisteredVolumesNowMountedLocked();
 }
 
 size_t mountedCount() {
-    TableLock lock;
-    tryBindRegisteredVolumesNowMountedLocked();
-    return g_volume_count;
+    Internal::TableLock lock;
+    Internal::tryBindRegisteredVolumesNowMountedLocked();
+    return Internal::g_volume_count;
 }
 
 const Volume* volumeAt(size_t index) {
-    TableLock lock;
-    tryBindRegisteredVolumesNowMountedLocked();
-    if (index >= g_volume_count) {
+    Internal::TableLock lock;
+    Internal::tryBindRegisteredVolumesNowMountedLocked();
+    if (index >= Internal::g_volume_count) {
         return nullptr;
     }
-    return &g_volumes[index];
+    return &Internal::g_volumes[index];
 }
 
 const Volume* findByPath(const char* path) {
-    TableLock lock;
-    tryBindRegisteredVolumesNowMountedLocked();
+    Internal::TableLock lock;
+    Internal::tryBindRegisteredVolumesNowMountedLocked();
     const Volume* best = nullptr;
     size_t best_len = 0;
-    for (size_t i = 0; i < g_volume_count; ++i) {
-        const Volume& vol = g_volumes[i];
+    for (size_t i = 0; i < Internal::g_volume_count; ++i) {
+        const Volume& vol = Internal::g_volumes[i];
         if (!vol.browsable) {
             continue;
         }
-        if (!pathStartsWithMount(path, vol.mount_path)) {
+        if (!Internal::pathStartsWithMount(path, vol.mount_path)) {
             continue;
         }
         const size_t len = strlen(vol.mount_path);
@@ -749,7 +277,7 @@ bool pathIsAllowed(const char* path) {
 }
 
 bool queryUsage(const Volume& volume, size_t* total_bytes, size_t* used_bytes) {
-    if (volume.kind == Kind::Fat) {
+    if (volume.kind == Kind::KIND_FAT) {
         uint64_t total = 0;
         uint64_t free_bytes = 0;
         if (esp_vfs_fat_info(volume.mount_path, &total, &free_bytes) != ESP_OK) {
@@ -771,17 +299,17 @@ bool queryUsageByLabel(const char* label, Kind kind, size_t* total_bytes, size_t
     size_t used = 0;
     esp_err_t err = ESP_ERR_NOT_FOUND;
     switch (kind) {
-        case Kind::Spiffs:
+        case Kind::KIND_SPIFFS:
             err = esp_spiffs_info(label, &total, &used);
             if (err != ESP_OK) {
                 // Arduino SPIFFS.begin() defaults to a NULL partition label.
                 err = esp_spiffs_info(nullptr, &total, &used);
             }
             break;
-        case Kind::Littlefs:
+        case Kind::KIND_LITTLEFS:
             err = esp_littlefs_info(label, &total, &used);
             break;
-        case Kind::Fat:
+        case Kind::KIND_FAT:
             return false;
     }
     if (err != ESP_OK) {
@@ -798,11 +326,11 @@ bool queryUsageByLabel(const char* label, Kind kind, size_t* total_bytes, size_t
 
 const char* kindName(Kind kind) {
     switch (kind) {
-        case Kind::Spiffs:
+        case Kind::KIND_SPIFFS:
             return "spiffs";
-        case Kind::Littlefs:
+        case Kind::KIND_LITTLEFS:
             return "littlefs";
-        case Kind::Fat:
+        case Kind::KIND_FAT:
             return "fat";
     }
     return "unknown";
@@ -840,14 +368,14 @@ size_t appendParameterFields(char* out, size_t out_len, bool json) {
     Volume copies[MAX_VOLUMES];
     size_t count = 0;
     {
-        TableLock lock;
-        tryBindRegisteredVolumesNowMountedLocked();
-        count = g_volume_count;
+        Internal::TableLock lock;
+        Internal::tryBindRegisteredVolumesNowMountedLocked();
+        count = Internal::g_volume_count;
         if (count > MAX_VOLUMES) {
             count = MAX_VOLUMES;
         }
         for (size_t i = 0; i < count; ++i) {
-            copies[i] = g_volumes[i];
+            copies[i] = Internal::g_volumes[i];
         }
     }
 

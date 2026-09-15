@@ -8,13 +8,13 @@
 namespace Heapwatch::DeviceCommand {
 
 enum class InboundKind : uint8_t {
-    MqttCommand = 0,
-    CredentialRotation = 1,
-    Stop = 2,
+    INBOUND_MQTT_COMMAND = 0,
+    INBOUND_CREDENTIAL_ROTATION = 1,
+    INBOUND_STOP = 2,
 };
 
 struct CommandInboundMessage {
-    InboundKind kind = InboundKind::MqttCommand;
+    InboundKind kind = InboundKind::INBOUND_MQTT_COMMAND;
     uint8_t mqtt_retain = 0;
     uint16_t topic_len = 0;
     uint16_t payload_len = 0;

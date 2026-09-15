@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-09-15
+
+### Changed
+- Internal style pass (CLAUDE.md): FreeRTOS worker entry points renamed to `task…` functions (`taskDispatchMqttQueue`, `taskForwardEspLogs`, `taskBootstrapConnector`, `taskCollectMetrics`, `taskStreamIngress`, `taskPerformOta`, `taskReportBluetooth`). FreeRTOS task **name strings** stay `hw_*`.
+- Internal enum values use `TYPE_SCREAMING` (e.g. `Enrollment::Status::STATUS_PENDING`, `Tls::Server::SERVER_API`, `InboundKind::INBOUND_MQTT_COMMAND`).
+- Large connector sources split by concern into hyphenated `.cpp` files (`StreamIngressClient-Worker`, `OtaService-Worker`, `MetricsCollector-Worker`, `ConnectorBootstrap-LogForward`, `DeviceFilesystemOperations-ReadWrite` / `-StreamTransfer`, `FsVolumeManager-Mount` / `-Sd`).
+- Removed lowercase `heapwatch/radio/BleDelegate.h` shim; include `heapwatch/Radio/BleDelegate.h` directly. Public `heapwatch.h` is unchanged.
+
 ## [0.18.0] - 2026-09-15
 
 ### Changed
