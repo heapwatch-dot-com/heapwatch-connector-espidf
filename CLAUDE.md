@@ -215,6 +215,8 @@ pThis  | local "this" after task-arg cast     | pThis
 
 When you ship any **notable** connector change (new/changed MQTT commands, config, OTA behaviour, breaking API), **add a user-facing bullet under `[Unreleased]` in the same change**. Do not paste commit logs. On **git tag**, promote `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD`, then add a fresh empty `[Unreleased]`. Commit to `heapwatch-dot-com/heapwatch-connector-espidf`. Follow the `changelog` skill in the umbrella repo (`.claude/skills/changelog/SKILL.md`).
 
+**On every new git tag:** bump `version:` in `heapwatch-app/frontend/src/utils/deviceIntegrationSnippet.ts` (`buildIdfComponentYamlSnippet`) to that tag (Connect your first device wizard + device integration snippets). Same PR/commit wave as the tag push — do not skip.
+
 ## CLAUDE.md Update
 
 - CLAUDE.md file is an instruction/rule set for AI agents
