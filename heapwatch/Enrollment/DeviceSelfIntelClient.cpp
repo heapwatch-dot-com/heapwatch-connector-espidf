@@ -69,6 +69,7 @@ bool fetchLastBootCycle(const char* api_base, const char* device_api_key,
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(client);
     char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
     std::snprintf(auth_header, sizeof(auth_header), "Bearer %s", device_api_key);
     esp_http_client_set_header(client, "Authorization", auth_header);

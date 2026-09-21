@@ -74,6 +74,15 @@ void applyToHttpClient(esp_http_client_config_t& config) {
     config.crt_bundle_attach = esp_crt_bundle_attach;
 }
 
+void applyHttpHostHeader(esp_http_client_handle_t client) {
+    if (client == nullptr) {
+        return;
+    }
+
+    // URL host is the TCP address. Caddy routes on this name (api.heapwatch.local in the lab).
+    esp_http_client_set_header(client, "Host", serverName(Server::SERVER_API));
+}
+
 void applyToMqtt(esp_mqtt_client_config_t& config) {
     const char* name = serverName(Server::SERVER_MQTT);
     config.broker.verification.common_name = name;

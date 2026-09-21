@@ -20,8 +20,11 @@ const char* serverName(Server server);
  * Encrypt is always on. The embedded lab CA is used only when HEAPWATCH_DEV_LOCAL_NETWORK is set.
  * Every other build verifies the public Heapwatch servers with the CA bundle.
  * Always sets `common_name` so SNI is the name on the cert, even when dialing a LAN IP.
+ * The URL host stays the connect address (the LAN IP in the lab). Call `applyHttpHostHeader`
+ * after `esp_http_client_init` so the HTTP Host header is `HEAPWATCH_API_TLS_SERVER_NAME`.
  */
 void applyToHttpClient(esp_http_client_config_t& config);
+void applyHttpHostHeader(esp_http_client_handle_t client);
 void applyToMqtt(esp_mqtt_client_config_t& config);
 void applyToEspTls(esp_tls_cfg_t& cfg, Server server);
 

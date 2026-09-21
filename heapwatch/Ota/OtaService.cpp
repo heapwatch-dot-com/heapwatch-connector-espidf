@@ -194,6 +194,7 @@ bool flash_data_partition(const DataPartitionJob& part, int64_t session_id) {
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(client);
     if (!apply_device_api_key_auth(client)) {
         esp_http_client_cleanup(client);
         return false;
@@ -316,6 +317,7 @@ bool stream_flash_app(const OtaJob& job) {
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(client);
     if (!apply_device_api_key_auth(client)) {
         esp_http_client_cleanup(client);
         fail_job(job.ota_session_id, "reason=http_auth");

@@ -64,6 +64,7 @@ bool authorized_post(const char* url,
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(client);
     char auth_header[HEAPWATCH_MAX_DEVICE_API_KEY_LEN + 16] = {};
     std::snprintf(auth_header, sizeof(auth_header), "Bearer %s", bearer_token);
     esp_http_client_set_header(client, "Authorization", auth_header);

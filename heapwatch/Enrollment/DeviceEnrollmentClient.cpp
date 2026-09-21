@@ -71,6 +71,7 @@ bool http_request(const char* url, esp_http_client_method_t method, const char* 
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(client);
     esp_http_client_set_header(client, "Accept", "application/json");
     if (method == HTTP_METHOD_POST) {
         esp_http_client_set_header(client, "Content-Type", "application/json");

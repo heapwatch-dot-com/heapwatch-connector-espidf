@@ -592,6 +592,8 @@ bool MqttTelemetryClient::uploadCoreDumpFromFlashIfPresent() {
         return false;
     }
 
+    Heapwatch::Helpers::Tls::applyHttpHostHeader(http_client);
+
     char timestamp_header[32] = {};
     snprintf(timestamp_header, sizeof(timestamp_header), "%" PRId64,
              static_cast<int64_t>(time(nullptr)));

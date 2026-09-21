@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Proactive Heap Integrity Check (`HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK`). The periodic `heap_caps_check_integrity()` walk and event `HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED` (130) are gone. Delete the symbol from host `sdkconfig` if it was present.
 
+## [0.19.1] - 2026-09-22
+
+### Fixed
+- Lab HTTPS sends `Host: api.heapwatch.local` while still connecting to the LAN IP. Caddy was answering the IP host with an empty 200, so enrollment never saw a JSON body.
+
 ## [0.19.0] - 2026-09-21
 
 ### Fixed
