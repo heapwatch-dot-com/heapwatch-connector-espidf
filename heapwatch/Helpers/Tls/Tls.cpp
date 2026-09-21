@@ -2,8 +2,6 @@
 
 #include "heapwatch/Helpers/Tls/Tls.h"
 
-#include <cstring>
-
 #include "esp_crt_bundle.h"
 #include "heapwatch_endpoints.h"
 #include "sdkconfig.h"
@@ -15,13 +13,17 @@ namespace Heapwatch::Helpers::Tls {
 
 namespace {
 
-bool isDevelopmentBuild() {
-    return std::strcmp(CONFIG_HEAPWATCH_BUILD_ENV, "development") == 0;
+bool usesLocalNetwork() {
+#if defined(HEAPWATCH_DEV_LOCAL_NETWORK)
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool skipServerCertVerify() {
 #if defined(CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY) && CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY
-    return isDevelopmentBuild();
+    return usesLocalNetwork();
 #else
     return false;
 #endif
@@ -60,7 +62,7 @@ void applyToHttpClient(esp_http_client_config_t& config) {
         return;
     }
 
-    if (isDevelopmentBuild()) {
+    if (usesLocalNetwork()) {
         config.cert_pem = localCaPem();
         config.cert_len = 0;
         config.crt_bundle_attach = nullptr;
@@ -77,7 +79,7 @@ void applyToMqtt(esp_mqtt_client_config_t& config) {
     config.broker.verification.common_name = name;
     config.broker.verification.skip_cert_common_name_check = false;
 
-    if (isDevelopmentBuild()) {
+    if (usesLocalNetwork()) {
         // URI is the LAN IP; hostname/common_name drive SNI for Caddy L4.
         config.broker.address.hostname = name;
     }
@@ -89,7 +91,7 @@ void applyToMqtt(esp_mqtt_client_config_t& config) {
         return;
     }
 
-    if (isDevelopmentBuild()) {
+    if (usesLocalNetwork()) {
         config.broker.verification.certificate = localCaPem();
         config.broker.verification.certificate_len = 0;
         config.broker.verification.crt_bundle_attach = nullptr;
@@ -112,7 +114,7 @@ void applyToEspTls(esp_tls_cfg_t& cfg, Server server) {
         return;
     }
 
-    if (isDevelopmentBuild()) {
+    if (usesLocalNetwork()) {
         cfg.cacert_buf = reinterpret_cast<const unsigned char*>(localCaPem());
         cfg.cacert_bytes = static_cast<unsigned int>(localCaPemBytes());
         cfg.crt_bundle_attach = nullptr;
