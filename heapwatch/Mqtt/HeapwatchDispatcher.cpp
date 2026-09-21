@@ -22,6 +22,7 @@
 #include <sys/time.h>
 #include <cinttypes>
 
+#include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Helpers/Tls/Tls.h"
 #include "sdkconfig.h"
 #if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
@@ -113,6 +114,10 @@ static void try_publish_queue_head(QueueHandle_t queue) {
         }
         return;
     }
+
+    // Queued while the device had no clock (garage/offline boot): give it a real timestamp now
+    // that time synced, instead of shipping hours of nulls to the backend.
+    (void)heapwatch_restamp_payload_wall_clock(msg.payload, sizeof(msg.payload));
 
     const char* topic = get_topic_for_message_type(msg.type);
     const int32_t payload_len = static_cast<int32_t>(strlen(msg.payload));

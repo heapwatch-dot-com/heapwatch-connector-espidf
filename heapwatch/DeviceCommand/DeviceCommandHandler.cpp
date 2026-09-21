@@ -97,7 +97,11 @@ bool publish_phased_message(const char* suffix, const char* command_id, const ch
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "command_id", command_id != nullptr ? command_id : "");
     cJSON_AddStringToObject(root, "phase", phase);
-    cJSON_AddNumberToObject(root, "tsms", static_cast<double>(tsms));
+    if (heapwatch_is_wall_clock_trusted()) {
+        cJSON_AddNumberToObject(root, "tsms", static_cast<double>(tsms));
+    } else {
+        cJSON_AddNullToObject(root, "tsms");
+    }
     cJSON_AddNumberToObject(root, "utms", static_cast<double>(utms));
     cJSON_AddBoolToObject(root, "ok", ok);
     cJSON_AddStringToObject(root, "code", code != nullptr ? code : "");

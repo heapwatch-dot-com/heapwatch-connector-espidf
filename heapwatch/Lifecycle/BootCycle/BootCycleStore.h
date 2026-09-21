@@ -10,7 +10,8 @@ struct State {
     uint32_t boot_cycle = 0;
     /**
      * Boot cycle of the session that crashed, if known. 0 means unset.
-     * Set at boot time when esp_reset_reason() == ESP_RST_PANIC.
+     * Overwritten on every ESP_RST_PANIC boot (the flash dump is the newest
+     * panic). Cleared after a successful core-dump upload.
      */
     uint32_t last_crash_boot_cycle = 0;
 };

@@ -69,9 +69,10 @@
 #endif
 
 /**
- * When enabled (Kconfig + SPIRAM), flash-safe hw_* stacks (metrics, log forward,
+ * When enabled (Kconfig + SPIRAM), flash-safe hw_* stacks (log forward,
  * commanded-offline, enroll LED, BLE reporter) are allocated in PSRAM. Tasks that call
- * NVS / OTA / coredump / on-flash VFS stay in internal DRAM. Default off.
+ * NVS / OTA / coredump / on-flash VFS (including hw_metrics FS volume stats) stay in
+ * internal DRAM. Default off.
  */
 #ifdef CONFIG_HEAPWATCH_STACKS_IN_PSRAM
 #define HEAPWATCH_STACKS_IN_PSRAM 1
@@ -174,6 +175,9 @@
  * 
  * - HEAPWATCH_USE_FLAT_KEYVALUE_FORMAT: Flat key=value format
  *   Example: tsms=1730000000123|utms=8333|task=hw_dispatcher|tag=mqtt_client|core=0|severity=info|message=Hello
+ *
+ * `tsms` is always present but is `null` until the device has a real wall clock; `utms` (uptime)
+ * and `boot_cycle` are always real, and the backend uses them to place clockless data in time.
  * 
  * Uncomment ONE of the following lines to select the desired format.
  */
@@ -294,9 +298,6 @@ typedef enum {
 #define HEAPWATCH_EVENT_AUTO_SLEEP_STOPPED        121
 #define HEAPWATCH_EVENT_AUTO_SLEEP_PUTTING_TO_SLEEP 122
 
-/** HEAP1: proactive corruption detection via heap_caps_check_integrity(). */
-#define HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED  130
-
 /* ============================================================================
    Maximum Payload Sizes
    =========================================================================== */
@@ -326,7 +327,9 @@ typedef enum {
  *    Phase 5c/PARAM1 will eventually split this into real per-slug tiny
  *    messages) — unchanged from the old flat size
  */
-#define HEAPWATCH_TINY_PAYLOAD_SIZE      96
+/* Envelope is tsms + utms + boot_cycle, and a queued null tsms grows by ~9 bytes when the
+ * dispatcher restamps it after time sync — so a single-value message needs more than 96 B. */
+#define HEAPWATCH_TINY_PAYLOAD_SIZE      128
 #define HEAPWATCH_SMALL_PAYLOAD_SIZE     (HEAPWATCH_MAX_LOG_LINE_LEN * 2 + 320)
 #define HEAPWATCH_LARGE_PAYLOAD_SIZE     HEAPWATCH_MAX_PAYLOAD_SIZE
 

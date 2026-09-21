@@ -83,7 +83,7 @@ void setDoubleMin(const char* slug, double min_value);
 
 /**
  * Serializes the current map into `out` as one flat JSON object
- * (`{"tsms":...,"utms":...,"slug":value,...}` plus dirty `_min`/`_max` keys). Returns
+ * (`{"tsms":...,"utms":...,"boot_cycle":...,"slug":value,...}` plus dirty `_min`/`_max` keys). Returns
  * false (and leaves `out` untouched) if there is nothing to publish.
  */
 bool buildFlushPayload(char* out, size_t out_size);

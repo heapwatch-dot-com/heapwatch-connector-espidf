@@ -192,7 +192,8 @@ bool append_json_chunk(int32_t* payload_len, const char* chunk, int32_t chunk_le
 constexpr int32_t TASKS_JSON_CLOSE_LEN = 2;       // ]}
 
 constexpr size_t TASKS_JSON_HEADER_MAX =
-    sizeof("{\"tsms\":18446744073709551615,\"utms\":18446744073709551615,\"tasks\":[") - 1;
+    sizeof("{\"tsms\":18446744073709551615,\"utms\":18446744073709551615,"
+           "\"boot_cycle\":4294967295,\"tasks\":[") - 1;
 constexpr size_t TASK_NAME_MAX_CHARS = sizeof(TaskStats::name) - 1;
 constexpr size_t TASK_JSON_ROW_MAX =
     sizeof(",{\"name\":\"\",\"total\":4294967295,\"now\":4294967295,\"min\":4294967295,"
@@ -212,12 +213,16 @@ static_assert(MAX_TASKS_PER_PUBLISH >= 1, "large MQTT slot cannot hold a single 
 constexpr size_t TASK_JSON_ROW_BUF = TASK_JSON_ROW_MAX + 8;
 
 int32_t start_tasks_payload(uint64_t tsms, uint64_t utms) {
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     return snprintf(
         g_payload_buf,
         HEAPWATCH_LARGE_PAYLOAD_SIZE,
-        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"tasks\":[",
-        tsms,
-        utms);
+        "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",\"tasks\":[",
+        wall_clock,
+        utms,
+        heapwatch_get_boot_cycle());
 }
 
 void close_and_enqueue_tasks(int32_t* payload_len) {
@@ -402,12 +407,16 @@ void note_task_stack_total(TaskStats& row, uint32_t stack_total_bytes) {
 #endif  /* CONFIG_HEAPWATCH_ENABLE_TASK_SNAPSHOTS */
 
 int32_t start_parameter_payload(uint64_t tsms, uint64_t utms) {
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     return snprintf(
         g_payload_buf,
         HEAPWATCH_LARGE_PAYLOAD_SIZE,
-        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64,
-        tsms,
-        utms);
+        "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32,
+        wall_clock,
+        utms,
+        heapwatch_get_boot_cycle());
 }
 
 void close_and_enqueue_parameter(int32_t* payload_len) {

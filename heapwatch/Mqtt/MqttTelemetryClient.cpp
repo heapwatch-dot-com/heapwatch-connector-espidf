@@ -408,6 +408,8 @@ bool MqttTelemetryClient::formatLogJsonLine(HeapwatchConnectorSeverity severity,
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
     snprintf(g_mqtt_payload_build_buffers->raw_log_line, sizeof(g_mqtt_payload_build_buffers->raw_log_line), "%s", message);
     json_escape_string(g_mqtt_payload_build_buffers->raw_log_line, g_mqtt_payload_build_buffers->escaped_message,
@@ -448,14 +450,16 @@ bool MqttTelemetryClient::formatLogJsonLine(HeapwatchConnectorSeverity severity,
 
     const int32_t written = snprintf(
         out, out_len,
-        "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "%s,\"severity\":\"%s\",\"message\":\"%s\"}",
-        static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+        "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32
+        "%s,\"severity\":\"%s\",\"message\":\"%s\"}",
+        wall_clock, static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
         g_mqtt_payload_build_buffers->optional, severity_to_string(severity), g_mqtt_payload_build_buffers->escaped_message);
 
     return written > 0 && static_cast<size_t>(written) < out_len;
 #else
     (void)out;
     (void)out_len;
+    (void)wall_clock;
     return false;
 #endif
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
@@ -711,16 +715,18 @@ void MqttTelemetryClient::queueParameter(const char* name, int64_t value) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%" PRId64 "}",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",\"%s\":%" PRId64 "}",
+             wall_clock, static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle), name,
              static_cast<int64_t>(value));
 #else
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%" PRId64,
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name,
+             "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s=%" PRId64,
+             wall_clock, static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle), name,
              static_cast<int64_t>(value));
 #endif
 
@@ -739,15 +745,19 @@ void MqttTelemetryClient::queueParameter(const char* name, double value) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"%s\":%.6f}",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",\"%s\":%.6f}",
+             wall_clock, static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle), name,
+             value);
 #else
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s=%.6f",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms), name, value);
+             "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s=%.6f",
+             wall_clock, static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle), name,
+             value);
 #endif
 
     heapwatch_enqueue_mqtt_queue_message(g_tiny_queue, &g_mqtt_payload_build_buffers->tiny, 0);
@@ -770,19 +780,21 @@ void MqttTelemetryClient::queueEvent(int32_t eventTypeId, int32_t boot_cycle) {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
     if (boot_cycle < 0) {
         boot_cycle = static_cast<int32_t>(g_boot_cycle);
     }
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"event_type_id\":%" PRId32 ",\"boot_cycle\":%" PRId32 "}",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"event_type_id\":%" PRId32 ",\"boot_cycle\":%" PRId32 "}",
+             wall_clock, static_cast<uint64_t>(utms),
              eventTypeId, static_cast<int32_t>(boot_cycle));
 #else
     snprintf(g_mqtt_payload_build_buffers->tiny.payload, sizeof(g_mqtt_payload_build_buffers->tiny.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|event_type_id=%" PRId32 "|boot_cycle=%" PRId32,
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             "tsms=%s|utms=%" PRIu64 "|event_type_id=%" PRId32 "|boot_cycle=%" PRId32,
+             wall_clock, static_cast<uint64_t>(utms),
              eventTypeId, static_cast<int32_t>(boot_cycle));
 #endif
 
@@ -815,18 +827,20 @@ void MqttTelemetryClient::queueOtaProgress(int64_t ota_session_id, const char* p
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->small.payload, sizeof(g_mqtt_payload_build_buffers->small.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"ota_session_id\":%" PRId64 ",\"phase\":\"%s\",\"bytes\":%" PRId64 ","
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"ota_session_id\":%" PRId64 ",\"phase\":\"%s\",\"bytes\":%" PRId64 ","
              "\"total\":%" PRId64 "}",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             wall_clock, static_cast<uint64_t>(utms),
              static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
              static_cast<int64_t>(total));
 #else
     snprintf(g_mqtt_payload_build_buffers->small.payload, sizeof(g_mqtt_payload_build_buffers->small.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|ota_session_id=%" PRId64 "|phase=%s|bytes=%" PRId64 "|total=%" PRId64,
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             "tsms=%s|utms=%" PRIu64 "|ota_session_id=%" PRId64 "|phase=%s|bytes=%" PRId64 "|total=%" PRId64,
+             wall_clock, static_cast<uint64_t>(utms),
              static_cast<int64_t>(ota_session_id), phase, static_cast<int64_t>(bytes),
              static_cast<int64_t>(total));
 #endif
@@ -850,6 +864,8 @@ void MqttTelemetryClient::queueSpecs() {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
     if (!Heapwatch::DeviceSpecs::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device specs payload");
@@ -858,12 +874,12 @@ void MqttTelemetryClient::queueSpecs() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s",
-             static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms),
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s",
+             wall_clock, static_cast<uint64_t>(utms),
              static_cast<uint32_t>(g_boot_cycle), g_mqtt_payload_build_buffers->specs_body + 1);
 #else
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", static_cast<uint64_t>(tsms),
+             "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", wall_clock,
              static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
              g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
@@ -886,6 +902,8 @@ void MqttTelemetryClient::queueNetwork() {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
     if (!Heapwatch::Network::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device network payload");
@@ -894,12 +912,14 @@ void MqttTelemetryClient::queueNetwork() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s", wall_clock,
+             static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
+             g_mqtt_payload_build_buffers->specs_body + 1);
 #else
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
+             "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", wall_clock,
+             static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
+             g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
 
     heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT);
@@ -920,6 +940,8 @@ void MqttTelemetryClient::queueBluetoothSnapshot() {
     uint64_t tsms = 0;
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
 
     if (!Heapwatch::Radio::BluetoothLe::buildPayload(g_mqtt_payload_build_buffers->specs_body, sizeof(g_mqtt_payload_build_buffers->specs_body))) {
         ESP_LOGW(TAG, "Failed to build device bluetooth payload");
@@ -928,12 +950,14 @@ void MqttTelemetryClient::queueBluetoothSnapshot() {
 
 #ifdef HEAPWATCH_USE_JSON_FORMAT
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 ",%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
+             "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32 ",%s", wall_clock,
+             static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
+             g_mqtt_payload_build_buffers->specs_body + 1);
 #else
     snprintf(g_mqtt_payload_build_buffers->large.payload, sizeof(g_mqtt_payload_build_buffers->large.payload),
-             "tsms=%" PRIu64 "|utms=%" PRIu64 "|%s", static_cast<uint64_t>(tsms),
-             static_cast<uint64_t>(utms), g_mqtt_payload_build_buffers->specs_body + 1);
+             "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32 "|%s", wall_clock,
+             static_cast<uint64_t>(utms), static_cast<uint32_t>(g_boot_cycle),
+             g_mqtt_payload_build_buffers->specs_body + 1);
 #endif
 
     heapwatch_enqueue_mqtt_queue_message(g_large_queue, &g_mqtt_payload_build_buffers->large, BOOT_CRITICAL_QUEUE_WAIT);
@@ -1032,9 +1056,9 @@ void MqttTelemetryClient::startDispatcherThread() {
 void MqttTelemetryClient::startCollectorThread() {
     g_collector_running = true;
     g_collector_exited = false;
-    heapwatch_task_create(Heapwatch::Metrics::taskCollectMetrics, "hw_metrics",
-                         HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
-                         &g_collector_task);
+    heapwatch_task_create_dram(Heapwatch::Metrics::taskCollectMetrics, "hw_metrics",
+                              HEAPWATCH_METRICS_TASK_STACK_BYTES, nullptr, tskIDLE_PRIORITY + 2,
+                              &g_collector_task);
 }
 
 void MqttTelemetryClient::ensureMetricsCollectorThreadStarted() {

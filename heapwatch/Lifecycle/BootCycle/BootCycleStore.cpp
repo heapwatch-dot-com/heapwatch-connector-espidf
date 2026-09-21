@@ -34,7 +34,10 @@ bool loadIncrementAndPersistBootCycle(State* out) {
     nvs_get_u32(handle, KEY_BOOT_CYCLE, &boot_cycle);
     nvs_get_u32(handle, KEY_LAST_CRASH_BOOT_CYCLE, &last_crash_boot_cycle);
 
-    if (esp_reset_reason() == ESP_RST_PANIC && last_crash_boot_cycle == 0) {
+    // Always re-attribute on panic. A leftover last_crash_bc from an earlier
+    // boot (upload never completed) must not pin dumps to that old cycle —
+    // the coredump partition holds the newest panic, not the first one.
+    if (esp_reset_reason() == ESP_RST_PANIC && boot_cycle > 0) {
         last_crash_boot_cycle = boot_cycle;
         ESP_LOGW(TAG, "PANIC boot: attributed crash to boot_cycle=%" PRIu32,
                  static_cast<uint32_t>(boot_cycle));

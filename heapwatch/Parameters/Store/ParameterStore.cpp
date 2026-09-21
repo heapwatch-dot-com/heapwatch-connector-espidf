@@ -26,6 +26,7 @@
 #include "heapwatch_config.h"
 #include "heapwatch/Helpers/IngressTimestamps.h"
 #include "heapwatch/Helpers/MemoryManager/HeapwatchMemoryManager.h"
+#include "heapwatch/Mqtt/MqttTelemetryClient.h"
 
 namespace Heapwatch::Parameters::Store {
 
@@ -316,9 +317,13 @@ bool buildFlushPayload(char* out, size_t out_size) {
         return false;
     }
 
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     size_t pos = 0;
-    pos += snprintf(out + pos, out_size - pos, "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64,
-                     static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+    pos += snprintf(out + pos, out_size - pos,
+                     "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32, wall_clock,
+                     static_cast<uint64_t>(utms), heapwatch_get_boot_cycle());
 
     for (size_t i = 0; i < HEAPWATCH_MAX_PARAMETER_SLOTS && pos < out_size; ++i) {
         Slot& slot = g_slots[i];

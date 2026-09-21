@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-22
+
 ### Fixed
 - A later panic now updates `last_crash_bc` to that boot. Previously the key was written only when it was still unset, so a crash loop kept reporting the first crash's boot cycle (and `X-Crash-Boot-Cycle`) until a dump upload succeeded.
 - `hw_metrics` always uses an internal DRAM stack, even when `HEAPWATCH_STACKS_IN_PSRAM` is on. Per-volume FS stats on the metrics tick (`opendir` / LittleFS / SPIFFS) disable the flash cache; a PSRAM stack then hits `esp_task_stack_is_sane_cache_disabled()`.
 
 ### Changed
+- The connector no longer links the Bluetooth controller unless BLE reporting is explicitly enabled. NimBLE and Bluedroid stay off.
 - Payloads now send `"tsms": null` while the device has no real wall clock, instead of a 1970 timestamp. The key is never omitted, so the backend can tell "no clock yet" from "field missing".
 - Messages queued before the first time sync are restamped at publish time: the dispatcher rewrites a null `tsms` from the message's own `utms`, so a device that boots offline (garage, no CatM/GNSS) still delivers hours of buffered telemetry with real timestamps once the clock arrives.
 - Parameter, tasks, log, network and bluetooth payloads now carry `boot_cycle` (events and specs already did). The backend uses it to attribute rows to the boot they came from even before any clock exists.

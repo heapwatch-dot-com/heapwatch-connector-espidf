@@ -111,19 +111,22 @@ void onScannedBleDevice(const ScannedBleDevice& peer, void* /*ctx*/) {
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"command_id\":\"%s\",\"addr\":\"%s\",\"rssi\":%" PRId32 ",\"name\":\"%s\","
-                 "\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "}",
+                 "\"tsms\":%s,\"utms\":%" PRIu64 "}",
                  g_scan_command_id, peer.addr, static_cast<int32_t>(peer.rssi), peer.name,
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"command_id\":null,\"addr\":\"%s\",\"rssi\":%" PRId32 ",\"name\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "{\"command_id\":null,\"addr\":\"%s\",\"rssi\":%" PRId32 ",\"name\":\"%s\",\"tsms\":%s,"
                  "\"utms\":%" PRIu64 "}",
                  peer.addr, static_cast<int32_t>(peer.rssi), peer.name,
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     }
 
     Heapwatch::StreamIngress::sendBleScanJson(line);
@@ -134,19 +137,22 @@ void onScanComplete(bool success, const char* message, void* /*ctx*/) {
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     char line[JSON_LINE_MAX] = {};
     if (g_scan_command_id[0] != '\0') {
         snprintf(line, sizeof(line),
                  "{\"command_id\":\"%s\",\"done\":true,\"ok\":%s,\"message\":\"%s\","
-                 "\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64 "}",
+                 "\"tsms\":%s,\"utms\":%" PRIu64 "}",
                  g_scan_command_id, success ? "true" : "false", message != nullptr ? message : "",
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"command_id\":null,\"done\":true,\"ok\":%s,\"message\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "{\"command_id\":null,\"done\":true,\"ok\":%s,\"message\":\"%s\",\"tsms\":%s,"
                  "\"utms\":%" PRIu64 "}",
                  success ? "true" : "false", message != nullptr ? message : "",
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     }
 
     Heapwatch::StreamIngress::sendBleScanJson(line);
@@ -262,19 +268,22 @@ void emitBleEvent(int32_t event_id, const char* detail, const char* peer_addr) {
     uint64_t utms = 0;
     heapwatch_get_wall_clock_and_uptime_ms(&tsms, &utms);
 
+    char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+    heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
     char line[JSON_LINE_MAX] = {};
     if (peer_addr != nullptr && peer_addr[0] != '\0') {
         snprintf(line, sizeof(line),
-                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%" PRIu64 ","
+                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":\"%s\",\"tsms\":%s,"
                  "\"utms\":%" PRIu64 "}",
                  event_id, detail != nullptr ? detail : "", peer_addr,
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     } else {
         snprintf(line, sizeof(line),
-                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":null,\"tsms\":%" PRIu64 ","
+                 "{\"event_id\":%" PRId32 ",\"detail\":\"%s\",\"peer_addr\":null,\"tsms\":%s,"
                  "\"utms\":%" PRIu64 "}",
                  event_id, detail != nullptr ? detail : "",
-                 static_cast<uint64_t>(tsms), static_cast<uint64_t>(utms));
+                 wall_clock, static_cast<uint64_t>(utms));
     }
 
     Heapwatch::StreamIngress::sendBleEventJson(line);

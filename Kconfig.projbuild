@@ -239,33 +239,27 @@ menu "Heapwatch Connector"
                 Collects few dozen lifecycle events like starting up, started up, mqtt connected/disconnected,
                 internet up/down, etc. Disabling compiles queueEvent into a no-op (no EVENT MQTT).
 
-        config HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
-            bool "Proactive Heap Integrity Check (Heavy Load)"
-            default n
-            help
-                Periodically calls heap_caps_check_integrity() and dispatches a
-                HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED event if corruption is found. This
-                catches corruption before it causes a crash, instead of only finding out
-                post-hoc via coredump. Default off: walking the full heap has a heavy CPU load.
-
         menu "Filesystem Volumes"
             config HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
                 bool "Auto-Mount All Storage Partitions"
-                default y
+                default n
                 help
-                    After the connector starts, it automatically mounts all "storage" partitions
-                    in the partition table. If your application mounts those partitions itself,
-                    disable this option and call heapwatch_register_fs_volume() with each
-                    partition label and mount path (before or after heapwatch_initialize()).
+                    Default off: the connector does not mount storage partitions. Your
+                    application mounts them (or leave them unmounted). Call
+                    heapwatch_register_fs_volume() with each partition label and mount path
+                    (before or after heapwatch_initialize()) so the file browser can see them.
+
+                    When on, after the connector starts it automatically mounts all
+                    "storage" partitions in the partition table.
 
             config HEAPWATCH_AUTO_FORMAT_BLANK_STORAGE_PARTITIONS
                 bool "Auto-Format Blank Storage Partitions"
-                default y
+                default n
                 depends on HEAPWATCH_AUTO_MOUNT_STORAGE_PARTITIONS
                 help
-                    When the connector performs a mount, pass format_if_mount_failed to
-                    SPIFFS, LittleFS, and FatFS. Only applies to connector-owned mounts, not
-                    to partitions the host already mounted.
+                    Default off. When on, connector-owned mounts pass format_if_mount_failed to
+                    SPIFFS, LittleFS, and FatFS. Does not apply to partitions the host already
+                    mounted. Requires Auto-Mount All Storage Partitions.
 
             config HEAPWATCH_ENABLE_SD_CARD_STATS
                 bool "Also Mount And Take-Over SD Card Over SPI"
@@ -339,6 +333,8 @@ menu "Heapwatch Connector"
         # endmenu
 
         # Stubs: keep CONFIG_* symbols defined for #if guards while menu is hidden.
+        # Default off. Does not select BT_ENABLED, NimBLE, or Bluedroid.
+        # The host turns the controller on itself, then sets this to link the reporter.
         config HEAPWATCH_ENABLE_BLE_REPORTING
             bool
             default n
@@ -438,7 +434,7 @@ menu "Heapwatch Connector"
             depends on SPIRAM
             imply SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
             help
-                Put as many Heapwatch Connector tasks' stacks into PSRAM to offload internal DRAM.
+                Put as many Heapwatch Connector tasks' stacks as possible into PSRAM to offload internal DRAM.
 
         config HEAPWATCH_METRICS_INTERVAL_MS
             int "Initial Metrics Collection Interval (ms)"

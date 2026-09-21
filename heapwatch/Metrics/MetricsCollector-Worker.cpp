@@ -139,9 +139,12 @@ void taskCollectMetrics(void* arg) {
         }
 #endif
 
+        char wall_clock[HEAPWATCH_WALL_CLOCK_VALUE_BUFFER_SIZE] = {};
+        heapwatch_format_wall_clock_or_null(tsms, wall_clock, sizeof(wall_clock));
+
 #ifdef HEAPWATCH_USE_JSON_FORMAT
         snprintf(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE,
-                 "{\"tsms\":%" PRIu64 ",\"utms\":%" PRIu64
+                 "{\"tsms\":%s,\"utms\":%" PRIu64 ",\"boot_cycle\":%" PRIu32
                  ",\"device.uptime_s\":%" PRIu32
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  ",\"heap.internal.used_bytes\":%" PRIu32
@@ -154,8 +157,9 @@ void taskCollectMetrics(void* arg) {
 #endif
                  ",\"wifi.rssi_dbm\":%" PRId32
                  ",\"freertos.ready_tasks_count\":%" PRIu16 "}",
-                 tsms,
+                 wall_clock,
                  utms,
+                 heapwatch_get_boot_cycle(),
                  uptime_s,
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  internal_heap_used_bytes,
@@ -170,7 +174,7 @@ void taskCollectMetrics(void* arg) {
                  freertos_ready_tasks_count);
 #else
         snprintf(g_payload_buf, HEAPWATCH_MAX_PAYLOAD_SIZE,
-                 "tsms=%" PRIu64 "|utms=%" PRIu64
+                 "tsms=%s|utms=%" PRIu64 "|boot_cycle=%" PRIu32
                  "|device.uptime_s=%" PRIu32
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  "%sheap.internal.used_bytes=%" PRIu32
@@ -183,8 +187,9 @@ void taskCollectMetrics(void* arg) {
 #endif
                  "%swifi.rssi_dbm=%" PRId32
                  "%sfreertos.ready_tasks_count=%" PRIu16,
-                 tsms,
+                 wall_clock,
                  utms,
+                 heapwatch_get_boot_cycle(),
                  uptime_s,
 #if CONFIG_HEAPWATCH_ENABLE_HEAP_SNAPSHOTS
                  HEAPWATCH_FLAT_DELIMITER, internal_heap_used_bytes,
@@ -237,18 +242,9 @@ void taskCollectMetrics(void* arg) {
         // updateParameter*() / setParameter*Max call site) as its own batched
         // publish. No-op if nothing is due this round.
         MqttTelemetryClient::getInstance().flushParameters();
-
-#if CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK
-        // HEAP1: default-off proactive corruption check — heap_caps_check_integrity() walks
-        // the full heap, so this has a real CPU cost and stays opt-in.
-        if (!heap_caps_check_integrity(MALLOC_CAP_DEFAULT, true)) {
-            ESP_LOGE(TAG, "Heap corruption detected by heap_caps_check_integrity()");
-            MqttTelemetryClient::getInstance().queueEvent(HEAPWATCH_EVENT_HEAP_CORRUPTION_DETECTED);
-        }
-#endif  /* CONFIG_HEAPWATCH_ENABLE_HEAP_INTEGRITY_CHECK */
     }
     heapwatch_mark_collector_task_exited();
-    heapwatch_task_delete(nullptr);
+    heapwatch_task_delete_dram(nullptr);
 }
 
 }  // namespace Heapwatch::Metrics

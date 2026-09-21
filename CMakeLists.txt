@@ -12,7 +12,13 @@ endif()
 
 set(HEAPWATCH_PRIV_REQUIRES
     driver bootloader_support mqtt esp_wifi esp_event esp_netif nvs_flash lwip esp-tls
-    mbedtls efuse app_update fatfs sdmmc espcoredump esp_http_client bt spi_flash)
+    mbedtls efuse app_update fatfs sdmmc espcoredump esp_http_client spi_flash)
+
+# BLE reporting is off unless the host sets HEAPWATCH_ENABLE_BLE_REPORTING.
+# Do not link the BT controller (NimBLE or Bluedroid) otherwise.
+if(CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING)
+    list(APPEND HEAPWATCH_PRIV_REQUIRES bt)
+endif()
 
         idf_component_register(
     SRCS ${HEAPWATCH_CONNECTOR_SRCS}
