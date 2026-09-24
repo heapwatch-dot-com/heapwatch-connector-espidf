@@ -1105,6 +1105,7 @@ void heapwatch_wait_for_queued_mqtt_message() {
         return;
     }
     xSemaphoreTake(g_mqtt_queue_work_sem, portMAX_DELAY);
+    vTaskDelay(pdMS_TO_TICKS(250));
     xSemaphoreGive(g_mqtt_queue_work_sem);
 }
 
