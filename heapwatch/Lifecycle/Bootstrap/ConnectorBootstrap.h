@@ -67,7 +67,7 @@ void connectManagedWifi();
 void handleManagedWifiDisconnected();
 
 /**
- * Blocks (bounded, ~20s) until SNTP time sync succeeds when HEAPWATCH_MANAGE_TIME_SYNC=y.
+ * Blocks (bounded, ~100s) until SNTP time sync succeeds when HEAPWATCH_MANAGE_TIME_SYNC=y.
  * Intended for the bootstrap task only — never call from app_main.
  */
 void syncTimeIfManaged();

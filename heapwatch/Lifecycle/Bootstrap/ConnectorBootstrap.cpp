@@ -245,7 +245,7 @@ void syncTimeIfManaged() {
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_init();
 
-    constexpr int32_t MAX_CHECKS = 20;
+    constexpr int32_t MAX_CHECKS = 100;
     constexpr time_t MIN_VALID_UNIX = 1700000000;
     int32_t checks = 0;
 
