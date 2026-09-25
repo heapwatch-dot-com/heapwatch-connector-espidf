@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-09-25
+
+### Changed
+- The connector is licensed under Apache 2.0.
+- Install instructions use the HTTPS git URL.
+- Firmware upload is skipped with a warning when the project `.env` is missing or incomplete. The build continues.
+
 ## [0.20.1] - 2026-09-25
 
 ### Removed

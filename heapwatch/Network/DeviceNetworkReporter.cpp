@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Heapwatch. All rights reserved.
+// Copyright 2026 Heapwatch
+// SPDX-License-Identifier: Apache-2.0
 
 #include "heapwatch/Network/DeviceNetworkReporter.h"
 #include "heapwatch/Network/NetifTraffic/NetifTraffic.h"

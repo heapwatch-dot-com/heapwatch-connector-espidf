@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Heapwatch. All rights reserved.
+// Copyright 2026 Heapwatch
+// SPDX-License-Identifier: Apache-2.0
 //
 // Public C API for customer-owned BLE stacks. Register a vtable to override the
 // built-in NimBLE report-only provider.

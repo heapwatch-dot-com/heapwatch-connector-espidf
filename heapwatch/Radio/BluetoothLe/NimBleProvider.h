@@ -1,4 +1,5 @@
-// Copyright (c) 2026 Heapwatch. All rights reserved.
+// Copyright 2026 Heapwatch
+// SPDX-License-Identifier: Apache-2.0
 
 #ifndef HEAPWATCH_DEVICE_RADIO_NIM_BLE_PROVIDER_H
 #define HEAPWATCH_DEVICE_RADIO_NIM_BLE_PROVIDER_H

@@ -1,4 +1,5 @@
-# Copyright (c) 2026 Heapwatch. All rights reserved.
+# Copyright 2026 Heapwatch
+# SPDX-License-Identifier: Apache-2.0
 #
 # Upload firmware metadata + binaries to Heapwatch CI endpoint.
 # Called from finalize_and_upload_firmware.py after the application .bin exists.
@@ -157,7 +158,8 @@ def upload_firmware_bundle(
     build_identifier: str | None = None,
 ) -> None:
     resolved_app_root = app_root or build_dir.parent
-    ensure_upload_env_configured(resolved_app_root)
+    if not ensure_upload_env_configured(resolved_app_root):
+        return
 
     base = os.environ["HEAPWATCH_API_BASE"].strip().rstrip("/")
     build_token = os.environ["HEAPWATCH_BUILD_TOKEN"].strip()

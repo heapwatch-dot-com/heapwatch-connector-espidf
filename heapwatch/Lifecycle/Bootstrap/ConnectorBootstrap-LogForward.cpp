@@ -1,4 +1,5 @@
-// Copyright (c) 2025-2026 Heapwatch. All rights reserved.
+// Copyright 2025-2026 Heapwatch
+// SPDX-License-Identifier: Apache-2.0
 //
 // Log-forward concern for ConnectorBootstrap: ESP vprintf hook + hw_log_forward worker.
 

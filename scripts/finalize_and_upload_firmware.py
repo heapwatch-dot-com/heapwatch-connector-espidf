@@ -1,4 +1,5 @@
-# Copyright (c) 2026 Heapwatch. All rights reserved.
+# Copyright 2026 Heapwatch
+# SPDX-License-Identifier: Apache-2.0
 #
 # Runs after a successful application elf2image (CMake stamp on .bin_timestamp):
 #  1. Refuse leftover binaries if compile/link did not succeed

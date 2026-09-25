@@ -15,8 +15,8 @@ dependencies:
   idf:
     version: ">=5.3.0"
   heapwatch_connector_espidf:
-    git: git@github.com:heapwatch-dot-com/heapwatch-connector-espidf.git
-    version: main
+    git: https://github.com/heapwatch-dot-com/heapwatch-connector-espidf.git
+    version: v0.20.2
 ```
 
 `main/CMakeLists.txt` — add `REQUIRES heapwatch_connector_espidf`, then `idf.py reconfigure`.
@@ -39,7 +39,7 @@ own `hw_*` tasks — `heapwatch_initialize()` returns immediately and never bloc
 
 Configure once:
 
-- Project-root `.env` — build token (firmware upload on `idf.py build`)
+- Project-root `.env` — optional. When the build-upload keys are missing, `idf.py build` prints a warning and skips firmware upload
 - `sdkconfig.defaults.secrets` — `CONFIG_HEAPWATCH_ENROLLMENT_KEY="sk_enroll_…"`
 - menuconfig → **Heapwatch Connector** — Wi‑Fi and features
 
@@ -92,4 +92,4 @@ Known, accepted imprecision:
 
 ## License
 
-Copyright © Heapwatch. See file headers. Licensing: info@heapwatch.com
+Apache License 2.0. See [LICENSE](LICENSE).

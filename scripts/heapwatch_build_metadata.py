@@ -1,4 +1,5 @@
-# Copyright (c) 2026 Heapwatch. All rights reserved.
+# Copyright 2026 Heapwatch
+# SPDX-License-Identifier: Apache-2.0
 #
 # Read/write generated heapwatch_build_metadata.h for client firmware builds.
 

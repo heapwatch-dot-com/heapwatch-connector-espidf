@@ -1,4 +1,5 @@
-# Copyright (c) 2026 Heapwatch. All rights reserved.
+# Copyright 2026 Heapwatch
+# SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from heapwatch_build_metadata import git_describe, resolve_source_version
 from heapwatch_multipart_upload import encode_multipart_form_data
 from heapwatch_upload_env import (
     ensure_upload_env_configured,
-    format_missing_upload_env_error,
+    format_missing_upload_env_warning,
     missing_upload_env_keys,
 )
 from post_build_upload_firmware import (
@@ -123,8 +124,8 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
                 ],
             )
             with tempfile.TemporaryDirectory() as tmp:
-                message = format_missing_upload_env_error(Path(tmp), missing)
-                self.assertIn("Missing environment variable(s)", message)
+                message = format_missing_upload_env_warning(Path(tmp), missing)
+                self.assertIn("WARNING: Heapwatch firmware upload is disabled", message)
                 self.assertIn("HEAPWATCH_BUILD_TOKEN", message)
                 self.assertIn(str(Path(tmp) / ".env"), message)
         finally:
@@ -155,7 +156,7 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                ensure_upload_env_configured(app_root)
+                self.assertTrue(ensure_upload_env_configured(app_root))
                 self.assertEqual(os.environ["HEAPWATCH_APPLICATION_ID"], "42")
         finally:
             for key, value in saved.items():
@@ -164,7 +165,7 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
                 else:
                     os.environ.pop(key, None)
 
-    def test_ensure_upload_env_exits_when_incomplete(self) -> None:
+    def test_ensure_upload_env_warns_when_incomplete(self) -> None:
         import os
 
         saved = {key: os.environ.pop(key, None) for key in (
@@ -175,9 +176,11 @@ class HeapwatchBuildMetadataTest(unittest.TestCase):
         )}
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                with self.assertRaises(SystemExit) as ctx:
-                    ensure_upload_env_configured(Path(tmp))
-                self.assertEqual(ctx.exception.code, 1)
+                stderr = StringIO()
+                with patch("sys.stderr", stderr):
+                    ready = ensure_upload_env_configured(Path(tmp))
+                self.assertFalse(ready)
+                self.assertIn("WARNING: Heapwatch firmware upload is disabled", stderr.getvalue())
         finally:
             for key, value in saved.items():
                 if value is not None:

@@ -1,8 +1,9 @@
-version: "0.20.1"
+version: "0.20.2"
 description: Heapwatch Connector for ESP-IDF
+license: Apache-2.0
 url: https://github.com/heapwatch-dot-com/heapwatch-connector-espidf
 documentation: https://docs.heapwatch.com/integration/getting-started/overview
-repository: git@github.com:heapwatch-dot-com/heapwatch-connector-espidf.git
+repository: https://github.com/heapwatch-dot-com/heapwatch-connector-espidf.git
 dependencies:
   # ESP-IDF 6 removed the built-in `json` component; use managed cJSON instead.
   # On IDF 5.x, CMakeLists.txt links the built-in `json` component (same library).
