@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-09-25
+
+### Removed
+- Device config catalog no longer includes Command catalog hash (`man_hash`) or Command catalog build identifier (`man_build`). Those keys were never stored.
+
 ## [0.20.0] - 2026-09-22
 
 ### Fixed

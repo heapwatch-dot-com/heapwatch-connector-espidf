@@ -55,12 +55,5 @@
     "reboots.\",\"type\":\"int\",\"secret\":false,\"patchable\":false},"        \
     "{\"nvs_key\":\"last_crash_bc\",\"name\":\"Last crash boot "                \
     "cycle\",\"description\":\"Boot cycle recorded when the previous crash "     \
-    "occurred.\",\"type\":\"int\",\"secret\":false,\"patchable\":false},"       \
-    "{\"nvs_key\":\"man_hash\",\"name\":\"Command catalog "                            \
-    "hash\",\"description\":\"SHA-256 of the last uploaded command catalog "    \
-    "body.\",\"type\":\"string\",\"secret\":false,\"patchable\":false},"         \
-    "{\"nvs_key\":\"man_build\",\"name\":\"Command catalog build "                     \
-    "identifier\",\"description\":\"Build identifier of the last uploaded "      \
-    "command catalog.\",\"type\":\"string\",\"secret\":false,\"patchable\":"   \
-    "false}"                                                                    \
+    "occurred.\",\"type\":\"int\",\"secret\":false,\"patchable\":false}"        \
     "]}]"

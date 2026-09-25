@@ -31,8 +31,6 @@ constexpr char KEY_PENDING_UID[] = "pending_uid";
 constexpr char KEY_PROVISIONED[] = "provisioned";
 constexpr char KEY_BOOT_CYCLE[] = "boot_cycle";
 constexpr char KEY_LAST_CRASH_BC[] = "last_crash_bc";
-constexpr char KEY_MAN_HASH[] = "man_hash";
-constexpr char KEY_MAN_BUILD[] = "man_build";
 
 constexpr uint32_t DEFAULT_OUTBOX_DRAIN_MS = 30000;
 constexpr uint32_t MIN_TELEMETRY_MS = 1000;
@@ -72,11 +70,6 @@ constexpr FieldSchema HEAPWATCH_FIELDS[] = {
      false, false, nullptr, 0, 0},
     {KEY_LAST_CRASH_BC, "Last crash boot cycle",
      "Boot cycle recorded when the previous crash occurred.", "int", false, false, nullptr, 0, 0},
-    {KEY_MAN_HASH, "Command catalog hash", "SHA-256 of the last uploaded command catalog body.", "string",
-     false, false, nullptr, 0, 0},
-    {KEY_MAN_BUILD, "Command catalog build identifier",
-     "Build identifier of the last uploaded command catalog.", "string", false, false, nullptr, 0,
-     0},
 };
 
 struct ManagedCatalog {
