@@ -333,7 +333,17 @@ typedef enum {
 #define HEAPWATCH_MEM_SCRATCH_BYTES 8192
 #endif
 
-#define HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH 8
+/**
+ * The backend sends one command and waits for its ack/response before sending
+ * the next, so steady-state depth is 1. The 2nd slot covers a command and a
+ * credential-rotation notification landing back-to-back (both funnel through
+ * this same queue), or a brief redelivery burst right after MQTT reconnect.
+ */
+#ifdef CONFIG_HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH
+#define HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH CONFIG_HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH
+#else
+#define HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH 2
+#endif
 #define HEAPWATCH_COMMAND_TOPIC_MAX           160
 #define HEAPWATCH_COMMAND_PAYLOAD_MAX         1024
 

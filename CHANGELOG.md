@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Reduced the default inbound device-command queue depth from 8 to 2 (now exposed as
+  `HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH` Kconfig) — the backend sends one command and waits
+  for its ack/response before sending the next, so the old depth of 8 reserved ~9.6 KB of
+  static RAM for headroom that was never used. Raise the Kconfig value if you see "Inbound
+  command queue full — dropping command" in logs.
+
 ### Removed
 - Removed the unused 32 KB coredump-over-MQTT payload buffer, its backing queue, and the
   base64/MQTT publish path. This was dead code from an earlier design — coredump upload has

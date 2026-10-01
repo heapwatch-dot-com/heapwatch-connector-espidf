@@ -388,6 +388,14 @@ menu "Heapwatch Connector"
                 and want to preserve stats during intermittent connection outages like
                 having a CatM modem and moving around with the device.
 
+        config HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH
+            int "Command Inbound Queue Depth"
+            default 2
+            range 2 32
+            help
+                Depth of the inbound command queue. Only raise this if you see "Inbound command queue full - dropping
+                command" in logs.
+
         config HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
             int "MQTT dispatcher task stack (bytes)"
             default 12288
