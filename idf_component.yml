@@ -1,4 +1,4 @@
-version: "0.20.2"
+version: "0.21.0"
 description: Heapwatch Connector for ESP-IDF
 license: Apache-2.0
 url: https://github.com/heapwatch-dot-com/heapwatch-connector-espidf

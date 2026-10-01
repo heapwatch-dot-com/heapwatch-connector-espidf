@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-01
+
 ### Changed
 - Reduced the default inbound device-command queue depth from 8 to 2 (now exposed as
   `HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH` Kconfig) — the backend sends one command and waits
