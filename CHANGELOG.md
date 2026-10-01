@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the unused 32 KB coredump-over-MQTT payload buffer, its backing queue, and the
+  base64/MQTT publish path. This was dead code from an earlier design — coredump upload has
+  exclusively used direct flash-to-HTTPS streaming (256 B chunks) for a while, and this path was
+  never reachable (its only consumer was already disabled). **BREAKING:** also removed
+  `coredump_queue_depth` from `heapwatch_status_t`, since it always tracked this now-removed
+  queue.
+
 ## [0.20.2] - 2026-09-25
 
 ### Changed

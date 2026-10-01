@@ -40,12 +40,6 @@
 #endif
 
 /**
- * There is only ever one core dump pending upload at a time (a device can only
- * crash once between boots), so this is a fixed constant, not a Kconfig knob.
- */
-#define HEAPWATCH_COREDUMP_QUEUE_LEN     1
-
-/**
  * When enabled (Kconfig + SPIRAM): MQTT queues, command inbound queue, stream
  * TCP buffers, and metrics/publish scratch in PSRAM. Alloc failure aborts.
  * Default off.
@@ -295,7 +289,6 @@ typedef enum {
  * This limits the length of log messages and other text payloads.
  */
 #define HEAPWATCH_MAX_PAYLOAD_SIZE     2048
-#define HEAPWATCH_COREDUMP_MAX_PAYLOAD_SIZE 32768
 #define HEAPWATCH_FLAT_DELIMITER       "|"
 
 /**

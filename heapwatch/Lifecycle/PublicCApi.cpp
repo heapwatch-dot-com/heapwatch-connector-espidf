@@ -84,7 +84,6 @@ esp_err_t heapwatch_get_status(heapwatch_status_t* out) {
     out->tiny_queue_depth = status.tiny_queue_depth;
     out->small_queue_depth = status.small_queue_depth;
     out->large_queue_depth = status.large_queue_depth;
-    out->coredump_queue_depth = status.coredump_queue_depth;
     return ESP_OK;
 }
 

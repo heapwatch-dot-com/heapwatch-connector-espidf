@@ -80,7 +80,6 @@ typedef struct {
     uint32_t tiny_queue_depth;
     uint32_t small_queue_depth;
     uint32_t large_queue_depth;
-    uint32_t coredump_queue_depth;
 } heapwatch_status_t;
 
 typedef struct {

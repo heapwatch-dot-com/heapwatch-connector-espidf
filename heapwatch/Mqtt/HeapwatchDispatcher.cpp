@@ -199,15 +199,6 @@ static const char* get_topic_for_message_type(enum MqttMessageType msg_type) {
     }
 }
 
-#if 0
-static const char* get_coredump_topic() {
-    const char* uid = heapwatch_get_device_uid();
-    static char topic_buf[128];
-    snprintf(topic_buf, sizeof(topic_buf), "device/%s/coredump", uid);
-    return topic_buf;
-}
-#endif
-
 static void subscribe_command_topics() {
     if (g_mqtt_client == nullptr) {
         return;
@@ -401,39 +392,6 @@ void taskDispatchMqttQueue(void* arg) {
         // -----------------------------------------------------------------------
         // Step 3: Receive message from shared queue
         // -----------------------------------------------------------------------
-        // Core dump upload over MQTT is intentionally disabled during HTTP upload testing.
-        // Keep this block around for quick rollback.
-        #if 0
-        CoreDumpPayload* core_dump_payload = nullptr;
-        QueueHandle_t coredump_queue = heapwatch_get_coredump_queue();
-        if (coredump_queue != nullptr &&
-            xQueueReceive(coredump_queue, &core_dump_payload, pdMS_TO_TICKS(10))) {
-            if (core_dump_payload == nullptr) {
-                continue;
-            }
-            const char* coredump_topic = get_coredump_topic();
-            const int32_t result = esp_mqtt_client_publish(g_mqtt_client, coredump_topic,
-                                                       core_dump_payload->payload,
-                                                       core_dump_payload->payload_len, 0, 0);
-            if (result < 0) {
-                ESP_LOGE(TAG, "Failed to publish core dump payload: %" PRId32, result);
-                if (xQueueSendToFront(coredump_queue, &core_dump_payload, 0) != pdTRUE) {
-                    free(core_dump_payload);
-                }
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            } else {
-                ESP_LOGI(TAG, "Published core dump payload (%" PRIu32 " bytes)",
-                         static_cast<uint32_t>(core_dump_payload->payload_len));
-                const esp_err_t erase_result = esp_core_dump_image_erase();
-                if (erase_result != ESP_OK) {
-                    ESP_LOGW(TAG, "Failed to erase coredump after publish: %s",
-                             esp_err_to_name(erase_result));
-                }
-                free(core_dump_payload);
-            }
-            continue;
-        }
-        #endif
 
         QueueHandle_t tiny_queue = heapwatch_get_tiny_queue();
         QueueHandle_t small_queue = heapwatch_get_small_queue();

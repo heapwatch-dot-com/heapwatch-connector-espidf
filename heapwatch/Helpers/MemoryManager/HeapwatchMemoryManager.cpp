@@ -65,12 +65,6 @@ void create_rtos_objects(ConnectorMemoryBlock* ws) {
         HEAPWATCH_COMMAND_INBOUND_QUEUE_DEPTH, sizeof(Heapwatch::DeviceCommand::CommandInboundMessage),
         ws->command_inbound_storage, &ws->command_inbound_ctrl, "command");
 
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    ws->coredump_queue = heapwatch_queue_create_static(
-        HEAPWATCH_COREDUMP_QUEUE_LEN, sizeof(CoreDumpPayload*), ws->coredump_queue_storage,
-        &ws->coredump_queue_ctrl, "coredump");
-#endif
-
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
     ws->stream_outbound_queue = heapwatch_queue_create_static(
         HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH, sizeof(ConnectorMemoryBlock::StreamOutboundQueued),
@@ -100,17 +94,6 @@ void delete_rtos_objects(ConnectorMemoryBlock* ws) {
 
     heapwatch_queue_delete_static(ws->command_inbound_queue);
     ws->command_inbound_queue = nullptr;
-
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    if (ws->coredump_queue != nullptr) {
-        CoreDumpPayload* pending = nullptr;
-        while (xQueueReceive(ws->coredump_queue, &pending, 0) == pdTRUE) {
-        }
-        heapwatch_queue_delete_static(ws->coredump_queue);
-        ws->coredump_queue = nullptr;
-        ws->coredump_busy = false;
-    }
-#endif
 
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
     heapwatch_queue_delete_static(ws->stream_outbound_queue);

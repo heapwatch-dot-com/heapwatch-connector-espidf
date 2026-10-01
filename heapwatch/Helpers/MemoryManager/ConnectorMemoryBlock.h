@@ -80,14 +80,6 @@ struct ConnectorMemoryBlock {
     StaticQueue_t command_inbound_ctrl;
     QueueHandle_t command_inbound_queue;
 
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    CoreDumpPayload coredump;
-    bool coredump_busy;
-    alignas(8) uint8_t coredump_queue_storage[HEAPWATCH_COREDUMP_QUEUE_LEN * sizeof(CoreDumpPayload*)];
-    StaticQueue_t coredump_queue_ctrl;
-    QueueHandle_t coredump_queue;
-#endif
-
 #if CONFIG_HEAPWATCH_ENABLE_STREAM_INGRESS
     Heapwatch::StreamIngress::Mux::OutboundSlot stream_outbound_slots[HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH];
     char stream_coalesce_buf[Heapwatch::StreamIngress::Mux::COALESCE_MAX_BYTES];

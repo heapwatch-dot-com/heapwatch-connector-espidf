@@ -53,9 +53,6 @@ static constexpr TickType_t BOOT_CRITICAL_QUEUE_WAIT = pdMS_TO_TICKS(250);
 QueueHandle_t g_tiny_queue = nullptr;
 QueueHandle_t g_small_queue = nullptr;
 QueueHandle_t g_large_queue = nullptr;
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-QueueHandle_t g_coredump_queue = nullptr;
-#endif
 SemaphoreHandle_t g_publish_mutex = nullptr;
 SemaphoreHandle_t g_mqtt_queue_work_sem = nullptr;
 bool g_initialized = false;
@@ -93,9 +90,6 @@ void bind_memory_block_aliases() {
     g_large_queue = ws->large_queue;
     g_publish_mutex = ws->publish_mutex;
     g_mqtt_queue_work_sem = ws->mqtt_queue_work_sem;
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    g_coredump_queue = ws->coredump_queue;
-#endif
 }
 
 void clear_memory_block_aliases() {
@@ -105,9 +99,6 @@ void clear_memory_block_aliases() {
     g_large_queue = nullptr;
     g_publish_mutex = nullptr;
     g_mqtt_queue_work_sem = nullptr;
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    g_coredump_queue = nullptr;
-#endif
 }
 
 // RAII guard around g_publish_mutex with a bounded wait: publishing helpers run on
@@ -478,38 +469,6 @@ bool MqttTelemetryClient::queueLog(HeapwatchConnectorSeverity severity, const ch
 
     return heapwatch_enqueue_mqtt_queue_message(g_small_queue, &g_mqtt_payload_build_buffers->small, 0);
 #endif  /* CONFIG_HEAPWATCH_ENABLE_LOG_COLLECTION */
-}
-
-bool MqttTelemetryClient::queueCoreDump(const char* base64_payload, size_t payload_len) {
-#if !CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    (void)base64_payload;
-    (void)payload_len;
-    return false;
-#else
-    if (!g_infrastructure_ready || g_coredump_queue == nullptr || base64_payload == nullptr) {
-        return false;
-    }
-    if (payload_len == 0 || payload_len >= HEAPWATCH_COREDUMP_MAX_PAYLOAD_SIZE) {
-        return false;
-    }
-
-    Heapwatch::Helpers::ConnectorMemoryBlock* ws = Heapwatch::Helpers::MemoryManager::get();
-    if (ws == nullptr || ws->coredump_busy) {
-        return false;
-    }
-
-    ws->coredump.payload_len = payload_len;
-    memcpy(ws->coredump.payload, base64_payload, payload_len);
-    ws->coredump.payload[payload_len] = '\0';
-    ws->coredump_busy = true;
-    CoreDumpPayload* payload = &ws->coredump;
-
-    if (xQueueSend(g_coredump_queue, &payload, 0) != pdTRUE) {
-        ws->coredump_busy = false;
-        return false;
-    }
-    return true;
-#endif  /* CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD */
 }
 
 bool MqttTelemetryClient::uploadCoreDumpFromFlashIfPresent() {
@@ -1024,13 +983,6 @@ HeapwatchConnectorStatus MqttTelemetryClient::getStatus() const {
         g_small_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_small_queue)) : 0;
     status.large_queue_depth =
         g_large_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_large_queue)) : 0;
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-    status.coredump_queue_depth =
-        g_coredump_queue != nullptr ? static_cast<uint32_t>(uxQueueMessagesWaiting(g_coredump_queue))
-                                    : 0;
-#else
-    status.coredump_queue_depth = 0;
-#endif
     return status;
 }
 
@@ -1097,11 +1049,6 @@ void heapwatch_wait_for_queued_mqtt_message() {
     xSemaphoreGive(g_mqtt_queue_work_sem);
 }
 
-#if CONFIG_HEAPWATCH_ENABLE_COREDUMP_UPLOAD
-QueueHandle_t heapwatch_get_coredump_queue() { return g_coredump_queue; }
-#else
-QueueHandle_t heapwatch_get_coredump_queue() { return nullptr; }
-#endif
 const char* heapwatch_get_device_uid() { return g_device_uid; }
 const char* heapwatch_get_tenant_slug() { return g_tenant_slug; }
 const char* heapwatch_get_broker_uri() { return g_broker_uri; }

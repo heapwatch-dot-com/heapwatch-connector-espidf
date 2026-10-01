@@ -54,11 +54,6 @@ struct LargeMqttMessage {
 /** Kept name for the large tier: used by SPECS/TASKS and the dispatcher's canonical publish path. */
 using MqttMessage = LargeMqttMessage;
 
-struct CoreDumpPayload {
-    size_t payload_len;
-    char payload[HEAPWATCH_COREDUMP_MAX_PAYLOAD_SIZE];
-};
-
 /**
  * STAT1: synchronous, always-compiled-in status snapshot for app-code
  * introspection/gating (e.g. "don't enter light sleep until the tiny queue is
@@ -77,7 +72,6 @@ struct HeapwatchConnectorStatus {
     uint32_t tiny_queue_depth;
     uint32_t small_queue_depth;
     uint32_t large_queue_depth;
-    uint32_t coredump_queue_depth;
 };
 
 class MqttTelemetryClient {
@@ -113,7 +107,6 @@ public:
     bool formatLogJsonLine(HeapwatchConnectorSeverity severity, const char* message,
                            const HeapwatchConnectorLogContext* context, char* out,
                            size_t out_len);
-    bool queueCoreDump(const char* base64_payload, size_t payload_len);
     bool uploadCoreDumpFromFlashIfPresent();
     void queueParameter(const char* name, int64_t value);
     void queueParameter(const char* name, double value);
@@ -182,7 +175,6 @@ QueueHandle_t heapwatch_get_large_mqtt_queue();  // large MQTT tier (SPECS/TASKS
 bool heapwatch_enqueue_mqtt_queue_message(QueueHandle_t queue, const void* item, TickType_t wait);
 void heapwatch_mark_mqtt_queue_message_published();
 void heapwatch_wait_for_queued_mqtt_message();
-QueueHandle_t heapwatch_get_coredump_queue();
 const char* heapwatch_get_device_uid();
 const char* heapwatch_get_tenant_slug();
 const char* heapwatch_get_broker_uri();
