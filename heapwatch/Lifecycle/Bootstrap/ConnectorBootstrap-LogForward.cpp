@@ -410,8 +410,8 @@ void startLogRelayTaskIfEnabled() {
     }
     g_log_stop_requested = false;
     g_log_task_exited = false;
-    if (heapwatch_task_create(taskForwardEspLogs, "hw_log_forward", 6144, nullptr, tskIDLE_PRIORITY + 1,
-                              &g_log_forward_task) != pdPASS) {
+    if (heapwatch_task_create(taskForwardEspLogs, "hw_log_forward", HEAPWATCH_LOG_FORWARD_TASK_STACK_BYTES,
+                              nullptr, tskIDLE_PRIORITY + 1, &g_log_forward_task) != pdPASS) {
         g_log_forward_task = nullptr;
         g_log_task_exited = true;
     }

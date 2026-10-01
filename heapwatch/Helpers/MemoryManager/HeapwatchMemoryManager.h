@@ -21,9 +21,4 @@ void deinit();
 /** nullptr before init and after deinit. */
 ConnectorMemoryBlock* get();
 
-/** 8-byte aligned bump from temporary_arena[]. Returns nullptr if the arena is full. */
-void* temporaryArenaAlloc(size_t bytes);
-
-void temporaryArenaReset();
-
 }  // namespace Heapwatch::Helpers::MemoryManager

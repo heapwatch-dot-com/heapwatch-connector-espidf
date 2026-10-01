@@ -396,20 +396,6 @@ menu "Heapwatch Connector"
                 Depth of the inbound command queue. Only raise this if you see "Inbound command queue full - dropping
                 command" in logs.
 
-        config HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
-            int "MQTT dispatcher task stack (bytes)"
-            default 12288
-            range 8192 32768
-            help
-                Stack for hw_dispatcher.
-
-        config HEAPWATCH_OFFLINE_TASK_STACK_BYTES
-            int "Commanded-offline pipeline task stack (bytes)"
-            default 10240
-            range 8192 32768
-            help
-                Stack for hw_offline.
-
         config HEAPWATCH_ALLOCATE_DATA_IN_PSRAM
             bool "Put as much data as possible in PSRAM (Recommended)"
             default n
@@ -423,18 +409,9 @@ menu "Heapwatch Connector"
                 Great for storing lots of pending telemetry during intermittent modem connection disconnects.
                 Recommended for modem applications that face constant signal interruptions.
 
-                The connector memory block (MQTT queues, command/stream buffers, metrics
-                scratch, optional coredump slot) is one allocation. This option chooses
-                PSRAM vs internal DRAM for that block.
-
-        config HEAPWATCH_MEM_SCRATCH_BYTES
-            int "Connector JSON/FS scratch arena (bytes)"
-            default 8192
-            range 2048 65536
-            help
-                Resettable bump buffer inside the connector memory block. Reserved at
-                init for cJSON/FS/OTA serialization so those paths do not need extra
-                heap churn. Unused by call sites until they opt in.
+                The connector memory block (MQTT queues, command inbound queue, stream
+                buffers) is one allocation. This option chooses PSRAM vs internal DRAM
+                for that block.
 
         config HEAPWATCH_STACKS_IN_PSRAM
             bool "Allocate Heapwatch Connector stacks in PSRAM (Recommended)"
@@ -461,6 +438,53 @@ menu "Heapwatch Connector"
                 Recommended max batch is 10. Make sure that your system MQTT max payload size is big enough
                 to store this batch X max log line + some overhead. If you set these numbers bigger than MQTT max
                 payload size, log MQTT dispatches to Heapwatch will fail.
+
+        menu "Task Stack Sizes (Advanced)"
+            comment "Defaults are sized from real on-device uxTaskGetStackHighWaterMark() profiling with comfortable margin. Only change these if you have your own profiling data showing a task needs more (or can safely take less) -- too low risks a stack overflow crash."
+
+            config HEAPWATCH_DISPATCHER_TASK_STACK_BYTES
+                int "hw_dispatcher stack (bytes)"
+                default 12288
+                range 8192 32768
+                help
+                    MQTT connect/publish/subscribe loop. Profiled peak usage runs close to
+                    half this budget (TLS/MQTT-connect is the heaviest moment) -- do not
+                    lower without your own high-water-mark data.
+
+            config HEAPWATCH_OFFLINE_TASK_STACK_BYTES
+                int "hw_offline stack (bytes)"
+                default 4096
+                range 2048 32768
+                help
+                    Commanded-offline pipeline (restart/sleep/wifi_reconnect). Simple
+                    state machine -- profiled peak usage is a small fraction of this budget.
+
+            config HEAPWATCH_LOG_FORWARD_TASK_STACK_BYTES
+                int "hw_log_forward stack (bytes)"
+                default 4096
+                range 2048 16384
+                help
+                    Drains captured ESP-IDF log lines into the small MQTT queue. Per-line
+                    scratch buffers live in the connector memory block, not on this stack,
+                    so usage stays low.
+
+            config HEAPWATCH_METRICS_TASK_STACK_BYTES
+                int "hw_metrics stack (bytes)"
+                default 6144
+                range 4096 32768
+                help
+                    Periodic metrics collection and publish (WiFi/heap/CPU/task scan,
+                    JSON/flat payload formatting).
+
+            config HEAPWATCH_STREAMING_TASK_STACK_BYTES
+                int "hw_streaming stack (bytes)"
+                default 8192
+                range 4096 32768
+                help
+                    TCP-over-TLS streaming worker (lazily created only when a stream
+                    session is active). Includes the TLS handshake, which is the
+                    heaviest moment for this task.
+        endmenu
     endmenu
 
 endmenu

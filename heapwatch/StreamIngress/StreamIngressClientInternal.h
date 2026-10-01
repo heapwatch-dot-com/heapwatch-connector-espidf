@@ -14,6 +14,7 @@
 
 #include "heapwatch/StreamIngress/Mux/StreamIngressMux.h"
 #include "heapwatch/StreamIngress/StreamIngressClient.h"
+#include "heapwatch_config.h"
 
 namespace Heapwatch::StreamIngress {
 
@@ -59,7 +60,7 @@ constexpr size_t STDIN_PAYLOAD_MAX = 512;
 constexpr uint32_t COALESCE_FLUSH_MS = 100;
 constexpr uint32_t WORKER_POLL_MS = 100;
 constexpr uint32_t RECONNECT_DELAY_MS = 2000;
-constexpr uint32_t WORKER_STACK_BYTES = 10240;
+constexpr uint32_t WORKER_STACK_BYTES = HEAPWATCH_STREAMING_TASK_STACK_BYTES;
 
 void bindStreamWorkingSet();
 void unbindStreamWorkingSet();

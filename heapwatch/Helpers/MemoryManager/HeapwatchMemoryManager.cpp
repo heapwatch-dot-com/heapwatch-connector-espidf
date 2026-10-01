@@ -135,24 +135,4 @@ void deinit() {
 
 ConnectorMemoryBlock* get() { return g_ws; }
 
-void* temporaryArenaAlloc(size_t bytes) {
-    if (g_ws == nullptr || bytes == 0) {
-        return nullptr;
-    }
-    const size_t aligned = (bytes + 7U) & ~static_cast<size_t>(7U);
-    if (g_ws->temporary_arena_used > HEAPWATCH_MEM_SCRATCH_BYTES ||
-        aligned > HEAPWATCH_MEM_SCRATCH_BYTES - g_ws->temporary_arena_used) {
-        return nullptr;
-    }
-    void* p = g_ws->temporary_arena + g_ws->temporary_arena_used;
-    g_ws->temporary_arena_used += aligned;
-    return p;
-}
-
-void temporaryArenaReset() {
-    if (g_ws != nullptr) {
-        g_ws->temporary_arena_used = 0;
-    }
-}
-
 }  // namespace Heapwatch::Helpers::MemoryManager

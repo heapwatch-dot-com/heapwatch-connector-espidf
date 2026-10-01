@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for its ack/response before sending the next, so the old depth of 8 reserved ~9.6 KB of
   static RAM for headroom that was never used. Raise the Kconfig value if you see "Inbound
   command queue full — dropping command" in logs.
+- Reduced default task stack sizes for `hw_log_forward` (6144→4096), `hw_offline`
+  (10240→4096), `hw_metrics` (8192→6144), and `hw_streaming` (10240→8192), based on
+  real on-device `uxTaskGetStackHighWaterMark()` profiling showing each task's observed
+  peak usage was well under half its allocated stack. All four are now Kconfig-tunable
+  (previously hardcoded) under the new **Advanced: Task Stack Sizes (Expert)** submenu,
+  alongside the existing `hw_dispatcher`/`hw_offline` stack options which moved there too
+  to keep the main Memory/Queue Sizing menu uncluttered. `hw_dispatcher` and `hw_bootstrap`
+  were profiled too but left unchanged — both already run at 56-67% of their current
+  budget at peak.
 
 ### Removed
 - Removed the unused 32 KB coredump-over-MQTT payload buffer, its backing queue, and the
@@ -21,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never reachable (its only consumer was already disabled). **BREAKING:** also removed
   `coredump_queue_depth` from `heapwatch_status_t`, since it always tracked this now-removed
   queue.
+- Removed the 8 KB `temporary_arena` scratch buffer (`HEAPWATCH_MEM_SCRATCH_BYTES` Kconfig,
+  `temporaryArenaAlloc()`/`temporaryArenaReset()`) from the connector memory block. It was
+  reserved ahead of a cJSON/FS/OTA use case that was never implemented — zero call sites existed
+  anywhere in the codebase, so it was pure dead static RAM on every device.
 
 ## [0.20.2] - 2026-09-25
 

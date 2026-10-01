@@ -103,9 +103,6 @@ struct ConnectorMemoryBlock {
 #if CONFIG_HEAPWATCH_ENABLE_OTA
     Heapwatch::Ota::OtaJob ota_job;
 #endif
-
-    alignas(8) uint8_t temporary_arena[HEAPWATCH_MEM_SCRATCH_BYTES];
-    size_t temporary_arena_used;
 };
 
 }  // namespace Heapwatch::Helpers
