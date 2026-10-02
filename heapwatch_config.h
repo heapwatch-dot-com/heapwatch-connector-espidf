@@ -355,11 +355,18 @@ typedef enum {
 #define HEAPWATCH_COMMAND_TOPIC_MAX           160
 #define HEAPWATCH_COMMAND_PAYLOAD_MAX         1024
 
-#if defined(CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING) && CONFIG_HEAPWATCH_ENABLE_BLE_REPORTING
-#define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 2
-#else
-#define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 4
-#endif
+/**
+ * Every producer except BLE scan/events (logs, file browser, FS download/upload,
+ * catalog/config/snapshot uploads) enqueues one frame and immediately calls
+ * flushOutbound() before producing the next one — same task, synchronous TLS write —
+ * so only 1 slot is ever actually "busy" from those paths. BLE reporting is currently
+ * hard-blocked (see CMakeLists.txt), so there is no cross-task producer left that
+ * needs headroom beyond 1. Each slot is ~4.2 KB (MAX_PAYLOAD_LEN-sized), so this is one
+ * of the largest line items in the connector memory block. Fixed constant, not a
+ * Kconfig knob — raising it only makes sense alongside reintroducing a concurrent
+ * producer (e.g. re-enabling BLE reporting), which is a code change anyway.
+ */
+#define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 1
 
 /* ============================================================================
    Generic Parameter Mechanism (PARAM1, Phase 5c)

@@ -54,18 +54,10 @@ static const char BUILTIN_COMMAND_CATALOG_JSON[] =
     "\"panel_visible\":true,\"response_timeout_s\":15,\"args\":[{\"name\":\"duration_s\","
     "\"type\":\"int\",\"label\":\"Offline duration\",\"unit\":\"s\",\"min\":0,\"max\":300,"
     "\"required\":false}]},"
-    "{\"slug\":\"bluetooth/get\",\"name\":\"Bluetooth snapshot\",\"description\":\"Queue a full "
-    "/bluetooth MQTT snapshot.\",\"risk\":\"low\",\"session\":\"non_terminal\","
-    "\"returns_payload\":false,\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":30,"
-    "\"args\":[]},"
-    "{\"slug\":\"bluetooth/scan\",\"name\":\"BLE scan\",\"description\":\"Run an active or "
-    "passive BLE scan and stream peers.\",\"risk\":\"medium\",\"session\":\"non_terminal\","
-    "\"returns_payload\":false,\"builtin\":true,\"panel_visible\":false,\"response_timeout_s\":90,"
-    "\"args\":[{\"name\":\"duration_seconds\",\"type\":\"int\",\"label\":\"Scan "
-    "duration\",\"unit\":\"s\",\"min\":1,\"max\":60,\"required\":false},{\"name\":\"scan_type\","
-    "\"type\":\"enum\",\"label\":\"Scan type\",\"default\":\"active\",\"options\":[{\"value\":"
-    "\"active\",\"label\":\"Active\"},{\"value\":\"passive\",\"label\":\"Passive\"}],"
-    "\"required\":false}]},"
+    // bluetooth/get and bluetooth/scan temporarily withdrawn from the catalog — BLE
+    // reporting (Radio/BluetoothLe) is unfinished/untested. Not deleted: re-add these two
+    // entries (and uncomment the `bt` PRIV_REQUIRES in CMakeLists.txt) once the feature
+    // is ready to ship.
     "{\"slug\":\"sleep_light\",\"name\":\"Light sleep\",\"description\":\"Enter light sleep "
     "after draining the MQTT outbox.\",\"risk\":\"high\",\"session\":\"non_terminal\","
     "\"returns_payload\":false,\"builtin\":true,\"panel_visible\":true,\"response_timeout_s\":120,"
