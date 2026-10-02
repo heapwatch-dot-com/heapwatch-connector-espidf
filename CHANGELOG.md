@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-02
+
+### Changed
+- Reduced the stream-ingress outbound queue depth from 4 to 1 (fixed constant, not
+  Kconfig-tunable). Every current producer (logs, file browser, FS download/upload,
+  catalog/config/snapshot uploads) enqueues one frame and immediately flushes it
+  before producing the next, so more than 1 slot was never actually used. Each slot
+  is ~4.2 KB, so this recovers ~12.5 KB from the connector's memory block.
+
+### Removed
+- BLE reporting (`Radio/BluetoothLe`, the built-in NimBLE provider) is hard-blocked:
+  the `bt` component is no longer linked regardless of `HEAPWATCH_ENABLE_BLE_REPORTING`,
+  and the `bluetooth/get` / `bluetooth/scan` command-catalog entries are withdrawn.
+  The feature is unfinished and untested, not deleted — see the comments in
+  `CMakeLists.txt` and `DeviceCommand/CommandCatalogBuiltin.h` for how to re-enable it.
+  The host-delegate BLE integration path (`heapwatch_ble_register_delegate()`, for
+  hosts running their own BLE stack) is untouched by this.
+
 ## [0.21.0] - 2026-10-01
 
 ### Changed
