@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-04
+
+### Changed
+- First stable release. Pin `v1.0.0`. The public C API is `heapwatch.h`: automatic heap, CPU, task, and network metrics, plus logs and remote commands.
+
 ## [0.22.2] - 2026-10-04
 
 ### Changed
