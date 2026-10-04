@@ -138,45 +138,16 @@ void heapwatch_set_keep_running(bool keep_running);
 bool heapwatch_keep_running(void);
 
 /* ---------------------------------------------------------------------------
-   Telemetry
+   Telemetry (logs)
    --------------------------------------------------------------------------- */
 
 /**
- * Queue a standard event. Pass boot_cycle < 0 to use the connector’s current boot cycle.
- * The MQTT payload always includes boot_cycle.
+ * Host custom events, parameters, and power telemetry are deferred post-MVP.
+ * Built-in heap, CPU, task, and network metrics are collected automatically.
  */
-esp_err_t heapwatch_queue_event(int32_t event_type_id, int32_t boot_cycle);
 
 esp_err_t heapwatch_queue_log(HeapwatchConnectorSeverity severity, const char* message,
                               const heapwatch_log_context_t* context);
-
-/** One-shot parameter publish (event-adjacent values). */
-esp_err_t heapwatch_queue_parameter_int(const char* slug, int64_t value);
-esp_err_t heapwatch_queue_parameter_double(const char* slug, double value);
-
-/** Coalesced map updates (PARAM1); flushed each metrics cycle. */
-esp_err_t heapwatch_update_parameter_int(const char* slug, int64_t value);
-esp_err_t heapwatch_update_parameter_double(const char* slug, double value);
-esp_err_t heapwatch_update_parameter_int_ranged(const char* slug, int64_t value, int64_t min_value,
-                                                int64_t max_value);
-esp_err_t heapwatch_update_parameter_double_ranged(const char* slug, double value,
-                                                   double min_value, double max_value);
-
-/**
- * Limits-only map updates. Does not require a live value; must not be used to
- * push per-tick max as timeseries (bounds are dirty-flag / safety-net only).
- */
-esp_err_t heapwatch_set_parameter_max(const char* slug, int64_t max_value);
-esp_err_t heapwatch_set_parameter_min(const char* slug, int64_t min_value);
-esp_err_t heapwatch_set_parameter_double_max(const char* slug, double max_value);
-esp_err_t heapwatch_set_parameter_double_min(const char* slug, double min_value);
-
-/** Typed power helpers (`dynamic.power.{source}.{mv|percent|state}`). */
-esp_err_t heapwatch_update_power_mv(const char* source_name, int64_t mv);
-esp_err_t heapwatch_update_power_mv_ranged(const char* source_name, int64_t mv, int64_t min_mv,
-                                           int64_t max_mv);
-esp_err_t heapwatch_update_power_percent(const char* source_name, double percent);
-esp_err_t heapwatch_update_power_state(const char* source_name, heapwatch_power_state_t state);
 
 /* ---------------------------------------------------------------------------
    Remote commands (CMD1)

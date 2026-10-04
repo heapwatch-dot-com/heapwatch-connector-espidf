@@ -215,16 +215,10 @@ typedef enum {
 #endif
 
 /* ============================================================================
-   Wake Cause Codes (framework-agnostic)
+   Internal connector use only — not part of the public MVP API
+   (wake cause translation for connector sleep telemetry)
    =========================================================================== */
 
-/**
- * Stable, Heapwatch-owned wake cause codes reported via the "wake_cause_code" parameter
- * on HEAPWATCH_EVENT_WOKE_UP_FROM_* events. Never send raw esp_sleep_wakeup_cause_t values
- * to the backend directly — translate through heapwatch_translate_current_wake_cause()
- * (see main/sleep_tracking/SleepTracking.h) so the wire format stays stable across
- * ESP-IDF versions and, eventually, other frameworks.
- */
 typedef enum {
     HEAPWATCH_WAKE_CAUSE_UNDEFINED = 0,
     HEAPWATCH_WAKE_CAUSE_TIMER     = 1,
@@ -241,12 +235,10 @@ typedef enum {
 } heapwatch_wake_cause_t;
 
 /* ============================================================================
-   Event Type IDs (for QEvent)
+   Internal connector use only — not part of the public MVP API
+   (standard event type IDs for connector-queued telemetry)
    =========================================================================== */
 
-/**
- * Standard event type IDs.
- */
 #define HEAPWATCH_EVENT_STARTED_UP                  0
 #define HEAPWATCH_EVENT_RESTARTING                  1
 #define HEAPWATCH_EVENT_SHUTTING_DOWN               2
@@ -369,21 +361,15 @@ typedef enum {
 #define HEAPWATCH_STREAM_OUTBOUND_QUEUE_DEPTH 1
 
 /* ============================================================================
-   Generic Parameter Mechanism (PARAM1, Phase 5c)
+   Internal connector use only — not part of the public MVP API
+   (in-RAM parameter map capacity for connector telemetry)
    =========================================================================== */
 
-/**
- * Fixed capacity of the in-RAM sparse parameter map (slug -> value/min/max)
- * that MqttTelemetryClient::flushParameters() batches into one publish per
- * telemetry round. No malloc/free — a slug simply fails to register once this
- * many distinct slugs are live in a boot (auto-provisioned per-power-source
- * slugs and connector gauge limits count against this same budget). Per-task
- * stack maxes are emitted from MetricsCollector, not this table (DRAM).
- */
 #define HEAPWATCH_MAX_PARAMETER_SLOTS 32
 
 /* ============================================================================
-   Power State (POW1; Heapwatch-owned, no framework equivalent to leak per PORT1)
+   Internal connector use only — not part of the public MVP API
+   (Heapwatch-owned power state for connector parameter helpers)
    =========================================================================== */
 
 typedef enum {

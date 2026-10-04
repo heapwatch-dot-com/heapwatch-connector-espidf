@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-10-04
+
+### Changed
+- Temporarily removed host custom telemetry from the public C API (`heapwatch.h`):
+  custom events, parameters, and power helpers. Built-in heap, CPU, task, and
+  network metrics remain automatic; logs and remote commands are unchanged.
+
 ## [0.22.1] - 2026-10-04
 
 ### Changed
