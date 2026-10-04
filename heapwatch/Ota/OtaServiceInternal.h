@@ -17,7 +17,7 @@
 namespace Heapwatch::Ota {
 
 constexpr size_t DOWNLOAD_CHUNK = CONFIG_HEAPWATCH_OTA_DOWNLOAD_CHUNK_BYTES;
-constexpr uint32_t OTA_TASK_STACK_BYTES = 8192;
+constexpr uint32_t OTA_TASK_STACK_BYTES = CONFIG_HEAPWATCH_OTA_TASK_STACK_BYTES;
 
 enum class Phase : uint8_t {
     Idle = 0,

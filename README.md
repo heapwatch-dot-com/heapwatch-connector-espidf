@@ -16,7 +16,7 @@ dependencies:
     version: ">=5.3.0"
   heapwatch_connector_espidf:
     git: https://github.com/heapwatch-dot-com/heapwatch-connector-espidf.git
-    version: v0.22.0
+    version: v0.22.1
 ```
 
 `main/CMakeLists.txt` — add `REQUIRES heapwatch_connector_espidf`, then `idf.py reconfigure`.

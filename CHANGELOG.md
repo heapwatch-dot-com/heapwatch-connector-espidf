@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-04
+
+### Changed
+- `hw_ota` stack size is now `CONFIG_HEAPWATCH_OTA_TASK_STACK_BYTES` (default still 8192).
+
 ## [0.22.0] - 2026-10-02
 
 ### Changed

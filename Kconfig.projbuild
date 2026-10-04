@@ -484,6 +484,17 @@ menu "Heapwatch Connector"
                     TCP-over-TLS streaming worker (lazily created only when a stream
                     session is active). Includes the TLS handshake, which is the
                     heaviest moment for this task.
+
+            config HEAPWATCH_OTA_TASK_STACK_BYTES
+                int "hw_ota stack (bytes)"
+                depends on HEAPWATCH_ENABLE_OTA
+                default 8192
+                range 8192 32768
+                help
+                    OTA download worker. The stack stays in internal DRAM for the whole
+                    uptime because the task writes flash. Profiled high-water mark on a
+                    cellular HTTPS download was about 7.5 KB of an 8 KB stack. 12288
+                    leaves a few KB of headroom without holding a full extra 8 KB.
         endmenu
     endmenu
 
