@@ -215,8 +215,7 @@ typedef enum {
 #endif
 
 /* ============================================================================
-   Internal connector use only — not part of the public MVP API
-   (wake cause translation for connector sleep telemetry)
+   Wake Cause Codes (framework-agnostic)
    =========================================================================== */
 
 typedef enum {
@@ -235,10 +234,12 @@ typedef enum {
 } heapwatch_wake_cause_t;
 
 /* ============================================================================
-   Internal connector use only — not part of the public MVP API
-   (standard event type IDs for connector-queued telemetry)
+   Event Type IDs (for QEvent)
    =========================================================================== */
 
+/**
+ * Standard event type IDs.
+ */
 #define HEAPWATCH_EVENT_STARTED_UP                  0
 #define HEAPWATCH_EVENT_RESTARTING                  1
 #define HEAPWATCH_EVENT_SHUTTING_DOWN               2

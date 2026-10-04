@@ -138,11 +138,10 @@ void heapwatch_set_keep_running(bool keep_running);
 bool heapwatch_keep_running(void);
 
 /* ---------------------------------------------------------------------------
-   Telemetry (logs)
+   Telemetry
    --------------------------------------------------------------------------- */
 
 /**
- * Host custom events, parameters, and power telemetry are deferred post-MVP.
  * Built-in heap, CPU, task, and network metrics are collected automatically.
  */
 
