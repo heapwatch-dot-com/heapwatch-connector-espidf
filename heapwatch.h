@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Heapwatch Connector for ESP-IDF — public C API (Phase 5b).
+ * Heapwatch Connector for ESP-IDF — public C API
  *
  * Typical app_main:
  *
@@ -10,8 +10,6 @@
  *   // ... your application (mount SD, register volumes, sensors) — never blocks on enrollment ...
  *   heapwatch_notify_app_started();
  *
- * Boot identity (boot counter, crash attribution, STARTING_UP and deep-sleep wake telemetry)
- * is owned by the connector — the host app never wires it up.
  */
 
 #ifndef HEAPWATCH_H
@@ -29,7 +27,7 @@ extern "C" {
 #endif
 
 /* ---------------------------------------------------------------------------
-   Lifecycle phase (sidecar bootstrap — query via heapwatch_get_status)
+   Lifecycle phase
    --------------------------------------------------------------------------- */
 
 typedef enum {
@@ -88,7 +86,7 @@ typedef struct {
     int32_t core;
 } heapwatch_log_context_t;
 
-/** CMD1: custom inbound MQTT command handler (see heapwatch_register_command). */
+/** custom inbound MQTT command handler (see heapwatch_register_command). */
 typedef void (*heapwatch_command_handler_t)(const char* suffix, const char* command_id,
                                             void* user_ctx);
 
@@ -103,11 +101,7 @@ typedef bool (*heapwatch_before_sleep_hook_t)(void* user_ctx);
    --------------------------------------------------------------------------- */
 
 /**
- * One-call sidecar bootstrap: NVS, log relay, Wi-Fi/SNTP (when Kconfig-managed),
- * background enrollment, and MQTT — returns immediately. Idempotent while running
- * (second call is a no-op). After heapwatch_deinit(), this may be called again.
- * Fails fast on fatal misconfiguration (empty enrollment key + no NVS creds, placeholder
- * build fingerprint, NVS init failure).
+ * One-call initialization
  */
 esp_err_t heapwatch_initialize(void);
 
@@ -141,30 +135,28 @@ bool heapwatch_keep_running(void);
    Telemetry
    --------------------------------------------------------------------------- */
 
-/**
- * Built-in heap, CPU, task, and network metrics are collected automatically.
- */
-
 esp_err_t heapwatch_queue_log(HeapwatchConnectorSeverity severity, const char* message,
                               const heapwatch_log_context_t* context);
 
 /* ---------------------------------------------------------------------------
-   Remote commands (CMD1)
+   Remote commands
    --------------------------------------------------------------------------- */
 
 /**
- * Register a client command (topic suffix). Safe before or after heapwatch_initialize().
- * Built-ins ping/specs_refresh/restart cannot be overridden. Table is fixed-size (8);
- * returns ESP_ERR_HEAPWATCH_NO_SPACE when full.
+ * Register a client command. Safe before or after heapwatch_initialize().
+ * Built-in commands cannot be overridden.
  */
 esp_err_t heapwatch_register_command(const char* name, heapwatch_command_handler_t handler,
                                      void* user_ctx);
 
+/** Publish a command response. */
 esp_err_t heapwatch_publish_command_response(const char* suffix, const char* command_id, bool ok,
                                              const char* code, const char* message);
 
+/** Register a before-sleep hook. */
 esp_err_t heapwatch_register_before_light_sleep_hook(heapwatch_before_sleep_hook_t hook,
                                                      void* user_ctx);
+/** Register a before-deep-sleep hook. */
 esp_err_t heapwatch_register_before_deep_sleep_hook(heapwatch_before_sleep_hook_t hook,
                                                     void* user_ctx);
 
