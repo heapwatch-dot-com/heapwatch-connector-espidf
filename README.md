@@ -1,3 +1,4 @@
+[heapwatch-connector.webm](https://github.com/user-attachments/assets/82d0646a-6a02-4be4-9a4d-537fe4e7ba61)
 # Heapwatch Connector for ESP-IDF
 
 Heapwatch Connector is an ESP-IDF component that you add to your ESP32-family project to see what's actually going on inside your device.
