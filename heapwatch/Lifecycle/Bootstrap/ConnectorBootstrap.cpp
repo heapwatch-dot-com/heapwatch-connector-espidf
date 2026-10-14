@@ -29,20 +29,17 @@
 #include "heapwatch/Enrollment/Identity/DeviceIdentity.h"
 #include "heapwatch.h"
 #include "heapwatch_endpoints.h"
-#include "heapwatch/Lifecycle/ConnectorLifecycle.h"
 #include "heapwatch/Lifecycle/NotificationsFromSystemEventLoop.h"
 
 namespace Heapwatch::Lifecycle::Bootstrap {
 
 constexpr char TAG[] = "HwLife";
 
-#if CONFIG_HEAPWATCH_MANAGE_WIFI
-constexpr int32_t WIFI_CONNECT_MAX_RETRY = 10;
-#endif
+constexpr uint32_t WIFI_RECONNECT_WAIT_MS = 10000;
 
 int32_t g_wifi_retry = 0;
 uint32_t g_wifi_reconnects_total = 0;
-volatile bool g_wifi_permanently_failed = false;
+TickType_t g_wifi_reconnect_due_tick = 0;
 volatile bool g_command_wifi_reconnect_active = false;
 bool g_wifi_driver_inited = false;
 
@@ -120,11 +117,9 @@ bool runFactoryEnrollment(BootCredentials* creds) {
     return true;
 }
 
-bool isWifiPermanentlyFailed() { return g_wifi_permanently_failed; }
-
-void clearWifiPermanentlyFailed() {
-    g_wifi_permanently_failed = false;
+void resetWifiReconnectAttempts() {
     g_wifi_retry = 0;
+    g_wifi_reconnect_due_tick = 0;
 }
 
 void connectManagedWifi() {
@@ -140,23 +135,28 @@ void handleManagedWifiDisconnected() {
         ESP_LOGI(TAG, "Wi-Fi disconnected (commanded reconnect — deferring auto-reconnect)");
         return;
     }
-    if (g_wifi_retry < WIFI_CONNECT_MAX_RETRY) {
-        g_wifi_retry++;
-        esp_wifi_connect();
-        ESP_LOGW(TAG, "Wi-Fi reconnect attempt %" PRId32 "/%" PRId32, g_wifi_retry,
-                 WIFI_CONNECT_MAX_RETRY);
-    } else {
-        g_wifi_permanently_failed = true;
-        Heapwatch::Lifecycle::setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
-        Heapwatch::Enrollment::setIndicatorPhase(
-            Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_WIFI_FAILED);
-        ESP_LOGE(TAG, "Wi-Fi connect failed after %" PRId32 " retries", WIFI_CONNECT_MAX_RETRY);
+    g_wifi_reconnect_due_tick = xTaskGetTickCount() + pdMS_TO_TICKS(WIFI_RECONNECT_WAIT_MS);
+#endif
+}
+
+void serviceManagedWifiReconnect() {
+#if CONFIG_HEAPWATCH_MANAGE_WIFI
+    if (g_wifi_reconnect_due_tick == 0) {
+        return;
     }
+    if (static_cast<int32_t>(xTaskGetTickCount() - g_wifi_reconnect_due_tick) < 0) {
+        return;
+    }
+    g_wifi_reconnect_due_tick = 0;
+    g_wifi_retry++;
+    esp_wifi_connect();
+    ESP_LOGW(TAG, "Wi-Fi reconnect attempt %" PRId32, g_wifi_retry);
 #endif
 }
 
 bool requestWifiReconnect(uint32_t duration_s) {
 #if CONFIG_HEAPWATCH_MANAGE_WIFI
+    g_wifi_reconnect_due_tick = 0;
     g_command_wifi_reconnect_active = true;
     esp_wifi_disconnect();
     if (duration_s > 0) {
@@ -195,8 +195,8 @@ void startWifiIfManaged() {
     Heapwatch::Enrollment::setIndicatorPhase(
         Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_WIFI_CONNECTING);
 #endif
-    g_wifi_permanently_failed = false;
     g_wifi_retry = 0;
+    g_wifi_reconnect_due_tick = 0;
     ESP_ERROR_CHECK(esp_netif_init());
     if (!g_wifi_driver_inited) {
         esp_netif_create_default_wifi_sta();
@@ -258,7 +258,7 @@ void stopManagedWifi() {
         (void)esp_wifi_stop();
     }
     g_wifi_retry = 0;
-    g_wifi_permanently_failed = false;
+    g_wifi_reconnect_due_tick = 0;
 #endif
 }
 

@@ -39,8 +39,8 @@ void startWifiIfManaged();
 
 void startNetworkReporters();
 
-bool isWifiPermanentlyFailed();
-void clearWifiPermanentlyFailed();
+/** Zero the reconnect attempt count. Called when Wi-Fi gets an IP. */
+void resetWifiReconnectAttempts();
 
 /** Runs factory enrollment loop on the calling task (bootstrap only — never app_main). */
 bool runFactoryEnrollment(BootCredentials* creds);
@@ -51,8 +51,11 @@ bool requestWifiReconnect(uint32_t duration_s);
 /** `esp_wifi_connect()` when HEAPWATCH_MANAGE_WIFI=y. Call from handleNotificationsFromSystemEventLoop only. */
 void connectManagedWifi();
 
-/** Retry / give-up after STA_DISCONNECTED. Call from handleNotificationsFromSystemEventLoop only. */
+/** On disconnect, schedule the next join. Call from handleNotificationsFromSystemEventLoop only. */
 void handleManagedWifiDisconnected();
+
+/** Start a scheduled join once the wait has passed. Call from handleNotificationsFromSystemEventLoop only. */
+void serviceManagedWifiReconnect();
 
 /**
  * Blocks (bounded, ~100s) until SNTP time sync succeeds when HEAPWATCH_MANAGE_TIME_SYNC=y.

@@ -136,7 +136,7 @@ void unregisterOne(esp_event_base_t base, int32_t event_id, esp_event_handler_in
 void applyGotIp() {
     auto& connector = MqttTelemetryClient::getInstance();
     connector.setNetworkReady(true);
-    Heapwatch::Lifecycle::Bootstrap::clearWifiPermanentlyFailed();
+    Heapwatch::Lifecycle::Bootstrap::resetWifiReconnectAttempts();
     Heapwatch::Network::markTopologyDirty();
     connector.queueEvent(HEAPWATCH_EVENT_NETIF_GOT_IP);
     if (connector.getStatus().initialized) {
@@ -246,6 +246,7 @@ void handleNotificationsFromSystemEventLoop() {
         Heapwatch::Lifecycle::Bootstrap::handleManagedWifiDisconnected();
 #endif
     }
+    Heapwatch::Lifecycle::Bootstrap::serviceManagedWifiReconnect();
     if ((bits & SYSTEM_EVENT_LOOP_GOT_IP) != 0) {
         applyGotIp();
     }

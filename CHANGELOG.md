@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-14
+
+### Fixed
+- When the connector manages Wi-Fi, a dropped link keeps trying to join until it connects. It waits 10 seconds between tries, and it no longer stops after 10 attempts and waits for a reboot.
+
 ## [1.0.0] - 2026-10-04
 
 ### Changed

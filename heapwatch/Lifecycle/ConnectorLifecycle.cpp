@@ -155,14 +155,10 @@ void taskBootstrapConnector(void*) {
         updateMqttPhaseFromStatus();
 
         if (!heapwatch_network_ready()) {
-            if (Heapwatch::Lifecycle::Bootstrap::isWifiPermanentlyFailed()) {
-                setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
-            } else {
-                const heapwatch_phase_t phase = getPhase();
-                if (phase != HEAPWATCH_PHASE_PROVISIONING &&
-                    phase != HEAPWATCH_PHASE_WAITING_ACCEPT) {
-                    setPhase(HEAPWATCH_PHASE_AWAITING_NETWORK);
-                }
+            const heapwatch_phase_t phase = getPhase();
+            if (phase != HEAPWATCH_PHASE_PROVISIONING &&
+                phase != HEAPWATCH_PHASE_WAITING_ACCEPT) {
+                setPhase(HEAPWATCH_PHASE_AWAITING_NETWORK);
             }
             waitForNotificationFromSystemEventLoop(500);
             continue;
@@ -232,12 +228,9 @@ void updateMqttPhaseFromStatus() {
     }
     if (status.mqtt_connected) {
         setPhase(HEAPWATCH_PHASE_MQTT_CONNECTED);
-    } else if (Heapwatch::Lifecycle::Bootstrap::isWifiPermanentlyFailed()) {
-        setPhase(HEAPWATCH_PHASE_NETWORK_FAILED);
     } else if (status.network_ready) {
         setPhase(HEAPWATCH_PHASE_MQTT_CONNECTING);
-    } else if (getPhase() != HEAPWATCH_PHASE_NETWORK_FAILED &&
-               getPhase() != HEAPWATCH_PHASE_PROVISIONING &&
+    } else if (getPhase() != HEAPWATCH_PHASE_PROVISIONING &&
                getPhase() != HEAPWATCH_PHASE_WAITING_ACCEPT) {
         setPhase(HEAPWATCH_PHASE_READY);
     }
@@ -248,10 +241,7 @@ void refreshHandoffLed() {
     if (!MqttTelemetryClient::getInstance().getStatus().initialized) {
         return;
     }
-    if (Heapwatch::Lifecycle::Bootstrap::isWifiPermanentlyFailed()) {
-        Heapwatch::Enrollment::setIndicatorPhase(
-            Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_WIFI_FAILED);
-    } else if (!heapwatch_network_ready()) {
+    if (!heapwatch_network_ready()) {
         Heapwatch::Enrollment::setIndicatorPhase(
             Heapwatch::Enrollment::EnrollStateLedPhase::ENROLL_LED_NETWORK_ERROR);
     } else {
